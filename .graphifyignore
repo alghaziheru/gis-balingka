@@ -1,0 +1,10 @@
+# Generated binary rasters, GeoJSONs, runtime DBs & standalone HTML mockup
+node_modules/
+dist/
+data/
+raw-data/
+public/data/*.png
+public/data/*.json
+public/data/*.geojson
+balingka-gis-draft.html
+pnpm-lock.yaml

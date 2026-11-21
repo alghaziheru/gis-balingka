@@ -1,0 +1,223 @@
+import type {
+  AuditLogEntry,
+  CitizenSuggestion,
+  DrainageStatus,
+  EditorStatus,
+  ExportBundle,
+  GeoFeatureCollection,
+  SuggestionStatus,
+  SuppressedDemSegment,
+  VerifiedWaterwayFeature,
+  WaterwayKind,
+  WaterwaySource
+} from '../types/gis';
+
+const PASSPHRASE_SESSION_KEY = 'balingka_editor_passphrase_v1';
+const EDITOR_NAME_KEY = 'balingka_editor_name_v1';
+
+export function loadStoredPassphrase(): string {
+  try {
+    return sessionStorage.getItem(PASSPHRASE_SESSION_KEY) || '';
+  } catch {
+    return '';
+  }
+}
+
+export function saveStoredPassphrase(passphrase: string): void {
+  try {
+    if (passphrase) sessionStorage.setItem(PASSPHRASE_SESSION_KEY, passphrase);
+    else sessionStorage.removeItem(PASSPHRASE_SESSION_KEY);
+  } catch {}
+}
+
+export function loadEditorName(): string {
+  try {
+    return localStorage.getItem(EDITOR_NAME_KEY) || 'Relawan Balingka';
+  } catch {
+    return 'Relawan Balingka';
+  }
+}
+
+export function saveEditorName(name: string): void {
+  try {
+    localStorage.setItem(EDITOR_NAME_KEY, name);
+  } catch {}
+}
+
+async function apiFetch<T>(url: string, init: RequestInit = {}, passphrase?: string): Promise<T> {
+  const headers = new Headers(init.headers);
+  if (init.body && !headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json');
+  }
+  const pass = passphrase ?? loadStoredPassphrase();
+  if (pass) headers.set('X-Admin-Passphrase', pass);
+
+  const res = await fetch(url, { ...init, headers });
+  const text = await res.text();
+  let json: Record<string, unknown> = {};
+  if (text) {
+    try {
+      json = JSON.parse(text) as Record<string, unknown>;
+    } catch {
+      throw new Error(`HTTP ${res.status}`);
+    }
+  }
+  if (!res.ok) {
+    const err = new Error(String(json.error || `HTTP ${res.status}`)) as Error & { status?: number };
+    err.status = res.status;
+    throw err;
+  }
+  return json as T;
+}
+
+export function buildStaticSeedWaterways(osmContext: GeoFeatureCollection): VerifiedWaterwayFeature[] {
+  return osmContext.features
+    .filter(f => f.properties?.kind === 'waterway' && f.geometry.type === 'LineString')
+    .map((f, idx) => ({
+      type: 'Feature',
+      properties: {
+        id: `ww-osm-static-${idx + 1}`,
+        name: String(f.properties?.name || `Alur OSM #${idx + 1}`),
+        kind: (String(f.properties?.waterway || 'stream') as WaterwayKind),
+        status: 'normal',
+        source: 'osm',
+        source_ref: String(f.properties?.id || ''),
+        notes: 'Seed awal OpenStreetMap (mode baca statis).',
+        length_m: 0,
+        updated_by: 'OSM Seed',
+        updated_at: ''
+      },
+      geometry: {
+        type: 'LineString',
+        coordinates: (f.geometry as { type: 'LineString'; coordinates: [number, number][] }).coordinates
+      }
+    }));
+}
+
+export async function fetchEditorStatus(): Promise<EditorStatus | null> {
+  try {
+    return await apiFetch<EditorStatus>('/api/editor/status');
+  } catch {
+    return null;
+  }
+}
+
+export async function verifyEditorPassphrase(passphrase: string): Promise<boolean> {
+  try {
+    const res = await apiFetch<{ ok: boolean }>('/api/editor/verify', {
+      method: 'POST',
+      body: JSON.stringify({ passphrase })
+    });
+    return Boolean(res.ok);
+  } catch {
+    return false;
+  }
+}
+
+export async function fetchWaterwaysState(): Promise<{
+  waterways: VerifiedWaterwayFeature[];
+  suppressedDem: SuppressedDemSegment[];
+}> {
+  const data = await apiFetch<{
+    waterways: { features: VerifiedWaterwayFeature[] };
+    suppressedDem: SuppressedDemSegment[];
+  }>('/api/waterways');
+  return {
+    waterways: data.waterways?.features || [],
+    suppressedDem: data.suppressedDem || []
+  };
+}
+
+export async function createWaterway(payload: {
+  name: string;
+  kind: WaterwayKind;
+  status: DrainageStatus;
+  source: WaterwaySource;
+  source_ref?: string | null;
+  notes: string;
+  coordinates: [number, number][];
+  actor: string;
+  reason: string;
+}): Promise<{ feature: VerifiedWaterwayFeature; log: AuditLogEntry }> {
+  return apiFetch('/api/waterways', { method: 'POST', body: JSON.stringify(payload) });
+}
+
+export async function updateWaterway(
+  id: string,
+  payload: {
+    name?: string;
+    kind?: WaterwayKind;
+    status?: DrainageStatus;
+    notes?: string;
+    coordinates?: [number, number][];
+    actor: string;
+    reason: string;
+  }
+): Promise<{ feature: VerifiedWaterwayFeature; log: AuditLogEntry }> {
+  return apiFetch(`/api/waterways/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(payload) });
+}
+
+export async function deleteWaterway(id: string, payload: { actor: string; reason: string }): Promise<void> {
+  await apiFetch(`/api/waterways/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function suppressDemSegment(payload: {
+  seg_id: string;
+  reason: string;
+  actor: string;
+}): Promise<{ suppressed: SuppressedDemSegment; log: AuditLogEntry }> {
+  return apiFetch('/api/dem-segments/suppress', { method: 'POST', body: JSON.stringify(payload) });
+}
+
+export async function restoreDemSegment(segId: string, payload: { actor: string; reason: string }): Promise<void> {
+  await apiFetch(`/api/dem-segments/${encodeURIComponent(segId)}/suppress`, {
+    method: 'DELETE',
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function fetchAuditLogs(limit = 150): Promise<AuditLogEntry[]> {
+  const data = await apiFetch<{ logs: AuditLogEntry[] }>(`/api/audit?limit=${limit}`);
+  return data.logs || [];
+}
+
+export async function revertAuditLog(
+  logId: number,
+  payload: { actor: string; reason: string }
+): Promise<{
+  log: AuditLogEntry;
+  state: { waterways: { features: VerifiedWaterwayFeature[] }; suppressedDem: SuppressedDemSegment[] };
+}> {
+  return apiFetch(`/api/audit/${logId}/revert`, { method: 'POST', body: JSON.stringify(payload) });
+}
+
+export async function fetchSuggestions(): Promise<CitizenSuggestion[]> {
+  const data = await apiFetch<{ suggestions: CitizenSuggestion[] }>('/api/suggestions');
+  return data.suggestions || [];
+}
+
+export async function createSuggestion(payload: {
+  reporter_name: string;
+  contact: string;
+  category: string;
+  location_name: string;
+  message: string;
+  lng: number | null;
+  lat: number | null;
+}): Promise<{ suggestion: CitizenSuggestion }> {
+  return apiFetch('/api/suggestions', { method: 'POST', body: JSON.stringify(payload) });
+}
+
+export async function updateSuggestionStatus(
+  id: number,
+  payload: { status: SuggestionStatus; resolution_note: string; actor: string }
+): Promise<{ suggestion: CitizenSuggestion }> {
+  return apiFetch(`/api/suggestions/${id}`, { method: 'PATCH', body: JSON.stringify(payload) });
+}
+
+export async function fetchExportBundle(): Promise<ExportBundle> {
+  return apiFetch<ExportBundle>('/api/export/bundle');
+}

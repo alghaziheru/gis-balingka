@@ -1,0 +1,36 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build & TypeScript outputs
+dist/
+*.tsbuildinfo
+
+# Environment & local secrets
+.env
+.env.local
+.env.*.local
+
+# Runtime SQLite database files (generated locally / on VPS)
+data/*.db
+data/*.db-wal
+data/*.db-shm
+data/*.db-journal
+
+# Heavy raw spatial inputs (e.g. local DEMNAS GeoTIFFs)
+raw-data/
+
+# Graphify internal cache & transient build state (keep GRAPH_REPORT.md, graph.json, graph.html)
+graphify-out/cache/
+graphify-out/.graphify_*
+graphify-out/.needs_update
+graphify-out/manifest.json
+
+# Logs, temporary artifacts & OS/IDE metadata
+*.log
+npm-debug.log*
+pnpm-debug.log*
+.DS_Store
+Thumbs.db
+.idea/
+tmp/
