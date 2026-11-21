@@ -20,11 +20,11 @@ data/*.db-journal
 # Heavy raw spatial inputs (e.g. local DEMNAS GeoTIFFs)
 raw-data/
 
-# Graphify internal cache & transient build state (keep GRAPH_REPORT.md, graph.json, graph.html)
-graphify-out/cache/
-graphify-out/.graphify_*
-graphify-out/.needs_update
-graphify-out/manifest.json
+# Graphify local knowledge graph outputs
+graphify-out/
+
+# Early single-file draft HTML
+balingka-gis-draft.html
 
 # Logs, temporary artifacts & OS/IDE metadata
 *.log

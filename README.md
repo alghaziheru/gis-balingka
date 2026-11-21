@@ -2,40 +2,37 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-0284c7.svg)](./LICENSE)
 
-Open-source (**MIT**) interactive 2D/3D terrain explorer, drainage inventory, flash-flood (*galodo*) simulator, and community waterway editor focused exclusively on **Nagari Balingka** (`-0.333149, 100.326812`, Kec. IV Koto, Kab. Agam, West Sumatra).
+Open-source (**MIT**) interactive 2D/3D terrain explorer, drainage inventory, rainfall & inundation simulator, and waterway editor focused exclusively on **Nagari Balingka** (`-0.333149, 100.326812`, Kec. IV Koto, Kab. Agam, West Sumatra).
 
-Inspired by [CutSheetRX](https://senterfarms.com/programs/csrx/), the app isolates a crisp **~4.5 × 4.5 km (`20.9 km²`) Nagari Balingka block** combining sub-meter satellite clarity, anti-aliased **CutSheetRX-style terrain rasters** (*Elevasi*, *Relief*, *Lereng*), interactive **2-layer waterway correction**, an immutable **SQLite Audit Trail**, and a zero-login **Citizen Suggestion Box**.
+Inspired by [CutSheetRX](https://senterfarms.com/programs/csrx/), the app isolates a **~4.5 × 4.5 km (`20.9 km²`) Nagari Balingka block** combining sub-meter satellite clarity, anti-aliased **CutSheetRX-style terrain rasters** (*Elevasi*, *Relief*, *Lereng*), a **Ringkas / Lengkap** mode switcher for citizens vs. researchers/government/developers, interactive **2-layer waterway correction** with an immutable **SQLite Audit Trail**, and a lightweight **Feedback** modal.
 
 ---
 
 ## Key Capabilities
 
-1. **Exclusive Clipped Balingka Block & CutSheetRX Surface Switcher (`Medan & Aliran`)**
-   - Architectural studio mask (`mask.geojson`) and locked viewport keep focus strictly on Nagari Balingka and its immediate southern Gunung Singgalang catchment.
-   - Instant surface switcher: **Satelit** (sub-meter imagery, auto-overzoomed smoothly at `z=18` to prevent `"Map data not yet available"` tiles), **Elevasi**, **Relief**, **Lereng** (smooth `1024×1024` anti-aliased PNG overlays), **Topo** (OpenTopoMap), and **Jalan** (OpenStreetMap).
-   - Client-side DEM hydrology tools: **Drop Raindrop (*Teteskan Air*)** downhill trace and **Elevation Profile (*Profil Elevasi*)** cross-section chart.
+1. **Two-Tier Interface (`Ringkas` & `Lengkap`) + Unified Legend & Layer Checklist**
+   - **Ringkas (default)**: Plain-language interface with 3 tabs (**Peta**, **Simulasi**, **Siaga**), one-tap Jorong quick-jump chips (*Pusat Balingka*, *Pahambatan*, *Koto Hilalang*, *Subarang*, *Lereng Hulu*), and a unified **Legenda & Lapisan Peta** checklist.
+   - **Lengkap**: Adds 2D/3D toggle, all 6 surface modes (**Satelit**, **Elevasi**, **Relief**, **Lereng**, **Topo**, **Jalan**), 3D vertical exaggeration, DEM runoff density controls, **Drop Raindrop (*Cek Arah Air*)**, **Elevation Profile (*Ukur Tanjakan*)**, live coordinates/slope telemetry, and the **Editor** tab.
+   - **Info & Data Drawer**: 3-tab modal covering a 30-second public guide, dataset/HAND methodology & caveats, and public API + GeoJSON bundle downloads.
 
-2. **November 2025 Flood Replay & HAND Simulator (`Simulasi 2025`)**
-   - 4-stage guided reconstruction (`18:00 WIB` → `21:30 WIB` → `23:45 WIB` → Post-Event Normalization) backed by smoothed `768×768` **HAND** (Height Above Nearest Drainage) flood footprints.
-   - Interactive rainfall slider (`20–130 mm/hr`) and **Clogged vs. Cleared Crossings** comparison showing low-HAND area reduction.
+2. **Interactive Rainfall Intensity × Duration Simulator (`Simulasi`)**
+   - Smooth sliders (plus quick-tap presets) for **Rainfall Intensity** (`10–150 mm/jam`) and **Storm Duration** (`15 mnt – 6 jam`) with Play/Pause, Reset, and timeline scrubber.
+   - Live **falling rain canvas animation** (`RainOverlay`) scaled to rainfall intensity, paired with dynamic **HAND** (Height Above Nearest Drainage) inundation spread and **Clogged vs. Cleared Drains** comparison.
 
-3. **Drainage Conditions & Map-Linked Mitigation (`Drainase & Aksi`)**
-   - Auto-detected road–stream crossings (`35 crossings`, `3 OSM bridges`) tagged clearly as draft pending community verification, status filters, upland check-dam & steep-slope (`>38%`) toggles, and persistent household preparedness checklist.
+3. **Drainage Conditions & Map-Linked Preparedness (`Siaga`)**
+   - Unified **Legenda & Titik Pantau** combining road–stream crossing status filters (`35 crossings`, `3 OSM bridges`) with hazard & evacuation point toggles and a persistent household preparedness checklist.
 
-4. **2-Layer Waterway Correction, SQLite Audit Trail & Suggestion Box (`Pemetaan`)**
-   - **Verified Waterways Layer** (solid white-cased river lines seeded from OpenStreetMap's `Batang Ngalai`, `Batang Tuhua`, `Anak Sungai`) vs. **30m DEM Runoff Estimate** (dashed cyan reference lines).
-   - **Vertex Editing in Editor Mode**: drag vertex handles on the map, click `+` midpoints to insert bends, right-click/double-click vertices to remove, draw new canals/drains, or click any DEM segment to **Promote & Adjust** or **Mark False & Hide**.
+4. **2-Layer Waterway Correction & SQLite Audit Trail (`Editor` in `Lengkap` mode)**
+   - **Verified Waterways Layer** (solid river lines seeded from OpenStreetMap's `Batang Ngalai`, `Batang Tuhua`, `Anak Sungai`) vs. **30m DEM Runoff Estimate** (dashed cyan reference lines).
+   - **Vertex Editing**: drag vertex handles on the map, click `+` midpoints to insert bends, right-click/double-click vertices to remove, draw new canals/drains, or click any DEM segment to **Promote & Adjust** or **Mark False & Hide**.
    - **Immutable SQLite Audit Trail (`Riwayat`)**: built on Node 24's built-in `node:sqlite` (`data/balingka.db`), storing `before`/`after` snapshots, actor, timestamp, and reason with **1-click Revert** and full **GeoJSON + Audit Bundle export**.
-   - **Public Citizen Suggestion Box (`Kotak Saran`)**: zero login required — villagers can drop a map pin and report misaligned streams or clogged culverts for editor review.
-   - **Browser Local Field Mapping (`Titik Warga`)**: capture culvert pins or lines in `localStorage` with GeoJSON Import/Export.
+
+5. **Zero-Login General Feedback (`Feedback`)**
+   - Lightweight feedback modal accessible from the top bar so visitors can submit general suggestions or usability notes directly to SQLite.
 
 ---
 
 ## Architecture & Repository Map
-
-Codebase relationships and module communities have been mapped with [`graphify`](graphify-out/GRAPH_REPORT.md):
-- Structural & semantic report: [`graphify-out/GRAPH_REPORT.md`](graphify-out/GRAPH_REPORT.md)
-- Interactive knowledge graph viewer: `graphify-out/graph.html`
 
 ```text
 gis-balingka/
@@ -45,15 +42,16 @@ gis-balingka/
 ├── src/
 │   ├── components/
 │   │   ├── MapView.tsx        # MapLibre 2D/3D map, 2-layer waterways, vertex drag & midpoint handles
-│   │   ├── FieldMappingTab.tsx# 4 sub-tabs: Jalur Sungai, Titik Warga, Riwayat, Kotak Saran
-│   │   ├── WaterwayEditorPanel.tsx / AuditLogPanel.tsx / SuggestionBoxPanel.tsx / EditorUnlockModal.tsx
-│   │   ├── TerrainTab.tsx / SimulationTab.tsx / DrainageTab.tsx
-│   │   └── TopHud.tsx / TelemetryDock.tsx / ElevationProfileModal.tsx / OssLicenseModal.tsx
+│   │   ├── RainOverlay.tsx    # Intensity-scaled HTML5 canvas falling rain animation
+│   │   ├── TerrainTab.tsx / SimulationTab.tsx / DrainageTab.tsx / EditorTab.tsx
+│   │   ├── WaterwayEditorPanel.tsx / AuditLogPanel.tsx / EditorUnlockModal.tsx
+│   │   ├── TopHud.tsx / TelemetryDock.tsx / ElevationProfileModal.tsx
+│   │   └── FeedbackModal.tsx / InfoDataModal.tsx
 │   ├── lib/
 │   │   ├── api.ts             # Typed REST client + sessionStorage passphrase + static read-only fallback
 │   │   ├── demClient.ts       # Client-side bilinear DEM interpolation, raindrop tracer & profile sampler
-│   │   └── storage.ts         # Browser localStorage helpers & GeoJSON import parser
-│   ├── i18n/translations.ts   # Full Indonesian (ID) & English (EN) copy + 4 simulation stages
+│   │   └── storage.ts         # Browser localStorage helpers for preparedness checklist
+│   ├── i18n/translations.ts   # Full Indonesian (ID) & English (EN) copy
 │   └── types/gis.ts           # Shared TypeScript domain interfaces
 ├── scripts/
 │   ├── lib/hydrology.mjs      # Priority-Flood, D8, Horn slope, HAND, Chaikin smoothing, PNG & burnStreamsIntoDem
@@ -62,8 +60,7 @@ gis-balingka/
 ├── tests/
 │   ├── hydrology.test.mjs     # Hydrology, stream-burning, Chaikin & generated asset integrity tests
 │   └── api.test.mjs           # SQLite seeding, promote/revert audit trail & passphrase auth tests
-├── .env.example               # Production passphrase, port, DB path & custom imagery env template
-└── balingka-gis-draft.html    # Early single-file HTML mockup preserved for reference
+└── .env.example               # Production passphrase, port, DB path & custom imagery env template
 ```
 
 ---
@@ -110,8 +107,8 @@ pnpm run build            # Typechecks & builds production bundle into dist/
 pnpm start                # Serves dist/ and /api/* together on PORT (default 8787)
 ```
 
-- **Public access without login**: Anyone can inspect the map, read verified waterways, browse the full `Audit Trail`, and submit entries to the `Kotak Saran`.
-- **Protected editing**: Setting `ADMIN_PASSPHRASE` locks all waterway writes, DEM suppressions, audit reverts, and suggestion status updates behind timing-safe `X-Admin-Passphrase` verification via the **Buka Mode Editor** modal.
+- **Public access without login**: Anyone can inspect the map, run rainfall simulations, check preparedness guides, and submit general feedback.
+- **Protected editing**: Setting `ADMIN_PASSPHRASE` locks all waterway writes, DEM suppressions, and audit reverts behind timing-safe `X-Admin-Passphrase` verification in **Lengkap → Editor**.
 - **Database backup**: Back up the single SQLite file at `data/balingka.db` (or set `BALINGKA_DB_PATH`).
 
 ---
@@ -140,9 +137,9 @@ pnpm start                # Serves dist/ and /api/* together on PORT (default 87
 | `DELETE /api/dem-segments/:segId/suppress` | Editor Passphrase | Restore hidden DEM segment |
 | `GET /api/audit` | Public | Chronological change log with full before/after snapshots |
 | `POST /api/audit/:id/revert` | Editor Passphrase | Revert a change and record a new `revert` log entry |
-| `GET /api/suggestions` | Public | List citizen suggestions |
-| `POST /api/suggestions` | Public | Submit citizen suggestion / location pin (no login) |
-| `PATCH /api/suggestions/:id` | Editor Passphrase | Update suggestion review status & editor note |
+| `GET /api/suggestions` | Public | List general user feedback entries |
+| `POST /api/suggestions` | Public | Submit general feedback (no login) |
+| `PATCH /api/suggestions/:id` | Editor Passphrase | Update feedback status & note |
 | `GET /api/export/bundle` | Public | Download JSON bundle (verified GeoJSON + audit logs) |
 
 ---
