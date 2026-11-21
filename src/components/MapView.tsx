@@ -19,7 +19,6 @@ import type {
   ActiveTool,
   BasemapId,
   BBox,
-  CommunityFeature,
   DrainageStatus,
   GeoFeature,
   GeoFeatureCollection,
@@ -29,7 +28,8 @@ import type {
   ProfileSample,
   RaindropTrace,
   TabId,
-  VerifiedWaterwayFeature
+  VerifiedWaterwayFeature,
+  ViewMode
 } from '../types/gis';
 
 setWorkerUrl(maplibreWorkerUrl);
@@ -57,6 +57,7 @@ interface MapViewProps {
   datasets: LoadedDatasets;
   demClient: DemClient;
   lang: Language;
+  viewMode: ViewMode;
   tab: TabId;
   is3D: boolean;
   basemap: BasemapId;
@@ -64,20 +65,18 @@ interface MapViewProps {
   layers: LayerToggles;
   flowDensity: number;
   activeTool: ActiveTool;
-  simStage: number;
   simRain: number;
+  simDurationMin: number;
+  simProgress: number;
   simScenario: 'clogged' | 'cleared';
   drainFilter: 'all' | DrainageStatus;
   raindrop: RaindropTrace | null;
   profilePts: [number, number][];
   profileHover: ProfileSample | null;
-  communityFeatures: CommunityFeature[];
   verifiedWaterways: VerifiedWaterwayFeature[];
   suppressedDemIds: string[];
   editorUnlocked: boolean;
   editingWaterway: { id: string | null; coordinates: [number, number][]; sourceRef?: string | null } | null;
-  suggestionPin: [number, number] | null;
-  draftGeom: CommunityFeature['geometry'] | null;
   drawVertices: [number, number][];
   flyRequest: FlyRequest | null;
   onMapClick: (lngLat: [number, number]) => void;
@@ -155,14 +154,14 @@ export function MapView(props: MapViewProps) {
   const raindropAnimRef = useRef<number | null>(null);
   const profileABRef = useRef<Marker[]>([]);
   const profileHoverMarkerRef = useRef<Marker | null>(null);
-  const draftMarkerRef = useRef<Marker | null>(null);
-  const suggestionMarkerRef = useRef<Marker | null>(null);
   const vertexMarkersRef = useRef<Marker[]>([]);
 
   const activeToolRef = useRef(props.activeTool);
   activeToolRef.current = props.activeTool;
   const langRef = useRef(props.lang);
   langRef.current = props.lang;
+  const viewModeRef = useRef(props.viewMode);
+  viewModeRef.current = props.viewMode;
   const demRef = useRef(props.demClient);
   demRef.current = props.demClient;
   const onMapClickRef = useRef(props.onMapClick);
@@ -175,6 +174,8 @@ export function MapView(props: MapViewProps) {
   flowDensityRef.current = props.flowDensity;
   const simRainRef = useRef(props.simRain);
   simRainRef.current = props.simRain;
+  const simProgressRef = useRef(props.simProgress);
+  simProgressRef.current = props.simProgress;
   const editorUnlockedRef = useRef(props.editorUnlocked);
   editorUnlockedRef.current = props.editorUnlocked;
   const verifiedWaterwaysRef = useRef(props.verifiedWaterways);
@@ -198,15 +199,16 @@ export function MapView(props: MapViewProps) {
     if (popupRef.current) popupRef.current.remove();
 
     const isEn = langRef.current === 'en';
+    const isDetail = viewModeRef.current === 'detail';
     const name = isEn ? p.name_en || p.name : p.name_id || p.name;
     const desc = isEn ? p.desc_en || p.notes || '' : p.desc_id || p.notes || '';
     const status = String(p.status || 'normal');
 
     const badgeColors: Record<string, string> = {
-      normal: 'background:rgba(5,150,105,0.12);color:#065f46',
-      clogged: 'background:rgba(217,119,6,0.14);color:#92400e',
-      damaged: 'background:rgba(234,88,12,0.14);color:#9a3412',
-      critical: 'background:rgba(220,38,38,0.14);color:#991b1b'
+      normal: 'background:rgba(4,120,87,0.12);color:#047857',
+      clogged: 'background:rgba(180,83,9,0.14);color:#b45309',
+      damaged: 'background:rgba(194,65,12,0.14);color:#c2410c',
+      critical: 'background:rgba(185,28,28,0.14);color:#b91c1c'
     };
     const statusNames: Record<string, { id: string; en: string }> = {
       normal: { id: 'Normal', en: 'Normal' },
@@ -217,25 +219,25 @@ export function MapView(props: MapViewProps) {
     const st = statusNames[status] || statusNames.normal;
     const tagText = isCommunity
       ? isEn
-        ? 'Community Field Entry (Local)'
-        : 'Data Lapangan Warga (Lokal)'
+        ? 'Resident Note (Local)'
+        : 'Catatan Warga (Lokal)'
       : isEn
-      ? 'Auto-Seeded Draft — Needs Verification'
-      : 'Draft Otomatis — Perlu Verifikasi Warga';
+      ? 'Initial Estimate — Needs Field Check'
+      : 'Perkiraan Awal — Perlu Cek Lapangan';
     const elev = Math.round(demRef.current.getElevation(lngLat[0], lngLat[1]));
 
     const html = `
       <div>
-        <span style="display:inline-block;padding:2px 7px;border-radius:999px;font-size:10.5px;font-weight:800;margin-bottom:5px;${badgeColors[status] || badgeColors.normal}">
+        <span style="display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:700;margin-bottom:6px;${badgeColors[status] || badgeColors.normal}">
           ${escapeHtml(isEn ? st.en : st.id)}
         </span>
-        <h4 style="margin:0 0 4px;font-size:13.5px;font-weight:800;color:#12231c;">${escapeHtml(name)}</h4>
-        <div style="display:inline-block;margin-bottom:6px;padding:2px 6px;border-radius:4px;font-size:10px;font-weight:700;background:rgba(217,119,6,0.14);color:#92400e;">
+        <h4 style="margin:0 0 4px;font-size:14px;font-weight:700;color:#161c1a;">${escapeHtml(name)}</h4>
+        <div style="margin-bottom:6px;font-size:11.5px;font-weight:600;color:#636f6a;">
           ${escapeHtml(tagText)}
         </div>
-        ${desc ? `<p style="margin:0 0 6px;font-size:12px;color:#3f524a;">${escapeHtml(desc)}</p>` : ''}
-        <div style="font-family:monospace;font-size:10.5px;color:#64776f;">
-          ${lngLat[1].toFixed(5)}, ${lngLat[0].toFixed(5)} · ~${elev} mdpl
+        ${desc ? `<p style="margin:0 0 8px;font-size:12.5px;line-height:1.45;color:#434d49;">${escapeHtml(desc)}</p>` : ''}
+        <div style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#636f6a;">
+          ${isDetail ? `${lngLat[1].toFixed(5)}, ${lngLat[0].toFixed(5)} · ` : ''}~${elev} m dpl
         </div>
       </div>
     `;
@@ -748,22 +750,36 @@ export function MapView(props: MapViewProps) {
             const wwId = String(propsObj.id || '');
             const fullFeat = verifiedWaterwaysRef.current.find(w => w.properties.id === wwId);
             const canEdit = editorUnlockedRef.current && Boolean(fullFeat);
+            const isDetail = viewModeRef.current === 'detail';
+            const kindLabels: Record<string, { id: string; en: string }> = {
+              river: { id: 'Sungai Utama', en: 'River' },
+              stream: { id: 'Anak Sungai', en: 'Stream' },
+              canal: { id: 'Bandar / Irigasi', en: 'Canal' },
+              drain: { id: 'Parit / Drainase', en: 'Drain' },
+              culvert: { id: 'Gorong-gorong', en: 'Culvert' }
+            };
+            const statusLabels: Record<string, { id: string; en: string }> = {
+              normal: { id: 'Normal', en: 'Normal' },
+              clogged: { id: 'Tersumbat', en: 'Clogged' },
+              damaged: { id: 'Rusak', en: 'Damaged' },
+              critical: { id: 'Kritis', en: 'Critical' }
+            };
+            const kLabel = kindLabels[String(propsObj.kind)]?.[isEn ? 'en' : 'id'] || String(propsObj.kind || '');
+            const sLabel = statusLabels[String(propsObj.status)]?.[isEn ? 'en' : 'id'] || String(propsObj.status || '');
             const html = `
               <div>
-                <span style="display:inline-block;padding:2px 7px;border-radius:999px;font-size:10px;font-weight:800;margin-bottom:5px;background:rgba(2,132,199,0.12);color:#0369a1;">
-                  ${escapeHtml(isEn ? 'Verified Waterway' : 'Sungai / Drainase Terverifikasi')}
+                <span style="display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:700;margin-bottom:6px;background:rgba(3,105,161,0.12);color:#0369a1;">
+                  ${escapeHtml(isEn ? 'Verified Waterway' : 'Sungai / Saluran Terverifikasi')}
                 </span>
-                <h4 style="margin:0 0 4px;font-size:13.5px;font-weight:800;color:#12231c;">${escapeHtml(propsObj.name)}</h4>
-                <div style="font-size:11.5px;color:#3f524a;margin-bottom:6px;">
-                  ${escapeHtml(propsObj.kind)} · ${escapeHtml(propsObj.status)} · ${escapeHtml(propsObj.length_m)}m
+                <h4 style="margin:0 0 4px;font-size:14px;font-weight:700;color:#161c1a;">${escapeHtml(propsObj.name)}</h4>
+                <div style="font-size:12.5px;color:#434d49;margin-bottom:6px;">
+                  ${escapeHtml(kLabel)} · ${escapeHtml(sLabel)} · ${escapeHtml(propsObj.length_m)} m
                 </div>
-                ${propsObj.notes ? `<p style="margin:0 0 6px;font-size:11.5px;color:#3f524a;">${escapeHtml(propsObj.notes)}</p>` : ''}
-                <div style="font-family:monospace;font-size:10px;color:#64776f;">
-                  ${escapeHtml(propsObj.updated_by || '')}
-                </div>
+                ${propsObj.notes ? `<p style="margin:0 0 6px;font-size:12.5px;line-height:1.45;color:#434d49;">${escapeHtml(propsObj.notes)}</p>` : ''}
+                ${isDetail && propsObj.updated_by ? `<div style="font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#636f6a;margin-bottom:6px;">${escapeHtml(propsObj.updated_by)}</div>` : ''}
                 ${
                   canEdit
-                    ? `<button id="popup-edit-ww" type="button" style="margin-top:8px;width:100%;padding:6px 10px;border-radius:7px;border:1px solid #0369a1;background:#0284c7;color:#fff;font-size:11.5px;font-weight:700;cursor:pointer;">
+                    ? `<button id="popup-edit-ww" type="button" style="margin-top:6px;width:100%;padding:7px 10px;border-radius:8px;border:1px solid #0369a1;background:#0369a1;color:#fff;font-size:12px;font-weight:700;cursor:pointer;">
                         ${isEn ? 'Correct Alignment' : 'Koreksi Jalur Ini'}
                       </button>`
                     : ''
@@ -790,29 +806,36 @@ export function MapView(props: MapViewProps) {
                 ? subsampleCoordsForEditing(rawFlow.geometry.coordinates, 18)
                 : [];
             const canEdit = editorUnlockedRef.current && coords.length >= 2;
+            const isDetail = viewModeRef.current === 'detail';
             const html = `
               <div>
-                <span style="display:inline-block;padding:2px 7px;border-radius:999px;font-size:10px;font-weight:800;margin-bottom:5px;background:rgba(217,119,6,0.14);color:#92400e;">
-                  ${escapeHtml(isEn ? '30m DEM Runoff Estimate' : 'Estimasi Alur Limpasan (DEM 30m)')}
+                <span style="display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:700;margin-bottom:6px;background:rgba(180,83,9,0.14);color:#b45309;">
+                  ${escapeHtml(isEn ? 'Estimated Rainwater Path' : 'Perkiraan Aliran Air Hujan')}
                 </span>
-                <h4 style="margin:0 0 4px;font-size:13px;font-weight:800;color:#12231c;">${escapeHtml(segId)}</h4>
-                <p style="margin:0 0 6px;font-size:11.5px;color:#3f524a;">
+                <h4 style="margin:0 0 4px;font-size:13.5px;font-weight:700;color:#161c1a;">
+                  ${isDetail ? escapeHtml(segId) : escapeHtml(isEn ? 'Estimated Slope Runoff' : 'Aliran Lereng (Perkiraan)')}
+                </h4>
+                <p style="margin:0 0 6px;font-size:12.5px;line-height:1.45;color:#434d49;">
                   ${
                     isEn
-                      ? 'Computed automatically from 30m satellite elevation; may differ from actual village drains by 15–45m.'
-                      : 'Dihitung otomatis dari elevasi satelit 30m; dapat meleset 15–45m dari sungai/bandar asli.'
+                      ? 'Estimated automatically from satellite elevation; real village drains may sit 15–45m to the side.'
+                      : 'Dihitung otomatis dari data elevasi satelit; posisi parit atau sungai asli bisa bergeser 15–45 meter.'
                   }
                 </p>
-                <div style="font-family:monospace;font-size:10.5px;color:#64776f;">
-                  DAS ~${escapeHtml(propsObj.catchment_ha)} ha · ${escapeHtml(propsObj.length_m)} m · ${escapeHtml(propsObj.slope_pct)}%
-                </div>
+                ${
+                  isDetail
+                    ? `<div style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#636f6a;margin-bottom:6px;">
+                        DAS ~${escapeHtml(propsObj.catchment_ha)} ha · ${escapeHtml(propsObj.length_m)} m · ${escapeHtml(propsObj.slope_pct)}%
+                      </div>`
+                    : ''
+                }
                 ${
                   canEdit
-                    ? `<div style="display:flex;flex-direction:column;gap:5px;margin-top:8px;">
-                        <button id="popup-promote-dem" type="button" style="padding:6px 8px;border-radius:7px;border:1px solid #0369a1;background:#0284c7;color:#fff;font-size:11px;font-weight:700;cursor:pointer;">
+                    ? `<div style="display:flex;flex-direction:column;gap:6px;margin-top:8px;">
+                        <button id="popup-promote-dem" type="button" style="padding:7px 10px;border-radius:8px;border:1px solid #0369a1;background:#0369a1;color:#fff;font-size:12px;font-weight:700;cursor:pointer;">
                           ${isEn ? 'Promote & Adjust Vertices' : 'Promosikan & Koreksi Jalur'}
                         </button>
-                        <button id="popup-suppress-dem" type="button" style="padding:5px 8px;border-radius:7px;border:1px solid rgba(18,35,28,0.2);background:#fff;color:#991b1b;font-size:11px;font-weight:700;cursor:pointer;">
+                        <button id="popup-suppress-dem" type="button" style="padding:6px 10px;border-radius:8px;border:1px solid rgba(22,28,26,0.2);background:#fff;color:#b91c1c;font-size:12px;font-weight:700;cursor:pointer;">
                           ${isEn ? 'Mark False & Hide Segment' : 'Tandai Keliru & Sembunyikan'}
                         </button>
                       </div>`
@@ -849,7 +872,10 @@ export function MapView(props: MapViewProps) {
         if (ts - lastTs > 50) {
           const dt = Math.min(0.1, (ts - lastTs) / 1000 || 0.05);
           lastTs = ts;
-          const speed = tabRef.current === 'sim' ? 0.14 + (simRainRef.current / 130) * 0.28 : 0.16;
+          const speed =
+            tabRef.current === 'sim'
+              ? 0.14 + (simRainRef.current / 150) * (0.12 + simProgressRef.current * 0.24)
+              : 0.16;
           particlePhase = (particlePhase + dt * speed) % 1;
 
           const src = map.getSource('src-flow-particles') as GeoJSONSource | undefined;
@@ -976,16 +1002,17 @@ export function MapView(props: MapViewProps) {
       map.setFilter('flows-line', flowFilter);
     }
 
-    // Smooth HAND Raster Overlays for Simulation Tab
-    const showFlood = props.tab === 'sim';
+    // Smooth HAND Raster Overlays for Simulation Tab (driven by Intensity x Duration x Progress)
+    const showFlood = props.tab === 'sim' && props.simProgress > 0.03;
     let activeHandId: string | null = null;
     let handOpacity = 0.85;
     if (showFlood) {
-      const stageBoost = [0.45, 0.78, 1.0, 0.95][props.simStage] ?? 1.0;
-      const effectiveRain = props.simRain * stageBoost;
-      const level = effectiveRain < 55 ? 'low' : effectiveRain < 95 ? 'med' : 'high';
+      const accumulatedMm = props.simRain * ((props.simDurationMin * props.simProgress) / 60);
+      const effectiveLoad = props.simRain * 0.45 + accumulatedMm * 0.55;
+      const level = effectiveLoad < 45 ? 'low' : effectiveLoad < 105 ? 'med' : 'high';
       activeHandId = `hand-${props.simScenario}-${level}`;
-      handOpacity = props.simScenario === 'cleared' ? 0.72 : Math.min(0.92, 0.65 + (effectiveRain / 130) * 0.27);
+      const baseMax = props.simScenario === 'cleared' ? 0.72 : 0.9;
+      handOpacity = Math.min(baseMax, 0.28 + Math.min(1, props.simProgress * 1.15) * (baseMax - 0.28));
     }
     for (const hid of HAND_LAYERS) {
       const isOn = hid === activeHandId;
@@ -1022,8 +1049,9 @@ export function MapView(props: MapViewProps) {
     props.layers,
     props.flowDensity,
     props.tab,
-    props.simStage,
     props.simRain,
+    props.simDurationMin,
+    props.simProgress,
     props.simScenario,
     props.drainFilter,
     props.verifiedWaterways,
@@ -1151,33 +1179,6 @@ export function MapView(props: MapViewProps) {
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !mapLoadedRef.current) return;
-    const src = map.getSource('src-community') as GeoJSONSource | undefined;
-    if (src) {
-      src.setData(
-        asGeoInput({
-          type: 'FeatureCollection',
-          features: props.communityFeatures as unknown as GeoFeature[]
-        })
-      );
-    }
-  }, [mapReady, props.communityFeatures]);
-
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map || !mapLoadedRef.current) return;
-    if (draftMarkerRef.current) {
-      draftMarkerRef.current.remove();
-      draftMarkerRef.current = null;
-    }
-    if (props.draftGeom?.type === 'Point') {
-      const el = document.createElement('div');
-      el.className = 'marker-dot';
-      el.style.background = '#059669';
-      draftMarkerRef.current = new Marker({ element: el, anchor: 'center' })
-        .setLngLat(props.draftGeom.coordinates)
-        .addTo(map);
-    }
-
     const src = map.getSource('src-draw-preview') as GeoJSONSource | undefined;
     if (src) {
       const feats: GeoFeature[] = props.drawVertices.map(c => ({
@@ -1194,25 +1195,7 @@ export function MapView(props: MapViewProps) {
       }
       src.setData(asGeoInput({ type: 'FeatureCollection', features: feats }));
     }
-  }, [mapReady, props.draftGeom, props.drawVertices]);
-
-  // Suggestion location pin marker
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map || !mapLoadedRef.current) return;
-    if (suggestionMarkerRef.current) {
-      suggestionMarkerRef.current.remove();
-      suggestionMarkerRef.current = null;
-    }
-    if (props.suggestionPin) {
-      const el = document.createElement('div');
-      el.className = 'marker-dot';
-      el.style.background = '#d97706';
-      suggestionMarkerRef.current = new Marker({ element: el, anchor: 'center' })
-        .setLngLat(props.suggestionPin)
-        .addTo(map);
-    }
-  }, [mapReady, props.suggestionPin]);
+  }, [mapReady, props.drawVertices]);
 
   // Interactive draggable vertex & midpoint handles for waterway alignment correction
   useEffect(() => {

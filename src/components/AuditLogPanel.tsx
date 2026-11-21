@@ -14,14 +14,14 @@ interface AuditLogPanelProps {
 
 const ACTION_BADGE: Record<string, string> = {
   seed: 'bg-[#475569]/12 text-[#334155]',
-  create: 'bg-[#059669]/12 text-[#065f46]',
-  update: 'bg-[#0284c7]/12 text-[#0369a1]',
-  promote_dem: 'bg-[#0ea5e9]/15 text-[#0369a1]',
-  suppress_dem: 'bg-[#d97706]/14 text-[#92400e]',
-  restore_dem: 'bg-[#059669]/12 text-[#065f46]',
-  delete: 'bg-[#dc2626]/14 text-[#991b1b]',
-  revert: 'bg-[#7c3aed]/14 text-[#5b21b6]',
-  resolve_suggestion: 'bg-[#0d9488]/12 text-[#115e59]'
+  create: 'bg-[#047857]/12 text-[#047857]',
+  update: 'bg-[#0369a1]/12 text-[#0369a1]',
+  promote_dem: 'bg-[#0284c7]/14 text-[#0369a1]',
+  suppress_dem: 'bg-[#b45309]/14 text-[#b45309]',
+  restore_dem: 'bg-[#047857]/12 text-[#047857]',
+  delete: 'bg-[#b91c1c]/12 text-[#b91c1c]',
+  revert: 'bg-[#0f766e]/12 text-[#115e59]',
+  resolve_suggestion: 'bg-[#0f766e]/12 text-[#115e59]'
 };
 
 function summarizeDiff(log: AuditLogEntry, isEn: boolean): string {
@@ -29,18 +29,19 @@ function summarizeDiff(log: AuditLogEntry, isEn: boolean): string {
   const a = log.after as Record<string, unknown> | null;
   if (log.action === 'seed') {
     const count = Array.isArray(a?.seeded) ? a.seeded.length : 0;
-    return isEn ? `Seeded ${count} OSM waterways` : `Seed ${count} sungai awal OSM`;
+    return isEn ? `Seeded ${count} OSM waterways` : `Data awal ${count} sungai OSM`;
   }
   if (log.action === 'suppress_dem') {
-    return isEn ? 'DEM segment hidden from reference' : 'Segmen DEM disembunyikan';
+    return isEn ? 'DEM segment hidden from reference' : 'Perkiraan DEM disembunyikan';
   }
   if (log.action === 'restore_dem') {
-    return isEn ? 'DEM segment restored' : 'Segmen DEM dipulihkan';
+    return isEn ? 'DEM segment restored' : 'Perkiraan DEM dipulihkan';
   }
   if (b && a && Array.isArray(b.coordinates) && Array.isArray(a.coordinates)) {
     const bLen = Number(b.length_m || 0);
     const aLen = Number(a.length_m || 0);
-    const ptsChange = b.coordinates.length !== a.coordinates.length ? ` · ${b.coordinates.length}→${a.coordinates.length} pts` : '';
+    const ptsChange =
+      b.coordinates.length !== a.coordinates.length ? ` · ${b.coordinates.length}→${a.coordinates.length} pts` : '';
     const statusChange = b.status !== a.status ? ` · ${b.status}→${a.status}` : '';
     return `${bLen}m → ${aLen}m${ptsChange}${statusChange}`;
   }
@@ -71,16 +72,14 @@ export function AuditLogPanel({
   const [busyId, setBusyId] = useState<number | null>(null);
 
   return (
-    <div className="flex flex-col gap-2.5">
-      <div className="rounded-[11px] border border-[#12231c]/12 bg-white p-3 shadow-xs">
-        <div className="mb-1 text-[11px] font-extrabold tracking-wider text-[#64776f] uppercase">
-          {t.auditTitle}
-        </div>
-        <p className="m-0 text-[11.5px] leading-relaxed text-[#3f524a]">{t.auditSubtitle}</p>
-      </div>
+    <div className="flex flex-col gap-3">
+      <section className="rounded-xl border border-[#161c1a]/12 bg-white p-3.5">
+        <div className="mb-1 text-[13.5px] font-bold text-[#161c1a]">{t.auditTitle}</div>
+        <p className="m-0 text-[12.5px] leading-relaxed text-[#434d49]">{t.auditSubtitle}</p>
+      </section>
 
       {logs.length === 0 ? (
-        <div className="rounded-[11px] border border-dashed border-[#12231c]/15 bg-white/80 px-3 py-5 text-center text-xs text-[#64776f]">
+        <div className="rounded-xl border border-dashed border-[#161c1a]/15 bg-white px-3 py-6 text-center text-[13px] text-[#636f6a]">
           {t.auditEmpty}
         </div>
       ) : (
@@ -102,25 +101,25 @@ export function AuditLogPanel({
               <div
                 key={log.id}
                 data-testid={`audit-row-${log.id}`}
-                className="rounded-[11px] border border-[#12231c]/12 bg-white p-2.5 shadow-xs"
+                className="rounded-xl border border-[#161c1a]/12 bg-white p-3"
               >
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-1.5">
-                      <span className="font-mono-num text-[10px] font-bold text-[#64776f]">#{log.id}</span>
+                      <span className="font-mono-num text-[11px] font-bold text-[#636f6a]">#{log.id}</span>
                       <span
-                        className={`rounded-full px-1.5 py-0.5 text-[9.5px] font-extrabold uppercase ${
-                          ACTION_BADGE[log.action] || 'bg-[#eff4f1] text-[#3f524a]'
+                        className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${
+                          ACTION_BADGE[log.action] || 'bg-[#f2f3ef] text-[#434d49]'
                         }`}
                       >
                         {log.action}
                       </span>
-                      <strong className="truncate text-xs text-[#12231c]">{log.entity_name}</strong>
+                      <strong className="truncate text-[13px] text-[#161c1a]">{log.entity_name}</strong>
                     </div>
-                    <div className="mt-1 flex items-center gap-1.5 text-[10.5px] text-[#64776f]">
+                    <div className="mt-1 flex items-center gap-1.5 text-[12px] text-[#636f6a]">
                       <Clock className="h-3 w-3 shrink-0" />
                       <span>
-                        {timeStr} · <strong>{log.actor}</strong>
+                        {timeStr} · <strong className="text-[#434d49]">{log.actor}</strong>
                       </span>
                     </div>
                   </div>
@@ -128,19 +127,18 @@ export function AuditLogPanel({
                     type="button"
                     onClick={() => onFlyToLog(log)}
                     title={t.viewMap}
-                    className="grid h-6 w-6 shrink-0 place-items-center rounded border border-[#12231c]/15 bg-white text-[#3f524a] hover:bg-[#eff4f1]"
+                    aria-label={t.viewMap}
+                    className="grid h-8 w-8 shrink-0 place-items-center rounded-lg border border-[#161c1a]/15 bg-[#fafaf8] text-[#434d49] hover:bg-[#f2f3ef]"
                   >
-                    <Crosshair className="h-3 w-3" />
+                    <Crosshair className="h-3.5 w-3.5" />
                   </button>
                 </div>
 
-                {log.reason && <p className="mt-1.5 mb-0 text-[11.5px] text-[#3f524a]">“{log.reason}”</p>}
+                {log.reason && <p className="mt-1.5 mb-0 text-[12.5px] text-[#434d49]">“{log.reason}”</p>}
 
                 {(diffText || revertible) && (
-                  <div className="mt-2 flex items-center justify-between gap-2 border-t border-dashed border-[#12231c]/10 pt-1.5">
-                    <span className="font-mono-num text-[10.5px] font-semibold text-[#64776f]">
-                      {diffText}
-                    </span>
+                  <div className="mt-2 flex items-center justify-between gap-2 border-t border-[#161c1a]/10 pt-2">
+                    <span className="font-mono-num text-[11.5px] font-semibold text-[#636f6a]">{diffText}</span>
                     {revertible && (
                       <button
                         type="button"
@@ -159,13 +157,13 @@ export function AuditLogPanel({
                             setBusyId(null);
                           }
                         }}
-                        className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[10.5px] font-bold transition ${
+                        className={`inline-flex min-h-[32px] items-center gap-1 rounded-md border px-2.5 py-1 text-[12px] font-bold transition ${
                           isConfirm
-                            ? 'border-[#dc2626] bg-[#dc2626] text-white'
-                            : 'border-[#12231c]/15 bg-white text-[#3f524a] hover:bg-[#eff4f1]'
+                            ? 'border-[#b91c1c] bg-[#b91c1c] text-white'
+                            : 'border-[#161c1a]/15 bg-white text-[#434d49] hover:bg-[#f2f3ef]'
                         }`}
                       >
-                        <RotateCcw className="h-2.5 w-2.5" />
+                        <RotateCcw className="h-3 w-3" />
                         <span>{isConfirm ? t.auditRevertConfirm : t.auditRevertBtn}</span>
                       </button>
                     )}

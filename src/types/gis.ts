@@ -1,5 +1,6 @@
 export type Language = 'id' | 'en';
-export type TabId = 'terrain' | 'sim' | 'drainage' | 'field';
+export type ViewMode = 'simple' | 'detail';
+export type TabId = 'terrain' | 'sim' | 'drainage' | 'editor';
 export type BasemapId = 'sat' | 'elev' | 'relief' | 'slope' | 'topo' | 'osm';
 export type DrainageStatus = 'normal' | 'clogged' | 'damaged' | 'critical';
 export type WaterwayKind = 'river' | 'stream' | 'canal' | 'drain' | 'culvert';
@@ -10,10 +11,7 @@ export type ActiveTool =
   | 'raindrop'
   | 'profileA'
   | 'profileB'
-  | 'addPoint'
-  | 'drawLine'
-  | 'drawWaterway'
-  | 'pickSuggestion';
+  | 'drawWaterway';
 
 export type GeoProperties = Record<string, string | number | boolean | null | undefined>;
 

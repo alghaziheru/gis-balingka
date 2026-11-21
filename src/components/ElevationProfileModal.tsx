@@ -44,13 +44,13 @@ export function ElevationProfileModal({
 
   return (
     <div
-      className={`glass absolute right-64 bottom-12 z-17 flex max-w-[680px] flex-col gap-2 rounded-2xl px-3.5 py-2.5 transition-all max-md:right-2 max-md:bottom-[50vh] max-md:left-2 ${
-        sidebarCollapsed ? 'left-4' : 'left-[410px]'
+      className={`surface-panel absolute right-72 bottom-12 z-17 flex max-w-[680px] flex-col gap-2 rounded-2xl px-4 py-3 transition-all max-md:right-2 max-md:bottom-[154px] max-md:left-2 ${
+        sidebarCollapsed ? 'left-4' : 'left-[404px]'
       }`}
     >
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <strong className="text-xs font-extrabold text-[#12231c]">{t.profTitle}</strong>
-        <div className="font-mono-num flex flex-wrap gap-3 text-[11px] text-[#3f524a]">
+        <strong className="text-[13.5px] font-bold text-[#161c1a]">{t.profTitle}</strong>
+        <div className="font-mono-num flex flex-wrap gap-3 text-[12px] text-[#434d49]">
           <span>{Math.round(totalDistM)} m</span>
           <span>
             {Math.round(minElev)}–{Math.round(maxElev)} mdpl
@@ -62,7 +62,7 @@ export function ElevationProfileModal({
         <button
           type="button"
           onClick={onClose}
-          className="rounded-lg border border-[#12231c]/15 bg-white px-2.5 py-1 text-[11px] font-bold text-[#12231c] hover:bg-[#eff4f1]"
+          className="min-h-[32px] rounded-lg border border-[#161c1a]/15 bg-white px-3 py-1 text-[12px] font-semibold text-[#161c1a] hover:bg-[#f2f3ef]"
         >
           {t.close}
         </button>
@@ -88,12 +88,6 @@ export function ElevationProfileModal({
             onHoverSample(null);
           }}
         >
-          <defs>
-            <linearGradient id="elevProfileGrad" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="#0284c7" stopOpacity="0.34" />
-              <stop offset="100%" stopColor="#0284c7" stopOpacity="0.03" />
-            </linearGradient>
-          </defs>
           {[0, 0.5, 1].map(fr => {
             const y = padT + fr * plotH;
             const eVal = Math.round(eHi - fr * (eHi - eLo));
@@ -104,17 +98,17 @@ export function ElevationProfileModal({
                   y1={y}
                   x2={padL + plotW}
                   y2={y}
-                  stroke="rgba(18,35,28,0.12)"
+                  stroke="rgba(22,28,26,0.12)"
                   strokeDasharray="3 3"
                 />
-                <text x={padL - 5} y={y + 3} textAnchor="end" fontSize="9.5" fill="#64776f" fontFamily="monospace">
+                <text x={padL - 5} y={y + 3} textAnchor="end" fontSize="9.5" fill="#636f6a" fontFamily="monospace">
                   {eVal}m
                 </text>
               </g>
             );
           })}
-          <polygon points={areaPts} fill="url(#elevProfileGrad)" />
-          <polyline points={polylinePts} fill="none" stroke="#0284c7" strokeWidth="2.5" strokeLinejoin="round" />
+          <polygon points={areaPts} fill="rgba(3,105,161,0.14)" />
+          <polyline points={polylinePts} fill="none" stroke="#0369a1" strokeWidth="2.5" strokeLinejoin="round" />
           {hoverInfo && (
             <>
               <line
@@ -122,22 +116,22 @@ export function ElevationProfileModal({
                 y1={padT}
                 x2={hoverInfo.x}
                 y2={padT + plotH}
-                stroke="#12231c"
+                stroke="#161c1a"
                 strokeWidth="1.2"
                 strokeDasharray="3 2"
               />
-              <circle cx={hoverInfo.x} cy={hoverInfo.y} r="4.2" fill="#dc2626" stroke="#ffffff" strokeWidth="1.5" />
+              <circle cx={hoverInfo.x} cy={hoverInfo.y} r="4.2" fill="#b91c1c" stroke="#ffffff" strokeWidth="1.5" />
             </>
           )}
-          <text x={padL} y={H - 5} fontSize="9.5" fill="#64776f" fontFamily="monospace">
+          <text x={padL} y={H - 5} fontSize="9.5" fill="#636f6a" fontFamily="monospace">
             A · 0 m
           </text>
-          <text x={padL + plotW} y={H - 5} textAnchor="end" fontSize="9.5" fill="#64776f" fontFamily="monospace">
+          <text x={padL + plotW} y={H - 5} textAnchor="end" fontSize="9.5" fill="#636f6a" fontFamily="monospace">
             B · {Math.round(maxDist)} m
           </text>
         </svg>
         {hoverInfo && (
-          <div className="font-mono-num pointer-events-none absolute top-1 right-1.5 rounded-md bg-[#12231c]/90 px-2 py-0.5 text-[11px] font-bold text-white">
+          <div className="font-mono-num pointer-events-none absolute top-1 right-1.5 rounded-md bg-[#161c1a] px-2.5 py-0.5 text-[11.5px] font-bold text-white">
             {Math.round(hoverInfo.dist)} m · {Math.round(hoverInfo.elev)} mdpl
           </div>
         )}
