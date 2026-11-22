@@ -4,6 +4,7 @@ import http from 'node:http';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { createStore, DEFAULT_DB_PATH, DEFAULT_SEED_PATH } from './db.mjs';
+import { writeVerifiedSeedFiles } from './seed-io.mjs';
 import { recomputeHydrologyFromLocalData } from '../scripts/lib/recompute-hydrology.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -177,6 +178,10 @@ export function createAppServer({
         return sendJson(res, 200, store.getState());
       }
 
+      if (method === 'GET' && pathname === '/api/structures') {
+        return sendJson(res, 200, { structures: store.getState().structures });
+      }
+
       if (method === 'GET' && pathname === '/api/audit') {
         const limit = Number(url.searchParams.get('limit') || 150);
         return sendJson(res, 200, { logs: store.listAuditLogs(limit) });
@@ -204,6 +209,9 @@ export function createAppServer({
         (method === 'POST' && pathname === '/api/waterways') ||
         (method === 'PUT' && pathname.startsWith('/api/waterways/')) ||
         (method === 'DELETE' && pathname.startsWith('/api/waterways/')) ||
+        (method === 'POST' && pathname === '/api/structures') ||
+        (method === 'PUT' && pathname.startsWith('/api/structures/')) ||
+        (method === 'DELETE' && pathname.startsWith('/api/structures/')) ||
         (method === 'POST' && pathname === '/api/dem-segments/suppress') ||
         (method === 'DELETE' && pathname.startsWith('/api/dem-segments/')) ||
         (method === 'POST' && /^\/api\/audit\/\d+\/revert$/.test(pathname)) ||
@@ -229,6 +237,24 @@ export function createAppServer({
       if (wwMatch && method === 'DELETE') {
         const body = await readJsonBody(req, 16 * 1024).catch(() => ({}));
         const result = store.deleteWaterway(wwMatch[1], body);
+        return sendJson(res, 200, result);
+      }
+
+      if (method === 'POST' && pathname === '/api/structures') {
+        const body = await readJsonBody(req, 64 * 1024);
+        const result = store.createStructure(body);
+        return sendJson(res, 201, result);
+      }
+
+      const stMatch = pathname.match(/^\/api\/structures\/([^/]+)$/);
+      if (stMatch && method === 'PUT') {
+        const body = await readJsonBody(req, 64 * 1024);
+        const result = store.updateStructure(stMatch[1], body);
+        return sendJson(res, 200, result);
+      }
+      if (stMatch && method === 'DELETE') {
+        const body = await readJsonBody(req, 16 * 1024).catch(() => ({}));
+        const result = store.deleteStructure(stMatch[1], body);
         return sendJson(res, 200, result);
       }
 
@@ -261,6 +287,7 @@ export function createAppServer({
           publicDataDir,
           distDataDir: distDir ? path.join(distDir, 'data') : null,
           verifiedFeatures: currentState.waterways.features,
+          verifiedStructures: currentState.structures.features,
           suppressedDemIds: new Set(currentState.suppressedDem.map(s => s.seg_id)),
           carveDepthM
         });
@@ -271,6 +298,10 @@ export function createAppServer({
           recomputedAt: summary.recomputedAt,
           summary
         });
+        writeVerifiedSeedFiles(marked.state, [
+          publicDataDir,
+          distDir ? path.join(distDir, 'data') : null
+        ]);
         return sendJson(res, 200, {
           ok: true,
           summary,

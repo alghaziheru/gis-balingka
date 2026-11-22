@@ -55,9 +55,16 @@ export function TelemetryDock({
       onChange: v => onToggleLayer('verifiedWaterways', v)
     });
     mobileToggleItems.push({
+      id: 'st',
+      label: t.lblStructures,
+      color: '#047857',
+      checked: layers.structures,
+      onChange: v => onToggleLayer('structures', v)
+    });
+    mobileToggleItems.push({
       id: 'flow',
       label: t.lblFlowSimple,
-      color: '#38bdf8',
+      color: '#b45309',
       checked: flowDensity > 0,
       onChange: v => onChangeFlowDensity(v ? 1 : 0)
     });
@@ -179,22 +186,29 @@ export function TelemetryDock({
               {tab === 'sim' && (
                 <div className="mb-2 flex flex-col gap-1 border-b border-[#161c1a]/10 pb-2 text-[12px]">
                   <div className="flex items-center gap-2 text-[#161c1a]">
-                    <span className="h-2.5 w-2.5 shrink-0 rounded-[2px] bg-[#b91c1c]" />
-                    <span>{isEn ? 'High flood risk' : 'Genangan tinggi'}</span>
+                    <span className="h-0 w-3 shrink-0 border-t-2 border-dashed border-[#b45309]" />
+                    <span>{isEn ? 'Rain runoff path (DEM)' : 'Arah air limpasan hujan'}</span>
+                  </div>
+                  <div className="flex items-center gap-2 text-[#161c1a]">
+                    <span className="h-2.5 w-2.5 shrink-0 rounded-[2px] bg-[#0369a1]" />
+                    <span>{isEn ? 'Valley corridor (≤0.8m)' : 'Dasar lembah (≤0,8m)'}</span>
                   </div>
                   <div className="flex items-center gap-2 text-[#161c1a]">
                     <span className="h-2.5 w-2.5 shrink-0 rounded-[2px] bg-[#0284c7]" />
-                    <span>{isEn ? 'Moderate flood risk' : 'Genangan sedang'}</span>
+                    <span>{isEn ? 'Low terrain (≤1.8m)' : 'Tanah rendah (≤1,8m)'}</span>
                   </div>
                   <div className="flex items-center gap-2 text-[#161c1a]">
-                    <span className="h-2.5 w-2.5 shrink-0 rounded-[2px] bg-[#38bdf8]" />
-                    <span>{isEn ? 'Outer spread' : 'Zona perluasan'}</span>
+                    <span className="h-2.5 w-2.5 shrink-0 rounded-[2px] bg-[#7dd3fc]" />
+                    <span>{isEn ? 'Outer basin (≤3.2m)' : 'Cekungan luar (≤3,2m)'}</span>
                   </div>
                 </div>
               )}
 
               {tab === 'drainage' && (
                 <div className="mb-2 flex flex-wrap gap-x-3 gap-y-1 border-b border-[#161c1a]/10 pb-2 text-[11.5px] text-[#434d49]">
+                  <span className="inline-flex items-center gap-1">
+                    <span className="h-2.5 w-2.5 rounded-full border border-[#475569] bg-[#e2e8f0]" /> {t.fUnverified}
+                  </span>
                   <span className="inline-flex items-center gap-1">
                     <span className="h-2.5 w-2.5 rounded-full bg-[#b91c1c]" /> {t.fCritical}
                   </span>

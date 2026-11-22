@@ -3,6 +3,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
+import { readVerifiedSeedFiles } from './seed-io.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
@@ -11,6 +12,7 @@ export const DEFAULT_DB_PATH = path.join(ROOT, 'data', 'balingka.db');
 export const DEFAULT_SEED_PATH = path.join(ROOT, 'public', 'data', 'osm-context.geojson');
 
 const VALID_KINDS = new Set(['river', 'stream', 'canal', 'drain', 'culvert']);
+const VALID_STRUCTURE_KINDS = new Set(['culvert', 'bridge']);
 const VALID_STATUSES = new Set(['normal', 'clogged', 'damaged', 'critical']);
 const VALID_SUGGESTION_STATUSES = new Set(['open', 'reviewing', 'resolved', 'rejected']);
 
@@ -63,6 +65,64 @@ function normalizeKind(kind, fallback = 'stream') {
 function normalizeStatus(status, fallback = 'normal') {
   const s = String(status || fallback).trim().toLowerCase();
   return VALID_STATUSES.has(s) ? s : fallback;
+}
+
+function normalizeStructureKind(kind, fallback = 'culvert') {
+  const k = String(kind || fallback).trim().toLowerCase();
+  return VALID_STRUCTURE_KINDS.has(k) ? k : fallback;
+}
+
+function normalizePoint(lngInput, latInput) {
+  const lng = Number(lngInput);
+  const lat = Number(latInput);
+  if (!Number.isFinite(lng) || !Number.isFinite(lat)) {
+    throw new Error('Point coordinates must contain finite numbers.');
+  }
+  if (lng < 99.5 || lng > 101.5 || lat < -1.5 || lat > 0.5) {
+    throw new Error('Coordinates must stay within the Agam / Balingka region bounds.');
+  }
+  return [Number(lng.toFixed(6)), Number(lat.toFixed(6))];
+}
+
+function structureRowToFeature(row) {
+  return {
+    type: 'Feature',
+    properties: {
+      id: row.id,
+      name: row.name,
+      kind: row.kind,
+      status: row.status,
+      source: row.source,
+      source_ref: row.source_ref || null,
+      size_note: row.size_note || '',
+      notes: row.notes || '',
+      updated_by: row.updated_by,
+      updated_at: row.updated_at
+    },
+    geometry: {
+      type: 'Point',
+      coordinates: [row.lng, row.lat]
+    }
+  };
+}
+
+function structureRowToSnapshot(row) {
+  return {
+    id: row.id,
+    name: row.name,
+    kind: row.kind,
+    status: row.status,
+    source: row.source,
+    source_ref: row.source_ref || null,
+    size_note: row.size_note || '',
+    notes: row.notes || '',
+    lng: row.lng,
+    lat: row.lat,
+    coordinates: [row.lng, row.lat],
+    updated_by: row.updated_by,
+    updated_at: row.updated_at,
+    deleted: Boolean(row.deleted)
+  };
 }
 
 function rowToFeature(row) {
@@ -184,6 +244,22 @@ export function createStore(dbPath = DEFAULT_DB_PATH, seedGeoJsonPath = DEFAULT_
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS structures (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      status TEXT NOT NULL,
+      source TEXT NOT NULL,
+      source_ref TEXT,
+      size_note TEXT NOT NULL DEFAULT '',
+      notes TEXT NOT NULL DEFAULT '',
+      lng REAL NOT NULL,
+      lat REAL NOT NULL,
+      updated_by TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      deleted INTEGER NOT NULL DEFAULT 0
+    );
   `);
 
   function getMeta(key, fallback = null) {
@@ -237,17 +313,12 @@ export function createStore(dbPath = DEFAULT_DB_PATH, seedGeoJsonPath = DEFAULT_
     return parseLogRow(row);
   }
 
-  function seedFromOsmIfNeeded() {
+  function seedInitialDataIfNeeded() {
     const wwCount = db.prepare('SELECT COUNT(*) AS cnt FROM waterways').get().cnt;
+    const stCount = db.prepare('SELECT COUNT(*) AS cnt FROM structures').get().cnt;
     const logCount = db.prepare('SELECT COUNT(*) AS cnt FROM audit_logs').get().cnt;
-    if (wwCount > 0 || logCount > 0) return;
-    if (!seedGeoJsonPath || !fs.existsSync(seedGeoJsonPath)) return;
-
-    const raw = JSON.parse(fs.readFileSync(seedGeoJsonPath, 'utf8'));
-    const osmRivers = (raw.features || []).filter(
-      f => f?.properties?.kind === 'waterway' && f?.geometry?.type === 'LineString'
-    );
-    if (osmRivers.length === 0) return;
+    if (wwCount > 0 || stCount > 0 || logCount > 0) return;
+    if (!seedGeoJsonPath) return;
 
     const now = new Date().toISOString();
     const insertWw = db.prepare(`
@@ -256,6 +327,106 @@ export function createStore(dbPath = DEFAULT_DB_PATH, seedGeoJsonPath = DEFAULT_
         coordinates_json, length_m, updated_by, updated_at, deleted
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
     `);
+    const insertSt = db.prepare(`
+      INSERT INTO structures (
+        id, name, kind, status, source, source_ref, size_note, notes,
+        lng, lat, updated_by, updated_at, deleted
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+    `);
+    const insertSup = db.prepare(`
+      INSERT INTO suppressed_dem_segments (seg_id, reason, replaced_by_waterway_id, updated_by, updated_at)
+      VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(seg_id) DO NOTHING
+    `);
+
+    const seedDir = path.dirname(seedGeoJsonPath);
+    const verifiedSeed = readVerifiedSeedFiles(seedDir);
+
+    if (verifiedSeed.hasVerifiedWaterways) {
+      const seededSummary = [];
+      for (let idx = 0; idx < verifiedSeed.waterways.length; idx++) {
+        const f = verifiedSeed.waterways[idx];
+        const p = f.properties || {};
+        let coords;
+        try {
+          coords = normalizeCoordinates(f.geometry?.coordinates);
+        } catch {
+          continue;
+        }
+        const id = String(p.id || `ww-seed-${idx + 1}`).trim();
+        const name = String(p.name || `Alur #${idx + 1}`).trim();
+        const kind = normalizeKind(p.kind, 'stream');
+        const status = normalizeStatus(p.status, 'normal');
+        const source = ['osm', 'dem_promoted', 'manual'].includes(p.source) ? p.source : 'manual';
+        const sourceRef = p.source_ref ? String(p.source_ref) : null;
+        const notes = String(p.notes || '');
+        const lengthM = computeLineLengthMeters(coords);
+        const updatedBy = String(p.updated_by || 'System (Git Seed)');
+        const updatedAt = String(p.updated_at || now);
+        insertWw.run(id, name, kind, status, source, sourceRef, notes, JSON.stringify(coords), lengthM, updatedBy, updatedAt);
+        seededSummary.push({ id, name, kind, length_m: lengthM });
+      }
+
+      let seededStructures = 0;
+      for (let idx = 0; idx < verifiedSeed.structures.length; idx++) {
+        const f = verifiedSeed.structures[idx];
+        const p = f.properties || {};
+        let pt;
+        try {
+          pt = normalizePoint(f.geometry?.coordinates?.[0], f.geometry?.coordinates?.[1]);
+        } catch {
+          continue;
+        }
+        const id = String(p.id || `st-seed-${idx + 1}`).trim();
+        const name = String(p.name || `Titik #${idx + 1}`).trim();
+        const kind = normalizeStructureKind(p.kind, 'culvert');
+        const status = normalizeStatus(p.status, 'normal');
+        const source = ['manual', 'crossing_promoted', 'osm'].includes(p.source) ? p.source : 'manual';
+        const sourceRef = p.source_ref ? String(p.source_ref) : null;
+        const sizeNote = String(p.size_note || '');
+        const notes = String(p.notes || '');
+        const updatedBy = String(p.updated_by || 'System (Git Seed)');
+        const updatedAt = String(p.updated_at || now);
+        insertSt.run(id, name, kind, status, source, sourceRef, sizeNote, notes, pt[0], pt[1], updatedBy, updatedAt);
+        seededStructures += 1;
+      }
+
+      let seededSuppressed = 0;
+      for (const s of verifiedSeed.suppressedDem) {
+        if (!s?.seg_id) continue;
+        insertSup.run(
+          String(s.seg_id),
+          String(s.reason || ''),
+          s.replaced_by_waterway_id ? String(s.replaced_by_waterway_id) : null,
+          String(s.updated_by || 'System (Git Seed)'),
+          String(s.updated_at || now)
+        );
+        seededSuppressed += 1;
+      }
+
+      if (seededSummary.length > 0) {
+        appendAudit({
+          createdAt: now,
+          actor: 'System (Git Seed)',
+          action: 'seed',
+          entityType: 'system',
+          entityId: 'verified-seed',
+          entityName: `Seed ${seededSummary.length} Jalur${seededStructures ? ` & ${seededStructures} Titik` : ''} Terverifikasi`,
+          reason: 'Inisialisasi database SQLite dari snapshot GeoJSON terverifikasi di repo.',
+          before: null,
+          after: { seeded: seededSummary, structureCount: seededStructures, suppressedCount: seededSuppressed }
+        });
+        return;
+      }
+    }
+
+    if (!fs.existsSync(seedGeoJsonPath)) return;
+
+    const raw = JSON.parse(fs.readFileSync(seedGeoJsonPath, 'utf8'));
+    const osmRivers = (raw.features || []).filter(
+      f => f?.properties?.kind === 'waterway' && f?.geometry?.type === 'LineString'
+    );
+    if (osmRivers.length === 0) return;
 
     const seededSummary = [];
     for (let idx = 0; idx < osmRivers.length; idx++) {
@@ -291,7 +462,7 @@ export function createStore(dbPath = DEFAULT_DB_PATH, seedGeoJsonPath = DEFAULT_
     }
   }
 
-  seedFromOsmIfNeeded();
+  seedInitialDataIfNeeded();
 
   return {
     getHydroStatus() {
@@ -310,6 +481,9 @@ export function createStore(dbPath = DEFAULT_DB_PATH, seedGeoJsonPath = DEFAULT_
       const wwRows = db
         .prepare('SELECT * FROM waterways WHERE deleted = 0 ORDER BY updated_at DESC, name ASC')
         .all();
+      const stRows = db
+        .prepare('SELECT * FROM structures WHERE deleted = 0 ORDER BY updated_at DESC, name ASC')
+        .all();
       const supRows = db
         .prepare('SELECT * FROM suppressed_dem_segments ORDER BY updated_at DESC')
         .all();
@@ -317,6 +491,10 @@ export function createStore(dbPath = DEFAULT_DB_PATH, seedGeoJsonPath = DEFAULT_
         waterways: {
           type: 'FeatureCollection',
           features: wwRows.map(rowToFeature)
+        },
+        structures: {
+          type: 'FeatureCollection',
+          features: stRows.map(structureRowToFeature)
         },
         suppressedDem: supRows.map(r => ({
           seg_id: r.seg_id,
@@ -327,6 +505,130 @@ export function createStore(dbPath = DEFAULT_DB_PATH, seedGeoJsonPath = DEFAULT_
         })),
         hydroStatus: this.getHydroStatus()
       };
+    },
+
+    createStructure(payload) {
+      const name = String(payload?.name || '').trim();
+      if (!name) throw new Error('Structure name is required.');
+      const coordInput = Array.isArray(payload?.coordinates)
+        ? payload.coordinates
+        : [payload?.lng, payload?.lat];
+      const [lng, lat] = normalizePoint(coordInput[0], coordInput[1]);
+      const kind = normalizeStructureKind(payload?.kind, 'culvert');
+      const status = normalizeStatus(payload?.status, 'normal');
+      const source = ['manual', 'crossing_promoted', 'osm'].includes(payload?.source)
+        ? payload.source
+        : 'manual';
+      const sourceRef = payload?.source_ref ? String(payload.source_ref).trim() : null;
+      const sizeNote = String(payload?.size_note || '').trim().slice(0, 120);
+      const notes = String(payload?.notes || '').trim();
+      const actor = String(payload?.actor || 'Editor').trim() || 'Editor';
+      const reason =
+        String(payload?.reason || '').trim() ||
+        (source === 'crossing_promoted'
+          ? 'Verifikasi titik perlintasan gorong-gorong / jembatan'
+          : 'Tambah titik gorong-gorong / jembatan terverifikasi');
+      const id = `st-${crypto.randomUUID().slice(0, 8)}`;
+      const now = new Date().toISOString();
+
+      db.prepare(`
+        INSERT INTO structures (
+          id, name, kind, status, source, source_ref, size_note, notes,
+          lng, lat, updated_by, updated_at, deleted
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+      `).run(id, name, kind, status, source, sourceRef, sizeNote, notes, lng, lat, actor, now);
+
+      const row = db.prepare('SELECT * FROM structures WHERE id = ?').get(id);
+      const snapshot = structureRowToSnapshot(row);
+      markHydroDirty();
+      const log = appendAudit({
+        createdAt: now,
+        actor,
+        action: source === 'crossing_promoted' ? 'verify_crossing' : 'create_structure',
+        entityType: 'structure',
+        entityId: id,
+        entityName: name,
+        reason,
+        before: null,
+        after: snapshot
+      });
+      return { feature: structureRowToFeature(row), log };
+    },
+
+    updateStructure(id, payload) {
+      const existing = db.prepare('SELECT * FROM structures WHERE id = ? AND deleted = 0').get(id);
+      if (!existing) {
+        const err = new Error('Structure not found.');
+        err.statusCode = 404;
+        throw err;
+      }
+      const before = structureRowToSnapshot(existing);
+      const name = payload?.name !== undefined ? String(payload.name).trim() : existing.name;
+      if (!name) throw new Error('Structure name cannot be empty.');
+      const kind = payload?.kind !== undefined ? normalizeStructureKind(payload.kind, existing.kind) : existing.kind;
+      const status = payload?.status !== undefined ? normalizeStatus(payload.status, existing.status) : existing.status;
+      const sizeNote = payload?.size_note !== undefined ? String(payload.size_note).trim().slice(0, 120) : existing.size_note;
+      const notes = payload?.notes !== undefined ? String(payload.notes).trim() : existing.notes;
+      let lng = existing.lng;
+      let lat = existing.lat;
+      if (Array.isArray(payload?.coordinates) && payload.coordinates.length >= 2) {
+        [lng, lat] = normalizePoint(payload.coordinates[0], payload.coordinates[1]);
+      } else if (payload?.lng !== undefined && payload?.lat !== undefined) {
+        [lng, lat] = normalizePoint(payload.lng, payload.lat);
+      }
+      const actor = String(payload?.actor || 'Editor').trim() || 'Editor';
+      const reason = String(payload?.reason || '').trim() || 'Perbarui kondisi gorong-gorong / jembatan';
+      const now = new Date().toISOString();
+
+      db.prepare(`
+        UPDATE structures
+        SET name = ?, kind = ?, status = ?, size_note = ?, notes = ?, lng = ?, lat = ?, updated_by = ?, updated_at = ?
+        WHERE id = ?
+      `).run(name, kind, status, sizeNote, notes, lng, lat, actor, now, id);
+
+      const updated = db.prepare('SELECT * FROM structures WHERE id = ?').get(id);
+      const after = structureRowToSnapshot(updated);
+      markHydroDirty();
+      const log = appendAudit({
+        createdAt: now,
+        actor,
+        action: 'update_structure',
+        entityType: 'structure',
+        entityId: id,
+        entityName: name,
+        reason,
+        before,
+        after
+      });
+      return { feature: structureRowToFeature(updated), log };
+    },
+
+    deleteStructure(id, payload = {}) {
+      const existing = db.prepare('SELECT * FROM structures WHERE id = ? AND deleted = 0').get(id);
+      if (!existing) {
+        const err = new Error('Structure not found.');
+        err.statusCode = 404;
+        throw err;
+      }
+      const before = structureRowToSnapshot(existing);
+      const actor = String(payload?.actor || 'Editor').trim() || 'Editor';
+      const reason = String(payload?.reason || '').trim() || 'Hapus titik gorong-gorong / jembatan';
+      const now = new Date().toISOString();
+
+      db.prepare('UPDATE structures SET deleted = 1, updated_by = ?, updated_at = ? WHERE id = ?').run(actor, now, id);
+      markHydroDirty();
+      const log = appendAudit({
+        createdAt: now,
+        actor,
+        action: 'delete_structure',
+        entityType: 'structure',
+        entityId: id,
+        entityName: existing.name,
+        reason,
+        before,
+        after: null
+      });
+      return { deletedId: id, log };
     },
 
     createWaterway(payload) {
@@ -666,6 +968,83 @@ export function createStore(dbPath = DEFAULT_DB_PATH, seedGeoJsonPath = DEFAULT_
         return { log, state: this.getState() };
       }
 
+      if (target.entity_type === 'structure') {
+        const curRow = db.prepare('SELECT * FROM structures WHERE id = ?').get(target.entity_id);
+        const currentSnapshot = curRow && !curRow.deleted ? structureRowToSnapshot(curRow) : null;
+
+        if (!target.before) {
+          db.prepare('UPDATE structures SET deleted = 1, updated_by = ?, updated_at = ? WHERE id = ?').run(
+            actor,
+            now,
+            target.entity_id
+          );
+          markHydroDirty();
+          const log = appendAudit({
+            createdAt: now,
+            actor,
+            action: 'revert',
+            entityType: 'structure',
+            entityId: target.entity_id,
+            entityName: target.entity_name,
+            reason,
+            before: currentSnapshot,
+            after: null,
+            revertedLogId: target.id
+          });
+          return { log, state: this.getState() };
+        }
+
+        const snap = target.before;
+        const [lng, lat] = normalizePoint(snap.lng ?? snap.coordinates?.[0], snap.lat ?? snap.coordinates?.[1]);
+        db.prepare(`
+          INSERT INTO structures (
+            id, name, kind, status, source, source_ref, size_note, notes,
+            lng, lat, updated_by, updated_at, deleted
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+          ON CONFLICT(id) DO UPDATE SET
+            name = excluded.name,
+            kind = excluded.kind,
+            status = excluded.status,
+            source = excluded.source,
+            source_ref = excluded.source_ref,
+            size_note = excluded.size_note,
+            notes = excluded.notes,
+            lng = excluded.lng,
+            lat = excluded.lat,
+            updated_by = excluded.updated_by,
+            updated_at = excluded.updated_at,
+            deleted = 0
+        `).run(
+          snap.id,
+          snap.name,
+          normalizeStructureKind(snap.kind, 'culvert'),
+          normalizeStatus(snap.status, 'normal'),
+          snap.source || 'manual',
+          snap.source_ref || null,
+          snap.size_note || '',
+          snap.notes || '',
+          lng,
+          lat,
+          actor,
+          now
+        );
+        const restoredRow = db.prepare('SELECT * FROM structures WHERE id = ?').get(snap.id);
+        markHydroDirty();
+        const log = appendAudit({
+          createdAt: now,
+          actor,
+          action: 'revert',
+          entityType: 'structure',
+          entityId: snap.id,
+          entityName: snap.name,
+          reason,
+          before: currentSnapshot,
+          after: structureRowToSnapshot(restoredRow),
+          revertedLogId: target.id
+        });
+        return { log, state: this.getState() };
+      }
+
       throw new Error(`Audit log of type "${target.entity_type}" cannot be reverted.`);
     },
 
@@ -776,6 +1155,137 @@ export function createStore(dbPath = DEFAULT_DB_PATH, seedGeoJsonPath = DEFAULT_
       return updated;
     },
 
+    importSeedSnapshot({
+      waterways = [],
+      structures = [],
+      suppressedDem = [],
+      actor = 'CLI (import-seed)',
+      reason = 'Impor snapshot GeoJSON terverifikasi dari Git'
+    }) {
+      const now = new Date().toISOString();
+      const upsertWw = db.prepare(`
+        INSERT INTO waterways (
+          id, name, kind, status, source, source_ref, notes,
+          coordinates_json, length_m, updated_by, updated_at, deleted
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+        ON CONFLICT(id) DO UPDATE SET
+          name = excluded.name,
+          kind = excluded.kind,
+          status = excluded.status,
+          source = excluded.source,
+          source_ref = excluded.source_ref,
+          notes = excluded.notes,
+          coordinates_json = excluded.coordinates_json,
+          length_m = excluded.length_m,
+          updated_by = excluded.updated_by,
+          updated_at = excluded.updated_at,
+          deleted = 0
+      `);
+      const upsertSt = db.prepare(`
+        INSERT INTO structures (
+          id, name, kind, status, source, source_ref, size_note, notes,
+          lng, lat, updated_by, updated_at, deleted
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+        ON CONFLICT(id) DO UPDATE SET
+          name = excluded.name,
+          kind = excluded.kind,
+          status = excluded.status,
+          source = excluded.source,
+          source_ref = excluded.source_ref,
+          size_note = excluded.size_note,
+          notes = excluded.notes,
+          lng = excluded.lng,
+          lat = excluded.lat,
+          updated_by = excluded.updated_by,
+          updated_at = excluded.updated_at,
+          deleted = 0
+      `);
+      const upsertSup = db.prepare(`
+        INSERT INTO suppressed_dem_segments (seg_id, reason, replaced_by_waterway_id, updated_by, updated_at)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(seg_id) DO UPDATE SET
+          reason = excluded.reason,
+          replaced_by_waterway_id = excluded.replaced_by_waterway_id,
+          updated_by = excluded.updated_by,
+          updated_at = excluded.updated_at
+      `);
+
+      let importedWaterways = 0;
+      let importedStructures = 0;
+      let importedSuppressed = 0;
+
+      db.exec('BEGIN;');
+      try {
+        for (let idx = 0; idx < waterways.length; idx++) {
+          const f = waterways[idx];
+          const p = f?.properties || {};
+          const id = String(p.id || '').trim();
+          if (!id) continue;
+          const coords = normalizeCoordinates(f.geometry?.coordinates);
+          const name = String(p.name || `Alur #${idx + 1}`).trim();
+          const kind = normalizeKind(p.kind, 'stream');
+          const status = normalizeStatus(p.status, 'normal');
+          const source = ['osm', 'dem_promoted', 'manual'].includes(p.source) ? p.source : 'manual';
+          const sourceRef = p.source_ref ? String(p.source_ref) : null;
+          const notes = String(p.notes || '');
+          const lengthM = computeLineLengthMeters(coords);
+          const updatedBy = String(p.updated_by || actor);
+          const updatedAt = String(p.updated_at || now);
+          upsertWw.run(id, name, kind, status, source, sourceRef, notes, JSON.stringify(coords), lengthM, updatedBy, updatedAt);
+          importedWaterways += 1;
+        }
+
+        for (let idx = 0; idx < structures.length; idx++) {
+          const f = structures[idx];
+          const p = f?.properties || {};
+          const id = String(p.id || '').trim();
+          if (!id) continue;
+          const pt = normalizePoint(f.geometry?.coordinates?.[0], f.geometry?.coordinates?.[1]);
+          const name = String(p.name || `Titik #${idx + 1}`).trim();
+          const kind = normalizeStructureKind(p.kind, 'culvert');
+          const status = normalizeStatus(p.status, 'normal');
+          const source = ['manual', 'crossing_promoted', 'osm'].includes(p.source) ? p.source : 'manual';
+          const sourceRef = p.source_ref ? String(p.source_ref) : null;
+          const sizeNote = String(p.size_note || '');
+          const notes = String(p.notes || '');
+          const updatedBy = String(p.updated_by || actor);
+          const updatedAt = String(p.updated_at || now);
+          upsertSt.run(id, name, kind, status, source, sourceRef, sizeNote, notes, pt[0], pt[1], updatedBy, updatedAt);
+          importedStructures += 1;
+        }
+
+        for (const s of suppressedDem) {
+          if (!s?.seg_id) continue;
+          upsertSup.run(
+            String(s.seg_id),
+            String(s.reason || ''),
+            s.replaced_by_waterway_id ? String(s.replaced_by_waterway_id) : null,
+            String(s.updated_by || actor),
+            String(s.updated_at || now)
+          );
+          importedSuppressed += 1;
+        }
+        db.exec('COMMIT;');
+      } catch (err) {
+        db.exec('ROLLBACK;');
+        throw err;
+      }
+
+      markHydroDirty();
+      const log = appendAudit({
+        createdAt: now,
+        actor,
+        action: 'import_seed',
+        entityType: 'system',
+        entityId: 'git-seed',
+        entityName: `Impor ${importedWaterways} Jalur & ${importedStructures} Titik dari Git`,
+        reason,
+        before: null,
+        after: { importedWaterways, importedStructures, importedSuppressed }
+      });
+      return { importedWaterways, importedStructures, importedSuppressed, log };
+    },
+
     exportBundle() {
       const state = this.getState();
       const auditLogs = this.listAuditLogs(500);
@@ -783,6 +1293,7 @@ export function createStore(dbPath = DEFAULT_DB_PATH, seedGeoJsonPath = DEFAULT_
       return {
         exportedAt: new Date().toISOString(),
         verifiedWaterways: state.waterways,
+        verifiedStructures: state.structures,
         suppressedDem: state.suppressedDem,
         auditLogs,
         suggestionsCount

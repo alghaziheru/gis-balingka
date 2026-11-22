@@ -323,14 +323,24 @@ function loadVerifiedWaterwaysForBurning() {
       console.warn('Warning: could not read data/balingka.db for stream burning:', err.message);
     }
   }
-  const geoPath = path.join(ROOT, 'raw-data', 'verified-waterways.geojson');
-  if (fs.existsSync(geoPath)) {
-    const fc = JSON.parse(fs.readFileSync(geoPath, 'utf8'));
-    return {
-      source: 'geojson',
-      features: (fc.features || []).filter(f => f?.geometry?.type === 'LineString'),
-      suppressedIds: new Set()
-    };
+  for (const geoPath of [
+    path.join(OUT_DIR, 'verified-waterways.geojson'),
+    path.join(ROOT, 'raw-data', 'verified-waterways.geojson')
+  ]) {
+    if (fs.existsSync(geoPath)) {
+      const fc = JSON.parse(fs.readFileSync(geoPath, 'utf8'));
+      let suppressedIds = new Set();
+      const supPath = path.join(path.dirname(geoPath), 'suppressed-dem.json');
+      if (fs.existsSync(supPath)) {
+        const arr = JSON.parse(fs.readFileSync(supPath, 'utf8'));
+        if (Array.isArray(arr)) suppressedIds = new Set(arr.map(s => s.seg_id).filter(Boolean));
+      }
+      return {
+        source: 'geojson',
+        features: (fc.features || []).filter(f => f?.geometry?.type === 'LineString'),
+        suppressedIds
+      };
+    }
   }
   return { source: 'none', features: [], suppressedIds: new Set() };
 }
@@ -381,7 +391,7 @@ async function main() {
     normal: 75,
     detail: 25
   });
-  const deduped = filterOverlappingFlowPaths(rawFlowPaths, verified.features, 28);
+  const deduped = filterOverlappingFlowPaths(rawFlowPaths, verified.features, 48, 0.55);
   const flowPaths = { type: 'FeatureCollection', features: deduped.features };
   const contours = extractContoursGeoJSON(elev, gridMeta, 25);
 
@@ -405,21 +415,21 @@ async function main() {
       id: `cross-${idx + 1}`,
       coords: c.coords,
       kind: 'drainage',
-      status: c.tier === 1 ? 'critical' : 'clogged',
-      name_id: c.roadName ? `Perlintasan Alur ${c.roadName}` : `Gorong / Perlintasan Jalan–Alur #${idx + 1}`,
-      name_en: c.roadName ? `Stream Crossing at ${c.roadName}` : `Road–Stream Crossing #${idx + 1}`,
-      desc_id: `Persilangan nyata jalan OSM (${c.highway}) dengan alur limpasan DEM (DAS hulu ~${c.catchment_ha} ha). Perlu cek kapasitas gorong-gorong.`,
-      desc_en: `Real intersection of OSM road (${c.highway}) and DEM runoff channel (~${c.catchment_ha} ha upstream catchment). Verify culvert capacity.`
+      status: 'unverified',
+      name_id: c.roadName ? `Perlintasan ${c.roadName}` : `Persilangan Jalan–Alur #${idx + 1}`,
+      name_en: c.roadName ? `Crossing at ${c.roadName}` : `Road–Stream Crossing #${idx + 1}`,
+      desc_id: `Perkiraan persilangan jalan (${c.highway}) & alur air (belum dicek lapangan). Verifikasi lokasi & kapasitas gorong-gorong.`,
+      desc_en: `Estimated road (${c.highway}) & stream crossing (unverified). Field-check culvert presence and capacity.`
     })),
     ...osm.bridgeFeatures.map((b, idx) => ({
       id: `br-${idx + 1}`,
       coords: b.geometry.coordinates,
       kind: 'drainage',
-      status: 'damaged',
+      status: 'unverified',
       name_id: b.properties.name,
       name_en: b.properties.name.replace(/^Jembatan/, 'Bridge'),
-      desc_id: `Jembatan jalan (${b.properties.highway}) dari OpenStreetMap — cek kondisi tebing & sumbatan material.`,
-      desc_en: `OpenStreetMap bridge (${b.properties.highway}) — inspect abutment stability and debris clearance.`
+      desc_id: `Jembatan jalan (${b.properties.highway}) dari OpenStreetMap — belum dicek lapangan.`,
+      desc_en: `OpenStreetMap bridge (${b.properties.highway}) — unverified in the field.`
     }))
   ];
 

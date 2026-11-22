@@ -6,8 +6,11 @@ import type {
   ExportBundle,
   GeoFeatureCollection,
   HydroStatus,
+  StructureKind,
+  StructureSource,
   SuggestionStatus,
   SuppressedDemSegment,
+  VerifiedStructureFeature,
   VerifiedWaterwayFeature,
   WaterwayKind,
   WaterwaySource
@@ -95,6 +98,39 @@ export function buildStaticSeedWaterways(osmContext: GeoFeatureCollection): Veri
     }));
 }
 
+export async function fetchStaticVerifiedSeed(osmContext: GeoFeatureCollection): Promise<{
+  waterways: VerifiedWaterwayFeature[];
+  structures: VerifiedStructureFeature[];
+  suppressedDem: SuppressedDemSegment[];
+}> {
+  const fetchJson = async <T>(url: string): Promise<T | null> => {
+    try {
+      const res = await fetch(url);
+      if (!res.ok) return null;
+      return (await res.json()) as T;
+    } catch {
+      return null;
+    }
+  };
+
+  const [wwFc, stFc, supArr] = await Promise.all([
+    fetchJson<{ features?: VerifiedWaterwayFeature[] }>('/data/verified-waterways.geojson'),
+    fetchJson<{ features?: VerifiedStructureFeature[] }>('/data/verified-structures.geojson'),
+    fetchJson<SuppressedDemSegment[]>('/data/suppressed-dem.json')
+  ]);
+
+  const waterways =
+    Array.isArray(wwFc?.features) && wwFc.features.length > 0
+      ? wwFc.features.filter(f => f?.geometry?.type === 'LineString')
+      : buildStaticSeedWaterways(osmContext);
+  const structures = Array.isArray(stFc?.features)
+    ? stFc.features.filter(f => f?.geometry?.type === 'Point')
+    : [];
+  const suppressedDem = Array.isArray(supArr) ? supArr.filter(s => s && s.seg_id) : [];
+
+  return { waterways, structures, suppressedDem };
+}
+
 export async function fetchEditorStatus(): Promise<EditorStatus | null> {
   try {
     return await apiFetch<EditorStatus>('/api/editor/status');
@@ -117,17 +153,21 @@ export async function verifyEditorPassphrase(passphrase: string): Promise<boolea
 
 export async function fetchWaterwaysState(): Promise<{
   waterways: VerifiedWaterwayFeature[];
+  structures: VerifiedStructureFeature[];
   suppressedDem: SuppressedDemSegment[];
   hydroStatus: HydroStatus;
 }> {
   const data = await apiFetch<{
     waterways: { features: VerifiedWaterwayFeature[] };
+    structures?: { features: VerifiedStructureFeature[] };
     suppressedDem: SuppressedDemSegment[];
     hydroStatus?: HydroStatus;
   }>('/api/waterways');
   const waterways = data.waterways?.features || [];
+  const structures = data.structures?.features || [];
   return {
     waterways,
+    structures,
     suppressedDem: data.suppressedDem || [],
     hydroStatus: data.hydroStatus || {
       dirty: false,
@@ -155,6 +195,7 @@ export async function recomputeHydrology(payload: {
   hydroStatus: HydroStatus;
   state: {
     waterways: { features: VerifiedWaterwayFeature[] };
+    structures?: { features: VerifiedStructureFeature[] };
     suppressedDem: SuppressedDemSegment[];
   };
 }> {
@@ -200,6 +241,44 @@ export async function deleteWaterway(id: string, payload: { actor: string; reaso
   });
 }
 
+export async function createStructure(payload: {
+  name: string;
+  kind: StructureKind;
+  status: Exclude<DrainageStatus, 'unverified'>;
+  source: StructureSource;
+  source_ref?: string | null;
+  size_note: string;
+  notes: string;
+  coordinates: [number, number];
+  actor: string;
+  reason: string;
+}): Promise<{ feature: VerifiedStructureFeature; log: AuditLogEntry }> {
+  return apiFetch('/api/structures', { method: 'POST', body: JSON.stringify(payload) });
+}
+
+export async function updateStructure(
+  id: string,
+  payload: {
+    name?: string;
+    kind?: StructureKind;
+    status?: Exclude<DrainageStatus, 'unverified'>;
+    size_note?: string;
+    notes?: string;
+    coordinates?: [number, number];
+    actor: string;
+    reason: string;
+  }
+): Promise<{ feature: VerifiedStructureFeature; log: AuditLogEntry }> {
+  return apiFetch(`/api/structures/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(payload) });
+}
+
+export async function deleteStructure(id: string, payload: { actor: string; reason: string }): Promise<void> {
+  await apiFetch(`/api/structures/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+    body: JSON.stringify(payload)
+  });
+}
+
 export async function suppressDemSegment(payload: {
   seg_id: string;
   reason: string;
@@ -225,7 +304,11 @@ export async function revertAuditLog(
   payload: { actor: string; reason: string }
 ): Promise<{
   log: AuditLogEntry;
-  state: { waterways: { features: VerifiedWaterwayFeature[] }; suppressedDem: SuppressedDemSegment[] };
+  state: {
+    waterways: { features: VerifiedWaterwayFeature[] };
+    structures?: { features: VerifiedStructureFeature[] };
+    suppressedDem: SuppressedDemSegment[];
+  };
 }> {
   return apiFetch(`/api/audit/${logId}/revert`, { method: 'POST', body: JSON.stringify(payload) });
 }

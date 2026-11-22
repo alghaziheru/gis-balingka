@@ -2,9 +2,11 @@ export type Language = 'id' | 'en';
 export type ViewMode = 'simple' | 'detail';
 export type TabId = 'terrain' | 'sim' | 'drainage' | 'editor';
 export type BasemapId = 'sat' | 'elev' | 'relief' | 'slope' | 'topo' | 'osm';
-export type DrainageStatus = 'normal' | 'clogged' | 'damaged' | 'critical';
+export type DrainageStatus = 'unverified' | 'normal' | 'clogged' | 'damaged' | 'critical';
 export type WaterwayKind = 'river' | 'stream' | 'canal' | 'drain' | 'culvert';
 export type WaterwaySource = 'osm' | 'dem_promoted' | 'manual';
+export type StructureKind = 'culvert' | 'bridge';
+export type StructureSource = 'manual' | 'crossing_promoted' | 'osm';
 export type FeatureCategory = 'drainage' | 'floodmark' | 'landslide' | 'mitigation' | 'evacuation';
 export type ActiveTool =
   | null
@@ -12,7 +14,8 @@ export type ActiveTool =
   | 'profileA'
   | 'profileB'
   | 'drawWaterway'
-  | 'redrawWaterway';
+  | 'redrawWaterway'
+  | 'placeStructure';
 
 export type GeoProperties = Record<string, string | number | boolean | null | undefined>;
 
@@ -128,6 +131,8 @@ export interface CommunityFeature {
 
 export interface LayerToggles {
   verifiedWaterways: boolean;
+  structures: boolean;
+  unverifiedCrossings: boolean;
   hillshade: boolean;
   das: boolean;
   contours: boolean;
@@ -136,6 +141,26 @@ export interface LayerToggles {
   bronjong: boolean;
   landslide: boolean;
   evac: boolean;
+}
+
+export interface VerifiedStructureFeature {
+  type: 'Feature';
+  properties: {
+    id: string;
+    name: string;
+    kind: StructureKind;
+    status: Exclude<DrainageStatus, 'unverified'>;
+    source: StructureSource;
+    source_ref: string | null;
+    size_note: string;
+    notes: string;
+    updated_by: string;
+    updated_at: string;
+  };
+  geometry: {
+    type: 'Point';
+    coordinates: [number, number];
+  };
 }
 
 export interface VerifiedWaterwayFeature {
@@ -205,6 +230,7 @@ export interface EditorStatus {
 export interface ExportBundle {
   exportedAt: string;
   verifiedWaterways: { type: 'FeatureCollection'; features: VerifiedWaterwayFeature[] };
+  verifiedStructures?: { type: 'FeatureCollection'; features: VerifiedStructureFeature[] };
   suppressedDem: SuppressedDemSegment[];
   auditLogs: AuditLogEntry[];
   suggestionsCount: number;

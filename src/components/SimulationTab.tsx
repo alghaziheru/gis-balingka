@@ -12,6 +12,7 @@ interface SimulationTabProps {
   scenario: 'clogged' | 'cleared';
   rainAnimEnabled: boolean;
   layers: LayerToggles;
+  verifiedIssueCount?: number;
   kpis: {
     elapsedMin: number;
     accumulatedMm: number;
@@ -55,6 +56,7 @@ export function SimulationTab({
   scenario,
   rainAnimEnabled,
   layers,
+  verifiedIssueCount = 0,
   kpis,
   onTogglePlay,
   onResetSim,
@@ -265,20 +267,24 @@ export function SimulationTab({
               ? 'bg-[#f2f3ef] text-[#434d49]'
               : scenario === 'cleared'
               ? 'bg-[#047857]/10 text-[#047857]'
-              : 'bg-[#b91c1c]/10 text-[#b91c1c]'
+              : 'bg-[#b45309]/12 text-[#92400e]'
           }`}
         >
           {progress <= 0.03
             ? isEn
-              ? 'Storm at 00:00 — press Play or drag timeline to watch runoff build up.'
-              : 'Hujan baru dimulai (00:00) — tekan Putar atau geser waktu untuk melihat dampak genangan.'
+              ? 'Dry baseline (00:00) — press "Play Rain Simulation" to see where air limpasan flows and gathers.'
+              : 'Kondisi awal kering (00:00) — tekan "Putar Simulasi Hujan" untuk melihat arah air limpasan & koridor rendah.'
             : scenario === 'cleared'
             ? isEn
-              ? `-${kpis.reductionPct}% localized overflow around crossings${isDetail ? ' (HAND model)' : ''}`
-              : `-${kpis.reductionPct}% potensi luapan di sekitar perlintasan${isDetail ? ' (model HAND)' : ''}`
+              ? `-${kpis.reductionPct}% localized overflow around road crossings when culverts stay clear.`
+              : `-${kpis.reductionPct}% potensi luapan di sekitar perlintasan bila gorong-gorong lancar.`
+            : verifiedIssueCount > 0
+            ? isEn
+              ? `${verifiedIssueCount} field-confirmed clogged/critical culvert(s) highlighted first, plus hypothetical crossing stress.`
+              : `${verifiedIssueCount} gorong-gorong bermasalah di lapangan disorot terlebih dulu + skenario uji sumbatan.`
             : isEn
-            ? 'Blocked crossings push floodwater onto nearby low roads and yards.'
-            : 'Gorong-gorong tersumbat memperluas genangan air ke jalan dan halaman warga.'}
+            ? 'Hypothetical test: blocked crossings push runoff onto adjacent low-lying roads.'
+            : 'Skenario uji: bila perlintasan tersumbat, aliran air tertahan ke jalan dan lahan rendah di sekitarnya.'}
         </div>
 
         <div className="mt-3 grid grid-cols-2 gap-2">
@@ -311,29 +317,35 @@ export function SimulationTab({
         </div>
       </section>
 
-      {/* Unified Flood & Point Legend + Interactive Toggles */}
+      {/* Unified Runoff & Conservative Low-Corridor Legend + Interactive Toggles */}
       <section className="rounded-xl border border-[#161c1a]/12 bg-white p-3.5">
         <div className="mb-2 text-[13px] font-bold text-[#161c1a]">{t.simLegendTitle}</div>
         <div className="flex flex-col gap-1.5 border-b border-[#161c1a]/10 pb-2.5">
           <div className="flex items-center gap-2.5 text-[13px] text-[#161c1a]">
-            <span className="h-3 w-3 shrink-0 rounded-[3px] bg-[#b91c1c]" />
+            <span className="inline-block h-0 w-3.5 shrink-0 border-t-2 border-dashed border-[#b45309]" />
             <span>
-              {isEn ? 'High flood risk zone' : 'Zona rawan genangan tinggi'}
-              {isDetail ? ' (HAND ≤2,2m)' : ''}
+              {isEn ? 'Rainwater runoff flow (air limpasan, 30m DEM)' : 'Arah air limpasan hujan (DEM 30m)'}
+            </span>
+          </div>
+          <div className="flex items-center gap-2.5 text-[13px] text-[#161c1a]">
+            <span className="h-3 w-3 shrink-0 rounded-[3px] bg-[#0369a1]" />
+            <span>
+              {isEn ? 'Deepest valley corridor' : 'Koridor dasar lembah / alur'}
+              {isDetail ? ' (HAND ≤0,8m)' : ''}
             </span>
           </div>
           <div className="flex items-center gap-2.5 text-[13px] text-[#161c1a]">
             <span className="h-3 w-3 shrink-0 rounded-[3px] bg-[#0284c7]" />
             <span>
-              {isEn ? 'Moderate flood zone' : 'Zona genangan sedang'}
-              {isDetail ? ' (HAND ≤4,8m)' : ''}
+              {isEn ? 'Low-lying terrain corridor' : 'Zona tanah rendah'}
+              {isDetail ? ' (HAND ≤1,8m)' : ''}
             </span>
           </div>
           <div className="flex items-center gap-2.5 text-[13px] text-[#161c1a]">
-            <span className="h-3 w-3 shrink-0 rounded-[3px] bg-[#38bdf8]" />
+            <span className="h-3 w-3 shrink-0 rounded-[3px] bg-[#7dd3fc]" />
             <span>
-              {isEn ? 'Outer spread zone' : 'Zona perluasan air'}
-              {isDetail ? ' (HAND ≤8,0m)' : ''}
+              {isEn ? 'Outer low basin margin' : 'Batas cekungan rendah'}
+              {isDetail ? ' (HAND ≤3,2m)' : ''}
             </span>
           </div>
         </div>

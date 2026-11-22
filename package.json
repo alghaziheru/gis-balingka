@@ -13,6 +13,8 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "prepare-data": "node scripts/prepare-data.mjs",
+    "sync-seed": "node scripts/sync-seed.mjs",
+    "import-seed": "node scripts/import-seed.mjs",
     "test": "node --test tests/hydrology.test.mjs tests/api.test.mjs"
   },
   "dependencies": {

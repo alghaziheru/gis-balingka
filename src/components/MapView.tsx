@@ -16,7 +16,7 @@ import {
 } from 'maplibre-gl';
 import maplibreWorkerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url';
 import type { DemClient } from '../lib/demClient';
-import { snapPointToWaterways } from '../lib/geometry';
+import { haversineMeters, snapPointToWaterways } from '../lib/geometry';
 import type {
   ActiveTool,
   BasemapId,
@@ -29,7 +29,9 @@ import type {
   LayerToggles,
   ProfileSample,
   RaindropTrace,
+  StructureKind,
   TabId,
+  VerifiedStructureFeature,
   VerifiedWaterwayFeature,
   ViewMode
 } from '../types/gis';
@@ -76,17 +78,27 @@ interface MapViewProps {
   profilePts: [number, number][];
   profileHover: ProfileSample | null;
   verifiedWaterways: VerifiedWaterwayFeature[];
+  verifiedStructures: VerifiedStructureFeature[];
   suppressedDemIds: string[];
   dataVersion: number;
   apiAvailable: boolean;
   requiresPassphrase: boolean;
   editorUnlocked: boolean;
   editingWaterway: { id: string | null; coordinates: [number, number][]; sourceRef?: string | null } | null;
+  editingStructure: { id: string | null; coordinates: [number, number]; sourceRef?: string | null } | null;
   drawVertices: [number, number][];
   flyRequest: FlyRequest | null;
   onMapClick: (lngLat: [number, number]) => void;
   onOpenUnlock: () => void;
   onSelectWaterway: (feature: VerifiedWaterwayFeature) => void;
+  onSelectStructure: (feature: VerifiedStructureFeature) => void;
+  onVerifyCrossing: (
+    draftId: string,
+    coords: [number, number],
+    suggestedName: string,
+    suggestedKind: StructureKind
+  ) => void;
+  onMoveEditingStructure: (coords: [number, number]) => void;
   onPromoteDemSegment: (segId: string, coords: [number, number][]) => void;
   onRedrawDemSegment: (segId: string) => void;
   onSuppressDemSegment: (segId: string) => void;
@@ -150,6 +162,101 @@ function subsampleCoordsForEditing(coords: [number, number][], maxPts = 18): [nu
   return out;
 }
 
+function registerCartographicIcons(map: MapLibreMap): void {
+  const addCanvasIcon = (name: string, size: number, draw: (ctx: CanvasRenderingContext2D, s: number) => void) => {
+    if (map.hasImage(name)) return;
+    const canvas = document.createElement('canvas');
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    draw(ctx, size);
+    const img = ctx.getImageData(0, 0, size, size);
+    map.addImage(name, { width: size, height: size, data: img.data });
+  };
+
+  // Directional amber-ochre chevron for DEM air limpasan lines
+  addCanvasIcon('icon-flow-arrow', 18, (ctx, s) => {
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 3.2;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.beginPath();
+    ctx.moveTo(s * 0.3, s * 0.22);
+    ctx.lineTo(s * 0.72, s * 0.5);
+    ctx.lineTo(s * 0.3, s * 0.78);
+    ctx.stroke();
+
+    ctx.strokeStyle = '#b45309';
+    ctx.lineWidth = 2.0;
+    ctx.beginPath();
+    ctx.moveTo(s * 0.3, s * 0.22);
+    ctx.lineTo(s * 0.72, s * 0.5);
+    ctx.lineTo(s * 0.3, s * 0.78);
+    ctx.stroke();
+  });
+
+  const statusPalette: Record<string, string> = {
+    normal: '#047857',
+    clogged: '#b45309',
+    damaged: '#c2410c',
+    critical: '#b91c1c'
+  };
+
+  for (const [status, fill] of Object.entries(statusPalette)) {
+    // Culvert badge: rounded square with arch opening
+    addCanvasIcon(`icon-culvert-${status}`, 28, (ctx, s) => {
+      const pad = 3;
+      const r = 6;
+      const w = s - pad * 2;
+      ctx.fillStyle = fill;
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 2.2;
+      ctx.beginPath();
+      ctx.roundRect(pad, pad, w, w, r);
+      ctx.fill();
+      ctx.stroke();
+
+      // White arch culvert symbol inside
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath();
+      ctx.arc(s / 2, s * 0.62, s * 0.22, Math.PI, 0, false);
+      ctx.lineTo(s * 0.72, s * 0.74);
+      ctx.lineTo(s * 0.28, s * 0.74);
+      ctx.closePath();
+      ctx.fill();
+    });
+
+    // Bridge badge: rounded square with bridge span & abutments
+    addCanvasIcon(`icon-bridge-${status}`, 28, (ctx, s) => {
+      const pad = 3;
+      const r = 6;
+      const w = s - pad * 2;
+      ctx.fillStyle = fill;
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 2.2;
+      ctx.beginPath();
+      ctx.roundRect(pad, pad, w, w, r);
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 2.1;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(s * 0.24, s * 0.36);
+      ctx.lineTo(s * 0.34, s * 0.48);
+      ctx.lineTo(s * 0.66, s * 0.48);
+      ctx.lineTo(s * 0.76, s * 0.36);
+      ctx.moveTo(s * 0.34, s * 0.48);
+      ctx.lineTo(s * 0.34, s * 0.72);
+      ctx.moveTo(s * 0.66, s * 0.48);
+      ctx.lineTo(s * 0.66, s * 0.72);
+      ctx.stroke();
+    });
+  }
+}
+
 export function MapView(props: MapViewProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
@@ -163,6 +270,7 @@ export function MapView(props: MapViewProps) {
   const profileABRef = useRef<Marker[]>([]);
   const profileHoverMarkerRef = useRef<Marker | null>(null);
   const vertexMarkersRef = useRef<Marker[]>([]);
+  const structureEditMarkerRef = useRef<Marker | null>(null);
 
   const activeToolRef = useRef(props.activeTool);
   activeToolRef.current = props.activeTool;
@@ -188,12 +296,20 @@ export function MapView(props: MapViewProps) {
   editorUnlockedRef.current = props.editorUnlocked;
   const verifiedWaterwaysRef = useRef(props.verifiedWaterways);
   verifiedWaterwaysRef.current = props.verifiedWaterways;
+  const verifiedStructuresRef = useRef(props.verifiedStructures);
+  verifiedStructuresRef.current = props.verifiedStructures;
   const suppressedDemSetRef = useRef(new Set(props.suppressedDemIds));
   suppressedDemSetRef.current = new Set(props.suppressedDemIds);
   const editingWaterwayRef = useRef(props.editingWaterway);
   editingWaterwayRef.current = props.editingWaterway;
   const onSelectWaterwayRef = useRef(props.onSelectWaterway);
   onSelectWaterwayRef.current = props.onSelectWaterway;
+  const onSelectStructureRef = useRef(props.onSelectStructure);
+  onSelectStructureRef.current = props.onSelectStructure;
+  const onVerifyCrossingRef = useRef(props.onVerifyCrossing);
+  onVerifyCrossingRef.current = props.onVerifyCrossing;
+  const onMoveEditingStructureRef = useRef(props.onMoveEditingStructure);
+  onMoveEditingStructureRef.current = props.onMoveEditingStructure;
   const onPromoteDemRef = useRef(props.onPromoteDemSegment);
   onPromoteDemRef.current = props.onPromoteDemSegment;
   const onSuppressDemRef = useRef(props.onSuppressDemSegment);
@@ -229,30 +345,58 @@ export function MapView(props: MapViewProps) {
     const status = String(p.status || 'normal');
 
     const badgeColors: Record<string, string> = {
+      unverified: 'background:rgba(100,116,139,0.14);color:#475569',
       normal: 'background:rgba(4,120,87,0.12);color:#047857',
       clogged: 'background:rgba(180,83,9,0.14);color:#b45309',
       damaged: 'background:rgba(194,65,12,0.14);color:#c2410c',
       critical: 'background:rgba(185,28,28,0.14);color:#b91c1c'
     };
     const statusNames: Record<string, { id: string; en: string }> = {
+      unverified: { id: 'Perlu Cek Lapangan', en: 'Needs Field Check' },
       normal: { id: 'Normal', en: 'Normal' },
       clogged: { id: 'Tersumbat', en: 'Clogged' },
       damaged: { id: 'Rusak', en: 'Damaged' },
       critical: { id: 'Kritis', en: 'Critical' }
     };
-    const st = statusNames[status] || statusNames.normal;
+    const st = statusNames[status] || statusNames.unverified;
     const tagText = isCommunity
       ? isEn
         ? 'Resident Note (Local)'
         : 'Catatan Warga (Lokal)'
+      : status === 'unverified'
+      ? isEn
+        ? 'Auto-detected Road–Stream Crossing (Unverified)'
+        : 'Perkiraan Persilangan Jalan–Alur (Belum Dicek)'
       : isEn
-      ? 'Initial Estimate — Needs Field Check'
-      : 'Perkiraan Awal — Perlu Cek Lapangan';
+      ? 'Field Estimate / Monitored Point'
+      : 'Titik Pantau Lapangan';
     const elev = Math.round(demRef.current.getElevation(lngLat[0], lngLat[1]));
+
+    const canVerifyCrossing =
+      p.kind === 'drainage' &&
+      status === 'unverified' &&
+      editorUnlockedRef.current &&
+      apiAvailableRef.current;
+    const canUnlockCrossing =
+      p.kind === 'drainage' &&
+      status === 'unverified' &&
+      !editorUnlockedRef.current &&
+      apiAvailableRef.current &&
+      requiresPassphraseRef.current;
+
+    const actionBtnHtml = canVerifyCrossing
+      ? `<button id="popup-verify-crossing" type="button" style="margin-top:8px;width:100%;padding:7px 10px;border-radius:8px;border:1px solid #0369a1;background:#0369a1;color:#fff;font-size:12px;font-weight:700;cursor:pointer;">
+          ${isEn ? 'Verify as Culvert / Bridge' : 'Verifikasi sebagai Gorong-gorong / Jembatan'}
+        </button>`
+      : canUnlockCrossing
+      ? `<button id="popup-unlock-crossing" type="button" style="margin-top:8px;width:100%;padding:7px 10px;border-radius:8px;border:1px solid #0369a1;background:#fff;color:#0369a1;font-size:12px;font-weight:700;cursor:pointer;">
+          ${isEn ? 'Unlock Editor to Verify Point' : 'Buka Editor untuk Verifikasi Titik'}
+        </button>`
+      : '';
 
     const html = `
       <div>
-        <span style="display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:700;margin-bottom:6px;${badgeColors[status] || badgeColors.normal}">
+        <span style="display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:700;margin-bottom:6px;${badgeColors[status] || badgeColors.unverified}">
           ${escapeHtml(isEn ? st.en : st.id)}
         </span>
         <h4 style="margin:0 0 4px;font-size:14px;font-weight:700;color:#161c1a;">${escapeHtml(name)}</h4>
@@ -263,10 +407,25 @@ export function MapView(props: MapViewProps) {
         <div style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#636f6a;">
           ${isDetail ? `${lngLat[1].toFixed(5)}, ${lngLat[0].toFixed(5)} · ` : ''}~${elev} m dpl
         </div>
+        ${actionBtnHtml}
       </div>
     `;
 
-    popupRef.current = new Popup({ offset: 12 }).setLngLat(lngLat).setHTML(html).addTo(map);
+    const pop = new Popup({ offset: 12 }).setLngLat(lngLat).setHTML(html).addTo(map);
+    popupRef.current = pop;
+    if (canVerifyCrossing) {
+      pop.getElement()?.querySelector('#popup-verify-crossing')?.addEventListener('click', () => {
+        pop.remove();
+        const draftId = String(p.id || '');
+        const suggestedKind: StructureKind = draftId.startsWith('br-') ? 'bridge' : 'culvert';
+        onVerifyCrossingRef.current(draftId, lngLat, String(name || ''), suggestedKind);
+      });
+    } else if (canUnlockCrossing) {
+      pop.getElement()?.querySelector('#popup-unlock-crossing')?.addEventListener('click', () => {
+        pop.remove();
+        onOpenUnlockRef.current();
+      });
+    }
   };
 
   useEffect(() => {
@@ -412,6 +571,7 @@ export function MapView(props: MapViewProps) {
 
     map.on('load', () => {
       const ds = props.datasets;
+      registerCartographicIcons(map);
 
       // Smooth slope overlay (when toggled on top of Satellite/Elev/Topo)
       map.addLayer({
@@ -469,23 +629,37 @@ export function MapView(props: MapViewProps) {
         id: 'flows-glow',
         type: 'line',
         source: 'src-flows',
-        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        layout: { visibility: 'none', 'line-cap': 'round', 'line-join': 'round' },
         paint: {
-          'line-color': '#38bdf8',
-          'line-width': ['match', ['get', 'tier'], 1, 5.0, 2, 3.4, 2.0],
-          'line-opacity': 0.18
+          'line-color': '#d97706',
+          'line-width': ['match', ['get', 'tier'], 1, 4.2, 2, 3.0, 2.0],
+          'line-opacity': 0.1
         }
       });
       map.addLayer({
         id: 'flows-line',
         type: 'line',
         source: 'src-flows',
-        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        layout: { visibility: 'none', 'line-cap': 'round', 'line-join': 'round' },
         paint: {
-          'line-color': '#38bdf8',
-          'line-width': ['match', ['get', 'tier'], 1, 2.2, 2, 1.5, 1.0],
-          'line-dasharray': [2.5, 2],
-          'line-opacity': 0.78
+          'line-color': '#b45309',
+          'line-width': ['match', ['get', 'tier'], 1, 2.1, 2, 1.45, 1.0],
+          'line-dasharray': [2.2, 2.6],
+          'line-opacity': 0.68
+        }
+      });
+      map.addLayer({
+        id: 'flows-arrows',
+        type: 'symbol',
+        source: 'src-flows',
+        layout: {
+          visibility: 'none',
+          'symbol-placement': 'line',
+          'symbol-spacing': 75,
+          'icon-image': 'icon-flow-arrow',
+          'icon-size': 0.78,
+          'icon-allow-overlap': false,
+          'icon-rotation-alignment': 'map'
         }
       });
 
@@ -496,32 +670,53 @@ export function MapView(props: MapViewProps) {
         source: 'src-verified-waterways',
         layout: { 'line-cap': 'round', 'line-join': 'round' },
         paint: {
-          'line-color': '#ffffff',
-          'line-width': ['match', ['get', 'kind'], 'river', 6.2, 'stream', 5.2, 4.4],
-          'line-opacity': 0.85
+          'line-color': ['case', ['==', ['get', 'kind'], 'culvert'], '#334155', '#ffffff'],
+          'line-width': ['match', ['get', 'kind'], 'river', 6.4, 'stream', 5.2, 'culvert', 5.0, 4.2],
+          'line-opacity': 0.9
         }
       });
       map.addLayer({
         id: 'verified-waterways-line',
         type: 'line',
         source: 'src-verified-waterways',
+        filter: ['!=', ['get', 'kind'], 'culvert'],
         layout: { 'line-cap': 'round', 'line-join': 'round' },
+        paint: {
+          'line-color': [
+            'case',
+            ['==', ['get', 'status'], 'clogged'],
+            '#b45309',
+            ['==', ['get', 'status'], 'damaged'],
+            '#c2410c',
+            ['==', ['get', 'status'], 'critical'],
+            '#b91c1c',
+            ['match', ['get', 'kind'], 'canal', '#0d9488', 'drain', '#0d9488', '#0369a1']
+          ],
+          'line-width': ['match', ['get', 'kind'], 'river', 3.8, 'stream', 2.8, 2.3],
+          'line-opacity': 0.96
+        }
+      });
+      map.addLayer({
+        id: 'verified-culverts-line',
+        type: 'line',
+        source: 'src-verified-waterways',
+        filter: ['==', ['get', 'kind'], 'culvert'],
+        layout: { 'line-cap': 'butt', 'line-join': 'round' },
         paint: {
           'line-color': [
             'match',
             ['get', 'status'],
-            'normal',
-            '#0369a1',
             'clogged',
-            '#d97706',
+            '#f59e0b',
             'damaged',
-            '#ea580c',
+            '#fb923c',
             'critical',
-            '#dc2626',
-            '#0369a1'
+            '#f87171',
+            '#2dd4bf'
           ],
-          'line-width': ['match', ['get', 'kind'], 'river', 3.6, 'stream', 2.8, 2.3],
-          'line-opacity': 0.96
+          'line-width': 2.6,
+          'line-dasharray': [1.4, 1.4],
+          'line-opacity': 0.98
         }
       });
 
@@ -530,12 +725,13 @@ export function MapView(props: MapViewProps) {
         id: 'flow-particles',
         type: 'circle',
         source: 'src-flow-particles',
+        layout: { visibility: 'none' },
         paint: {
           'circle-radius': ['get', 'radius'],
-          'circle-color': ['case', ['==', ['get', 'kind'], 'verified'], '#ffffff', '#e0f2fe'],
-          'circle-stroke-color': ['case', ['==', ['get', 'kind'], 'verified'], '#0369a1', '#0284c7'],
-          'circle-stroke-width': ['case', ['==', ['get', 'kind'], 'verified'], 1.8, 1.4],
-          'circle-opacity': 0.96
+          'circle-color': ['case', ['==', ['get', 'kind'], 'verified'], '#e0f2fe', '#fef3c7'],
+          'circle-stroke-color': ['case', ['==', ['get', 'kind'], 'verified'], '#0369a1', '#b45309'],
+          'circle-stroke-width': ['case', ['==', ['get', 'kind'], 'verified'], 1.7, 1.5],
+          'circle-opacity': 0.94
         }
       });
 
@@ -563,31 +759,64 @@ export function MapView(props: MapViewProps) {
         source: 'src-draft-pts',
         layout: { visibility: 'none' },
         paint: {
-          'circle-radius': ['match', ['get', 'kind'], 'evacuation', 7.5, 'bronjong', 7, 6],
+          'circle-radius': ['match', ['get', 'kind'], 'evacuation', 7.5, 'bronjong', 7, 5.5],
           'circle-color': [
             'case',
             ['==', ['get', 'kind'], 'evacuation'],
-            '#059669',
+            '#047857',
             ['==', ['get', 'kind'], 'bronjong'],
-            '#0284c7',
+            '#0369a1',
             ['==', ['get', 'kind'], 'landslide'],
-            '#ea580c',
+            '#c2410c',
             [
               'match',
               ['get', 'status'],
+              'unverified',
+              '#e2e8f0',
               'normal',
-              '#059669',
+              '#047857',
               'clogged',
-              '#d97706',
+              '#b45309',
               'damaged',
-              '#ea580c',
+              '#c2410c',
               'critical',
-              '#dc2626',
-              '#d97706'
+              '#b91c1c',
+              '#e2e8f0'
             ]
           ],
-          'circle-stroke-color': '#ffffff',
+          'circle-stroke-color': [
+            'case',
+            ['==', ['get', 'status'], 'unverified'],
+            '#475569',
+            '#ffffff'
+          ],
           'circle-stroke-width': 2
+        }
+      });
+
+      map.addSource('src-verified-structures', { type: 'geojson', data: asGeoInput(EMPTY_FC) });
+      map.addLayer({
+        id: 'verified-structures-stress-ring',
+        type: 'circle',
+        source: 'src-verified-structures',
+        layout: { visibility: 'none' },
+        paint: {
+          'circle-radius': 15,
+          'circle-color': 'rgba(180, 83, 9, 0.16)',
+          'circle-stroke-color': '#b45309',
+          'circle-stroke-width': 2
+        }
+      });
+      map.addLayer({
+        id: 'verified-structures-symbol',
+        type: 'symbol',
+        source: 'src-verified-structures',
+        layout: {
+          visibility: 'visible',
+          'icon-image': ['concat', 'icon-', ['get', 'kind'], '-', ['get', 'status']],
+          'icon-size': 0.92,
+          'icon-allow-overlap': true,
+          'icon-ignore-placement': true
         }
       });
 
@@ -761,11 +990,13 @@ export function MapView(props: MapViewProps) {
       }
 
       const interactiveLayers = [
+        'verified-structures-symbol',
         'draft-points',
         'community-points',
         'community-lines',
         'osm-waterways',
         'verified-waterways-line',
+        'verified-culverts-line',
         'flows-line'
       ];
       for (const lid of interactiveLayers) {
@@ -782,7 +1013,69 @@ export function MapView(props: MapViewProps) {
           const propsObj = (feat.properties || {}) as GeoProperties;
           const isEn = langRef.current === 'en';
 
-          if (lid === 'verified-waterways-line') {
+          if (lid === 'verified-structures-symbol') {
+            if (popupRef.current) popupRef.current.remove();
+            const stId = String(propsObj.id || '');
+            const fullSt = verifiedStructuresRef.current.find(s => s.properties.id === stId);
+            const canEdit = editorUnlockedRef.current && apiAvailableRef.current && Boolean(fullSt);
+            const canUnlock = !editorUnlockedRef.current && apiAvailableRef.current && requiresPassphraseRef.current;
+            const isDetail = viewModeRef.current === 'detail';
+            const kindLabel =
+              propsObj.kind === 'bridge'
+                ? isEn
+                  ? 'Bridge'
+                  : 'Jembatan'
+                : isEn
+                ? 'Culvert'
+                : 'Gorong-gorong';
+            const statusLabels: Record<string, { id: string; en: string; color: string; bg: string }> = {
+              normal: { id: 'Normal', en: 'Normal', color: '#047857', bg: 'rgba(4,120,87,0.12)' },
+              clogged: { id: 'Tersumbat', en: 'Clogged', color: '#b45309', bg: 'rgba(180,83,9,0.14)' },
+              damaged: { id: 'Rusak', en: 'Damaged', color: '#c2410c', bg: 'rgba(194,65,12,0.14)' },
+              critical: { id: 'Kritis', en: 'Critical', color: '#b91c1c', bg: 'rgba(185,28,28,0.14)' }
+            };
+            const stInfo = statusLabels[String(propsObj.status)] || statusLabels.normal;
+            let actionHtml = '';
+            if (canEdit) {
+              actionHtml = `<button id="popup-edit-st" type="button" style="margin-top:8px;width:100%;padding:7px 10px;border-radius:8px;border:1px solid #0369a1;background:#0369a1;color:#fff;font-size:12px;font-weight:700;cursor:pointer;">
+                ${isEn ? 'Edit Culvert / Bridge' : 'Edit Titik Gorong-gorong'}
+              </button>`;
+            } else if (canUnlock) {
+              actionHtml = `<button id="popup-unlock-st" type="button" style="margin-top:8px;width:100%;padding:7px 10px;border-radius:8px;border:1px solid #0369a1;background:#fff;color:#0369a1;font-size:12px;font-weight:700;cursor:pointer;">
+                ${isEn ? 'Unlock Editor to Edit' : 'Buka Editor untuk Edit'}
+              </button>`;
+            }
+            const html = `
+              <div>
+                <span style="display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:700;margin-bottom:6px;background:${stInfo.bg};color:${stInfo.color};">
+                  ${escapeHtml(isEn ? stInfo.en : stInfo.id)} · ${escapeHtml(isEn ? 'Verified' : 'Terverifikasi')}
+                </span>
+                <h4 style="margin:0 0 4px;font-size:14px;font-weight:700;color:#161c1a;">${escapeHtml(propsObj.name)}</h4>
+                <div style="font-size:12.5px;color:#434d49;margin-bottom:6px;">
+                  ${escapeHtml(kindLabel)}${propsObj.size_note ? ` · ${escapeHtml(propsObj.size_note)}` : ''}
+                </div>
+                ${propsObj.notes ? `<p style="margin:0 0 6px;font-size:12.5px;line-height:1.45;color:#434d49;">${escapeHtml(propsObj.notes)}</p>` : ''}
+                ${isDetail && propsObj.updated_by ? `<div style="font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#636f6a;">${escapeHtml(propsObj.updated_by)}</div>` : ''}
+                ${actionHtml}
+              </div>
+            `;
+            const pop = new Popup({ offset: 12 }).setLngLat([e.lngLat.lng, e.lngLat.lat]).setHTML(html).addTo(map);
+            popupRef.current = pop;
+            if (canEdit && fullSt) {
+              pop.getElement()?.querySelector('#popup-edit-st')?.addEventListener('click', () => {
+                pop.remove();
+                onSelectStructureRef.current(fullSt);
+              });
+            } else if (canUnlock) {
+              pop.getElement()?.querySelector('#popup-unlock-st')?.addEventListener('click', () => {
+                pop.remove();
+                onOpenUnlockRef.current();
+              });
+            }
+            return;
+          }
+
+          if (lid === 'verified-waterways-line' || lid === 'verified-culverts-line') {
             if (popupRef.current) popupRef.current.remove();
             const wwId = String(propsObj.id || '');
             const fullFeat = verifiedWaterwaysRef.current.find(w => w.properties.id === wwId);
@@ -944,19 +1237,18 @@ export function MapView(props: MapViewProps) {
         if (ts - lastTs > 50) {
           const dt = Math.min(0.1, (ts - lastTs) / 1000 || 0.05);
           lastTs = ts;
-          const speed =
-            tabRef.current === 'sim'
-              ? 0.14 + (simRainRef.current / 150) * (0.12 + simProgressRef.current * 0.24)
-              : 0.16;
-          particlePhase = (particlePhase + dt * speed) % 1;
-
+          const isRaining = tabRef.current === 'sim' && simProgressRef.current > 0.03;
           const src = map.getSource('src-flow-particles') as GeoJSONSource | undefined;
-          if (src) {
-            const maxTier = tabRef.current === 'sim' ? 2 : flowDensityRef.current;
-            const showVerified = layersRef.current.verifiedWaterways;
-            if (maxTier === 0 && !showVerified) {
-              src.setData(asGeoInput(EMPTY_FC));
-            } else {
+
+          if (!isRaining) {
+            if (src) src.setData(asGeoInput(EMPTY_FC));
+          } else {
+            const speed = 0.14 + (simRainRef.current / 150) * (0.12 + simProgressRef.current * 0.24);
+            particlePhase = (particlePhase + dt * speed) % 1;
+
+            if (src) {
+              const maxTier = simProgressRef.current >= 0.35 || simRainRef.current >= 60 ? 2 : 1;
+              const showVerified = layersRef.current.verifiedWaterways;
               const features: GeoFeature[] = [];
               if (showVerified) {
                 for (let i = 0; i < verifiedWaterwaysRef.current.length; i++) {
@@ -964,7 +1256,7 @@ export function MapView(props: MapViewProps) {
                   const coords = ww.geometry.coordinates;
                   if (!coords || coords.length < 2) continue;
                   const count = Math.max(1, Math.min(8, Math.round((ww.properties.length_m || 400) / 320)));
-                  const radius = ww.properties.kind === 'river' ? 3.6 : 2.9;
+                  const radius = ww.properties.kind === 'river' ? 3.5 : 2.8;
                   for (let k = 0; k < count; k++) {
                     const frac = (particlePhase + k / count + i * 0.13) % 1;
                     features.push({
@@ -975,24 +1267,22 @@ export function MapView(props: MapViewProps) {
                   }
                 }
               }
-              if (maxTier > 0) {
-                const animPaths = animPathsRef.current;
-                for (let i = 0; i < animPaths.length; i++) {
-                  const f = animPaths[i];
-                  if (f.geometry.type !== 'LineString') continue;
-                  if (suppressedDemSetRef.current.has(String(f.properties?.id || ''))) continue;
-                  const tier = Number(f.properties?.tier || 2);
-                  if (tier > maxTier) continue;
-                  const coords = f.geometry.coordinates;
-                  const count = tier === 1 ? 2 : 1;
-                  for (let k = 0; k < count; k++) {
-                    const frac = (particlePhase + k / count + i * 0.17) % 1;
-                    features.push({
-                      type: 'Feature',
-                      properties: { kind: 'dem', radius: tier === 1 ? 3.4 : 2.6 },
-                      geometry: { type: 'Point', coordinates: interpolateLine(coords, frac) }
-                    });
-                  }
+              const animPaths = animPathsRef.current;
+              for (let i = 0; i < animPaths.length; i++) {
+                const f = animPaths[i];
+                if (f.geometry.type !== 'LineString') continue;
+                if (suppressedDemSetRef.current.has(String(f.properties?.id || ''))) continue;
+                const tier = Number(f.properties?.tier || 2);
+                if (tier > maxTier) continue;
+                const coords = f.geometry.coordinates;
+                const count = tier === 1 ? 2 : 1;
+                for (let k = 0; k < count; k++) {
+                  const frac = (particlePhase + k / count + i * 0.17) % 1;
+                  features.push({
+                    type: 'Feature',
+                    properties: { kind: 'dem', radius: tier === 1 ? 3.2 : 2.5 },
+                    geometry: { type: 'Point', coordinates: interpolateLine(coords, frac) }
+                  });
                 }
               }
               src.setData(asGeoInput({ type: 'FeatureCollection', features }));
@@ -1109,6 +1399,7 @@ export function MapView(props: MapViewProps) {
     map.setLayoutProperty('osm-waterways', 'visibility', vis(props.layers.osmContext));
     map.setLayoutProperty('verified-waterways-casing', 'visibility', vis(props.layers.verifiedWaterways));
     map.setLayoutProperty('verified-waterways-line', 'visibility', vis(props.layers.verifiedWaterways));
+    map.setLayoutProperty('verified-culverts-line', 'visibility', vis(props.layers.verifiedWaterways));
 
     const wwSrc = map.getSource('src-verified-waterways') as GeoJSONSource | undefined;
     if (wwSrc) {
@@ -1120,11 +1411,51 @@ export function MapView(props: MapViewProps) {
       );
     }
 
-    const maxTier = props.tab === 'sim' ? 2 : props.flowDensity;
+    const stSrc = map.getSource('src-verified-structures') as GeoJSONSource | undefined;
+    if (stSrc) {
+      const filteredStructures =
+        props.tab === 'drainage' && props.drainFilter !== 'all'
+          ? props.verifiedStructures.filter(s => s.properties.status === props.drainFilter)
+          : props.verifiedStructures;
+      stSrc.setData(
+        asGeoInput({
+          type: 'FeatureCollection',
+          features: filteredStructures as unknown as GeoFeature[]
+        })
+      );
+    }
+    const showStructures =
+      props.tab === 'drainage' || props.tab === 'editor' ? true : props.layers.structures;
+    map.setLayoutProperty('verified-structures-symbol', 'visibility', vis(showStructures));
+
+    const isRaining = props.tab === 'sim' && props.simProgress > 0.03;
+    const showStressRings =
+      showStructures &&
+      ((isRaining && props.simScenario === 'clogged') ||
+        props.verifiedStructures.some(s => ['clogged', 'damaged', 'critical'].includes(s.properties.status)));
+    map.setLayoutProperty('verified-structures-stress-ring', 'visibility', vis(showStressRings));
+    if (showStressRings) {
+      map.setFilter(
+        'verified-structures-stress-ring',
+        isRaining && props.simScenario === 'clogged'
+          ? ['has', 'id']
+          : ['in', ['get', 'status'], ['literal', ['clogged', 'damaged', 'critical']]]
+      );
+    }
+
+    const maxTier =
+      props.tab === 'sim'
+        ? isRaining
+          ? props.simProgress >= 0.35 || props.simRain >= 60
+            ? 2
+            : 1
+          : 0
+        : props.flowDensity;
     const flowVis = maxTier > 0;
     map.setLayoutProperty('flows-glow', 'visibility', vis(flowVis));
     map.setLayoutProperty('flows-line', 'visibility', vis(flowVis));
-    map.setLayoutProperty('flow-particles', 'visibility', vis(flowVis || props.layers.verifiedWaterways));
+    map.setLayoutProperty('flows-arrows', 'visibility', vis(flowVis));
+    map.setLayoutProperty('flow-particles', 'visibility', vis(isRaining));
     if (flowVis) {
       const tierExpr: ExpressionSpecification = ['<=', ['get', 'tier'], maxTier];
       const flowFilter: FilterSpecification =
@@ -1133,19 +1464,20 @@ export function MapView(props: MapViewProps) {
           : tierExpr;
       map.setFilter('flows-glow', flowFilter);
       map.setFilter('flows-line', flowFilter);
+      map.setFilter('flows-arrows', flowFilter);
     }
 
-    // Smooth HAND Raster Overlays for Simulation Tab (driven by Intensity x Duration x Progress)
-    const showFlood = props.tab === 'sim' && props.simProgress > 0.03;
+    // Smooth HAND Raster Overlays for Simulation Tab (conservative 0.8 / 1.8 / 3.2m corridors)
+    const showFlood = isRaining;
     let activeHandId: string | null = null;
-    let handOpacity = 0.85;
+    let handOpacity = 0.72;
     if (showFlood) {
       const accumulatedMm = props.simRain * ((props.simDurationMin * props.simProgress) / 60);
       const effectiveLoad = props.simRain * 0.45 + accumulatedMm * 0.55;
       const level = effectiveLoad < 45 ? 'low' : effectiveLoad < 105 ? 'med' : 'high';
       activeHandId = `hand-${props.simScenario}-${level}`;
-      const baseMax = props.simScenario === 'cleared' ? 0.72 : 0.9;
-      handOpacity = Math.min(baseMax, 0.28 + Math.min(1, props.simProgress * 1.15) * (baseMax - 0.28));
+      const baseMax = props.simScenario === 'cleared' ? 0.56 : 0.72;
+      handOpacity = Math.min(baseMax, 0.22 + Math.min(1, props.simProgress * 1.15) * (baseMax - 0.22));
     }
     for (const hid of HAND_LAYERS) {
       const isOn = hid === activeHandId;
@@ -1153,12 +1485,48 @@ export function MapView(props: MapViewProps) {
       if (isOn) map.setPaintProperty(hid, 'raster-opacity', handOpacity);
     }
 
-    // Draft Drainage & Mitigation Points
-    const showDraftPts = props.tab === 'drainage' || props.tab === 'sim';
+    // Draft Crossings (filtered to hide points already covered by verified structures) & Hazard/Evac Points
+    const draftSrc = map.getSource('src-draft-pts') as GeoJSONSource | undefined;
+    if (draftSrc) {
+      const verifiedRefSet = new Set(
+        props.verifiedStructures.map(s => s.properties.source_ref).filter(Boolean).map(String)
+      );
+      const dedupedDrafts = props.datasets.drainageDraft.features.filter(f => {
+        if (f.properties?.kind !== 'drainage') return true;
+        const fId = String(f.properties?.id || '');
+        if (verifiedRefSet.has(fId)) return false;
+        if (f.geometry.type === 'Point') {
+          const coords = f.geometry.coordinates;
+          if (
+            props.verifiedStructures.some(
+              s =>
+                haversineMeters(
+                  coords[0],
+                  coords[1],
+                  s.geometry.coordinates[0],
+                  s.geometry.coordinates[1]
+                ) <= 45
+            )
+          ) {
+            return false;
+          }
+        }
+        return true;
+      });
+      draftSrc.setData(asGeoInput({ type: 'FeatureCollection', features: dedupedDrafts }));
+    }
+
+    const showDraftPts =
+      props.tab === 'drainage' ||
+      isRaining ||
+      (props.tab === 'editor' && props.layers.unverifiedCrossings) ||
+      (props.tab === 'terrain' && props.layers.unverifiedCrossings);
     map.setLayoutProperty('draft-points', 'visibility', vis(showDraftPts));
     if (showDraftPts) {
       const anyClauses: ExpressionSpecification[] = [];
-      if (props.tab === 'sim') {
+      if (props.tab === 'terrain' || props.tab === 'editor') {
+        anyClauses.push(['==', ['get', 'kind'], 'drainage']);
+      } else if (props.tab === 'sim') {
         anyClauses.push(['==', ['get', 'kind'], 'drainage']);
         if (props.layers.bronjong) anyClauses.push(['==', ['get', 'kind'], 'bronjong']);
         if (props.layers.evac) anyClauses.push(['==', ['get', 'kind'], 'evacuation']);
@@ -1188,6 +1556,8 @@ export function MapView(props: MapViewProps) {
     props.simScenario,
     props.drainFilter,
     props.verifiedWaterways,
+    props.verifiedStructures,
+    props.datasets.drainageDraft,
     props.suppressedDemIds
   ]);
 
@@ -1531,6 +1901,46 @@ export function MapView(props: MapViewProps) {
       vertexMarkersRef.current = [];
     };
   }, [mapReady, editingId, editingCoords, props.editorUnlocked]);
+
+  const editingStructId = props.editingStructure?.id ?? null;
+  const editingStructCoords = props.editingStructure?.coordinates ?? null;
+
+  // Draggable marker when editing or placing a culvert / bridge point
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapLoadedRef.current) return;
+
+    if (structureEditMarkerRef.current) {
+      structureEditMarkerRef.current.remove();
+      structureEditMarkerRef.current = null;
+    }
+
+    if (!editingStructCoords || !props.editorUnlocked) return;
+
+    const el = document.createElement('div');
+    el.className = 'vertex-handle vertex-handle--start';
+    el.style.width = '18px';
+    el.style.height = '18px';
+    el.style.borderWidth = '3px';
+    el.title = 'Drag to adjust culvert / bridge position';
+    el.addEventListener('click', ev => ev.stopPropagation());
+
+    const mk = new Marker({ element: el, anchor: 'center', draggable: true })
+      .setLngLat(editingStructCoords)
+      .addTo(map);
+    mk.on('dragend', () => {
+      const ll = mk.getLngLat();
+      onMoveEditingStructureRef.current([Number(ll.lng.toFixed(6)), Number(ll.lat.toFixed(6))]);
+    });
+    structureEditMarkerRef.current = mk;
+
+    return () => {
+      if (structureEditMarkerRef.current) {
+        structureEditMarkerRef.current.remove();
+        structureEditMarkerRef.current = null;
+      }
+    };
+  }, [mapReady, editingStructId, editingStructCoords, props.editorUnlocked]);
 
   return <div ref={containerRef} className="absolute inset-0 h-full w-full" aria-label="Balingka GIS Map" />;
 }

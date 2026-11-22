@@ -161,6 +161,7 @@ export function WaterwayEditorPanel({
   };
 
   const statusPill: Record<DrainageStatus, string> = {
+    unverified: 'bg-[#64748b]/12 text-[#475569]',
     normal: 'bg-[#047857]/12 text-[#047857]',
     clogged: 'bg-[#b45309]/14 text-[#b45309]',
     damaged: 'bg-[#c2410c]/14 text-[#c2410c]',

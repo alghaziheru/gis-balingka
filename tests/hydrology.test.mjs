@@ -149,6 +149,13 @@ test('generated Balingka-only block assets, smooth PNGs, and mask.geojson are va
     assert.equal(fc.type, 'FeatureCollection');
     assert(fc.features.length >= 1, `${file} empty`);
   }
+
+  const draft = JSON.parse(fs.readFileSync(path.join(DATA_DIR, 'drainage-draft.geojson'), 'utf8'));
+  const draftCrossings = draft.features.filter(f => f.properties?.kind === 'drainage');
+  assert(draftCrossings.length >= 1, 'expected detected crossings in drainage-draft.geojson');
+  for (const c of draftCrossings) {
+    assert.equal(c.properties.status, 'unverified', `uninspected crossing ${c.properties.id} must be unverified`);
+  }
 });
 
 test('filterOverlappingFlowPaths drops DEM reaches near verified waterways while preserving distant tributaries', () => {
@@ -173,11 +180,11 @@ test('filterOverlappingFlowPaths drops DEM reaches near verified waterways while
         properties: { id: 'flow-dup', tier: 1 },
         geometry: {
           type: 'LineString',
-          // ~10m east of verified waterway
+          // ~35m east of verified waterway (typical 30m DEM drift)
           coordinates: [
-            [100.32009, -0.340],
-            [100.32009, -0.335],
-            [100.32009, -0.330]
+            [100.32031, -0.340],
+            [100.32031, -0.335],
+            [100.32031, -0.330]
           ]
         }
       },
@@ -196,7 +203,7 @@ test('filterOverlappingFlowPaths drops DEM reaches near verified waterways while
       }
     ]
   };
-  const res = filterOverlappingFlowPaths(flowPathsFC, verified, 28);
+  const res = filterOverlappingFlowPaths(flowPathsFC, verified);
   assert.equal(res.filteredCount, 1);
   assert.deepEqual(
     res.features.map(f => f.properties.id),

@@ -1,0 +1,93 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "id": "st-1f03c688",
+        "name": "Jembatan Kayu Dama",
+        "kind": "bridge",
+        "status": "normal",
+        "source": "crossing_promoted",
+        "source_ref": "cross-31",
+        "size_note": "",
+        "notes": "",
+        "updated_by": "Relawan Balingka",
+        "updated_at": "2026-11-22T01:34:26.296Z"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          100.326683,
+          -0.333129
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "id": "st-7f8673f2",
+        "name": "Jembatan Simp. Malalak",
+        "kind": "bridge",
+        "status": "normal",
+        "source": "manual",
+        "source_ref": null,
+        "size_note": "",
+        "notes": "",
+        "updated_by": "Relawan Balingka",
+        "updated_at": "2026-11-22T01:33:23.101Z"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          100.315396,
+          -0.332202
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "id": "st-9659d0b8",
+        "name": "Persilangan Jalan–Alur #13",
+        "kind": "bridge",
+        "status": "normal",
+        "source": "crossing_promoted",
+        "source_ref": "cross-13",
+        "size_note": "",
+        "notes": "",
+        "updated_by": "Relawan Balingka",
+        "updated_at": "2026-11-22T01:51:08.107Z"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          100.324437,
+          -0.335954
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "id": "st-ad00af82",
+        "name": "Persilangan Jalan–Alur #20",
+        "kind": "bridge",
+        "status": "normal",
+        "source": "crossing_promoted",
+        "source_ref": "cross-20",
+        "size_note": "",
+        "notes": "",
+        "updated_by": "Relawan Balingka",
+        "updated_at": "2026-11-22T01:35:41.812Z"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          100.327035,
+          -0.331688
+        ]
+      }
+    }
+  ]
+}

@@ -271,3 +271,277 @@ test('POST /api/hydrology/recompute burns verified waterways into temp DEM data,
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('Structures CRUD (culverts & bridges), passphrase auth, audit revert, and export bundle work end-to-end', async () => {
+  const { dir, dbPath } = makeTempDb('balingka-api-struct-');
+  const { server } = createAppServer({ dbPath, distDir: null, adminPassphrase: 'struct-pass-2026' });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const { port } = server.address();
+  const base = `http://127.0.0.1:${port}`;
+
+  try {
+    // 1. Initial structures list is public
+    const initRes = await fetch(`${base}/api/structures`);
+    assert.equal(initRes.status, 200);
+    const initData = await initRes.json();
+    const initCount = initData.structures.features.length;
+
+    // 2. Creating structure without passphrase -> 401
+    const unauth = await fetch(`${base}/api/structures`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: 'Gorong-gorong Gelap',
+        kind: 'culvert',
+        status: 'clogged',
+        coordinates: [100.324, -0.335]
+      })
+    });
+    assert.equal(unauth.status, 401);
+
+    // 3. Verify a crossing point -> 201
+    const createRes = await fetch(`${base}/api/structures`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Admin-Passphrase': 'struct-pass-2026'
+      },
+      body: JSON.stringify({
+        name: 'Gorong-gorong Simpang Pahambatan',
+        kind: 'culvert',
+        status: 'clogged',
+        source: 'crossing_promoted',
+        source_ref: 'cross-1',
+        size_note: 'Box 1.0m x 0.8m',
+        notes: 'Tertutup sedimen pasir',
+        coordinates: [100.3195, -0.3391],
+        actor: 'Wali Jorong',
+        reason: 'Cek lapangan'
+      })
+    });
+    assert.equal(createRes.status, 201);
+    const created = await createRes.json();
+    assert.equal(created.log.action, 'verify_crossing');
+    assert.equal(created.feature.properties.kind, 'culvert');
+    assert.equal(created.feature.properties.status, 'clogged');
+
+    const stId = created.feature.properties.id;
+
+    // 4. Update structure status -> normal
+    const updRes = await fetch(`${base}/api/structures/${stId}`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Admin-Passphrase': 'struct-pass-2026'
+      },
+      body: JSON.stringify({
+        status: 'normal',
+        notes: 'Sudah dibersihkan gotong royong',
+        actor: 'Wali Jorong',
+        reason: 'Pembersihan gorong-gorong'
+      })
+    });
+    assert.equal(updRes.status, 200);
+    const updated = await updRes.json();
+    assert.equal(updated.feature.properties.status, 'normal');
+    assert.equal(updated.log.action, 'update_structure');
+
+    // 5. Export bundle includes verifiedStructures
+    const bundle = await (await fetch(`${base}/api/export/bundle`)).json();
+    assert.equal(bundle.verifiedStructures.features.length, initCount + 1);
+
+    // 6. Delete & revert structure
+    const delRes = await fetch(`${base}/api/structures/${stId}`, {
+      method: 'DELETE',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Admin-Passphrase': 'struct-pass-2026'
+      },
+      body: JSON.stringify({ actor: 'Admin', reason: 'Salah input' })
+    });
+    assert.equal(delRes.status, 200);
+    const afterDel = await (await fetch(`${base}/api/structures`)).json();
+    assert.equal(afterDel.structures.features.length, initCount);
+
+    const delData = await delRes.json();
+    const revRes = await fetch(`${base}/api/audit/${delData.log.id}/revert`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Admin-Passphrase': 'struct-pass-2026'
+      },
+      body: JSON.stringify({ actor: 'Admin', reason: 'Pulihkan titik' })
+    });
+    assert.equal(revRes.status, 200);
+    const revData = await revRes.json();
+    assert.equal(revData.state.structures.features.length, initCount + 1);
+    assert.ok(revData.state.structures.features.some(f => f.properties.id === stId));
+  } finally {
+    await new Promise(resolve => server.close(resolve));
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('Verified GeoJSON snapshots seed fresh DBs, recompute auto-exports them, and importSeedSnapshot preserves suggestions', async () => {
+  const { dir, dbPath } = makeTempDb('balingka-api-seed-');
+  const tempPublicData = path.join(dir, 'public-data');
+  fs.mkdirSync(tempPublicData, { recursive: true });
+  for (const name of ['dem-grid.json', 'osm-context.geojson', 'metadata.json']) {
+    fs.copyFileSync(path.join(PUBLIC_DATA_DIR, name), path.join(tempPublicData, name));
+  }
+
+  // Write canonical verified GeoJSON snapshots into tempPublicData
+  fs.writeFileSync(
+    path.join(tempPublicData, 'verified-waterways.geojson'),
+    JSON.stringify({
+      type: 'FeatureCollection',
+      features: [
+        {
+          type: 'Feature',
+          properties: {
+            id: 'ww-git-1',
+            name: 'Batang Ngalai (Git Verified)',
+            kind: 'river',
+            status: 'normal',
+            source: 'osm',
+            source_ref: 'osm-w-1',
+            notes: 'Diselaraskan di localhost',
+            length_m: 150,
+            updated_by: 'Relawan Balingka',
+            updated_at: '2026-11-22T01:00:00.000Z'
+          },
+          geometry: {
+            type: 'LineString',
+            coordinates: [
+              [100.320, -0.340],
+              [100.321, -0.339]
+            ]
+          }
+        }
+      ]
+    })
+  );
+  fs.writeFileSync(
+    path.join(tempPublicData, 'verified-structures.geojson'),
+    JSON.stringify({
+      type: 'FeatureCollection',
+      features: [
+        {
+          type: 'Feature',
+          properties: {
+            id: 'st-git-1',
+            name: 'Gorong-gorong Pasar',
+            kind: 'culvert',
+            status: 'clogged',
+            source: 'manual',
+            source_ref: null,
+            size_note: 'Box 1.0m',
+            notes: 'Terverifikasi',
+            updated_by: 'Relawan Balingka',
+            updated_at: '2026-11-22T01:00:00.000Z'
+          },
+          geometry: { type: 'Point', coordinates: [100.324, -0.335] }
+        }
+      ]
+    })
+  );
+  fs.writeFileSync(
+    path.join(tempPublicData, 'suppressed-dem.json'),
+    JSON.stringify([{ seg_id: 'flow-88', reason: 'Jalur tidak ada di lapangan', updated_by: 'Editor', updated_at: '2026-11-22T01:00:00.000Z' }])
+  );
+
+  const { server, store } = createAppServer({
+    dbPath,
+    seedGeoJsonPath: path.join(tempPublicData, 'osm-context.geojson'),
+    distDir: null,
+    publicDataDir: tempPublicData,
+    adminPassphrase: ''
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const { port } = server.address();
+  const base = `http://127.0.0.1:${port}`;
+
+  try {
+    // 1. Fresh DB seeded directly from verified GeoJSON snapshots
+    const state = await (await fetch(`${base}/api/waterways`)).json();
+    assert.equal(state.waterways.features.length, 1);
+    assert.equal(state.waterways.features[0].properties.name, 'Batang Ngalai (Git Verified)');
+    assert.equal(state.structures.features.length, 1);
+    assert.equal(state.structures.features[0].properties.name, 'Gorong-gorong Pasar');
+    assert.equal(state.suppressedDem.length, 1);
+    assert.equal(state.suppressedDem[0].seg_id, 'flow-88');
+
+    // 2. Citizen suggestion stays preserved across importSeedSnapshot
+    const sug = store.createSuggestion({
+      reporter_name: 'Warga Balingka',
+      location_name: 'Simpang',
+      message: 'Mohon cek parit'
+    });
+    assert.ok(sug.id);
+
+    // 3. Recompute auto-exports verified-waterways/structures/suppressed-dem
+    const createRes = await fetch(`${base}/api/waterways`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: 'Parit Baru',
+        kind: 'drain',
+        status: 'normal',
+        coordinates: [
+          [100.322, -0.336],
+          [100.323, -0.335]
+        ],
+        actor: 'Editor Uji',
+        reason: 'Tambah parit'
+      })
+    });
+    assert.equal(createRes.status, 201);
+
+    const recRes = await fetch(`${base}/api/hydrology/recompute`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ actor: 'Editor Uji' })
+    });
+    assert.equal(recRes.status, 200);
+
+    const exportedWw = JSON.parse(fs.readFileSync(path.join(tempPublicData, 'verified-waterways.geojson'), 'utf8'));
+    assert.equal(exportedWw.features.length, 2);
+    assert.ok(exportedWw.features.some(f => f.properties.name === 'Parit Baru'));
+
+    // 4. importSeedSnapshot upserts new Git data without touching citizen suggestions
+    const imp = store.importSeedSnapshot({
+      waterways: [
+        {
+          type: 'Feature',
+          properties: {
+            id: 'ww-git-1',
+            name: 'Batang Ngalai (Pulled)',
+            kind: 'river',
+            status: 'normal',
+            source: 'osm'
+          },
+          geometry: {
+            type: 'LineString',
+            coordinates: [
+              [100.320, -0.340],
+              [100.3215, -0.339]
+            ]
+          }
+        }
+      ],
+      structures: [],
+      suppressedDem: []
+    });
+    assert.equal(imp.importedWaterways, 1);
+    assert.equal(imp.log.action, 'import_seed');
+    assert.equal(store.listSuggestions().length, 1);
+    const updatedState = store.getState();
+    assert.equal(
+      updatedState.waterways.features.find(f => f.properties.id === 'ww-git-1')?.properties.name,
+      'Batang Ngalai (Pulled)'
+    );
+  } finally {
+    await new Promise(resolve => server.close(resolve));
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

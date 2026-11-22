@@ -16,6 +16,10 @@ const ACTION_BADGE: Record<string, string> = {
   seed: 'bg-[#475569]/12 text-[#334155]',
   create: 'bg-[#047857]/12 text-[#047857]',
   update: 'bg-[#0369a1]/12 text-[#0369a1]',
+  create_structure: 'bg-[#047857]/12 text-[#047857]',
+  verify_crossing: 'bg-[#0284c7]/14 text-[#0369a1]',
+  update_structure: 'bg-[#0369a1]/12 text-[#0369a1]',
+  delete_structure: 'bg-[#b91c1c]/12 text-[#b91c1c]',
   promote_dem: 'bg-[#0284c7]/14 text-[#0369a1]',
   suppress_dem: 'bg-[#b45309]/14 text-[#b45309]',
   restore_dem: 'bg-[#047857]/12 text-[#047857]',
@@ -64,7 +68,7 @@ function canRevertLog(log: AuditLogEntry): boolean {
   return (
     log.action !== 'seed' &&
     log.action !== 'recompute_hydrology' &&
-    (log.entity_type === 'waterway' || log.entity_type === 'dem_segment')
+    (log.entity_type === 'waterway' || log.entity_type === 'structure' || log.entity_type === 'dem_segment')
   );
 }
 

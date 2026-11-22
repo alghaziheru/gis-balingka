@@ -38,6 +38,7 @@ export function DrainageTab({
 
   const filterChips: { id: 'all' | DrainageStatus; label: string; color?: string }[] = [
     { id: 'all', label: t.fAll },
+    { id: 'unverified', label: t.fUnverified, color: '#64748b' },
     { id: 'normal', label: t.fNormal, color: '#047857' },
     { id: 'clogged', label: t.fClogged, color: '#b45309' },
     { id: 'damaged', label: t.fDamaged, color: '#c2410c' },

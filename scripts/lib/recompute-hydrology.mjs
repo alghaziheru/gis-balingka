@@ -41,6 +41,7 @@ export function recomputeHydrologyFromLocalData({
   publicDataDir,
   distDataDir = null,
   verifiedFeatures = [],
+  verifiedStructures = [],
   suppressedDemIds = new Set(),
   carveDepthM = 3.5
 }) {
@@ -59,6 +60,9 @@ export function recomputeHydrologyFromLocalData({
 
   const activeVerified = (verifiedFeatures || []).filter(
     f => f?.geometry?.type === 'LineString' && Array.isArray(f.geometry.coordinates) && f.geometry.coordinates.length >= 2
+  );
+  const activeStructures = (verifiedStructures || []).filter(
+    f => f?.geometry?.type === 'Point' && Array.isArray(f.geometry.coordinates) && f.geometry.coordinates.length >= 2
   );
 
   let hydroElev = rawElev;
@@ -81,7 +85,7 @@ export function recomputeHydrologyFromLocalData({
     normal: 75,
     detail: 25
   });
-  const deduped = filterOverlappingFlowPaths(rawFlowPaths, activeVerified, 28);
+  const deduped = filterOverlappingFlowPaths(rawFlowPaths, activeVerified, 48, 0.55);
   const flowPaths = {
     type: 'FeatureCollection',
     features: deduped.features
@@ -107,28 +111,50 @@ export function recomputeHydrologyFromLocalData({
   ];
   const crossings = detectRoadStreamCrossings(roadFeatures, combinedStreams, 85);
 
-  const bottlenecks = [
+  const verifiedRefSet = new Set(
+    activeStructures.map(s => s.properties?.source_ref).filter(Boolean).map(String)
+  );
+  const isCoveredByStructure = (id, coords) => {
+    if (verifiedRefSet.has(id)) return true;
+    return activeStructures.some(s => {
+      const sc = s.geometry.coordinates;
+      return haversineMeters(coords[0], coords[1], sc[0], sc[1]) <= 45;
+    });
+  };
+
+  const rawDraftBottlenecks = [
     ...crossings.map((c, idx) => ({
       id: `cross-${idx + 1}`,
       coords: c.coords,
       kind: 'drainage',
-      status: c.tier === 1 ? 'critical' : 'clogged',
-      name_id: c.roadName ? `Perlintasan Alur ${c.roadName}` : `Gorong / Perlintasan Jalan–Alur #${idx + 1}`,
-      name_en: c.roadName ? `Stream Crossing at ${c.roadName}` : `Road–Stream Crossing #${idx + 1}`,
-      desc_id: `Persilangan jalan OSM (${c.highway}) dengan alur air (DAS hulu ~${c.catchment_ha} ha). Perlu cek kapasitas gorong-gorong.`,
-      desc_en: `Intersection of OSM road (${c.highway}) and stream channel (~${c.catchment_ha} ha upstream catchment). Verify culvert capacity.`
+      status: 'unverified',
+      name_id: c.roadName ? `Perlintasan ${c.roadName}` : `Persilangan Jalan–Alur #${idx + 1}`,
+      name_en: c.roadName ? `Crossing at ${c.roadName}` : `Road–Stream Crossing #${idx + 1}`,
+      desc_id: `Perkiraan persilangan jalan (${c.highway}) & alur air (belum dicek lapangan). Verifikasi lokasi & kapasitas gorong-gorong.`,
+      desc_en: `Estimated road (${c.highway}) & stream crossing (unverified). Field-check culvert presence and capacity.`
     })),
     ...bridgeFeatures.map((b, idx) => ({
       id: `br-${idx + 1}`,
       coords: b.geometry.coordinates,
       kind: 'drainage',
-      status: 'damaged',
+      status: 'unverified',
       name_id: b.properties.name,
       name_en: String(b.properties.name || '').replace(/^Jembatan/, 'Bridge'),
-      desc_id: `Jembatan jalan (${b.properties.highway}) dari OpenStreetMap — cek kondisi tebing & sumbatan material.`,
-      desc_en: `OpenStreetMap bridge (${b.properties.highway}) — inspect abutment stability and debris clearance.`
+      desc_id: `Jembatan jalan (${b.properties.highway}) dari OpenStreetMap — belum dicek lapangan.`,
+      desc_en: `OpenStreetMap bridge (${b.properties.highway}) — unverified in the field.`
     }))
   ];
+
+  const draftCrossings = rawDraftBottlenecks.filter(b => !isCoveredByStructure(b.id, b.coords));
+  const prioritizedVerifiedBottlenecks = activeStructures
+    .filter(s => ['clogged', 'damaged', 'critical'].includes(String(s.properties?.status || '')))
+    .map(s => ({
+      id: s.properties.id,
+      coords: s.geometry.coordinates,
+      kind: s.properties.kind,
+      status: s.properties.status
+    }));
+  const bottlenecks = [...prioritizedVerifiedBottlenecks, ...draftCrossings];
 
   const handRasters = renderSmoothHandFloodRasters(hand, slope, bottlenecks, gridMeta, 768);
 

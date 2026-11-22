@@ -824,16 +824,16 @@ export function renderSmoothHandFloodRasters(handGrid, slopeGrid, bottlenecks, g
   for (let r = 0; r < height; r++) {
     for (let c = 0; c < width; c++) {
       const [lng, lat] = cellToLngLat(c, r, gridMeta);
-      if (bottlenecks.some(b => haversineMeters(lng, lat, b.coords[0], b.coords[1]) <= 240)) {
+      if (bottlenecks.some(b => haversineMeters(lng, lat, b.coords[0], b.coords[1]) <= 220)) {
         nearBottleneckCell[r * width + c] = 1;
       }
     }
   }
 
   const levels = {
-    low: 2.2,
-    med: 4.8,
-    high: 8.0
+    low: 0.8,
+    med: 1.8,
+    high: 3.2
   };
 
   const simAreasHa = {
@@ -845,7 +845,7 @@ export function renderSmoothHandFloodRasters(handGrid, slopeGrid, bottlenecks, g
     let clogCount = 0;
     let clearCount = 0;
     for (let i = 0; i < handGrid.length; i++) {
-      if (slopeGrid[i] <= 26 && handGrid[i] <= maxH) {
+      if (slopeGrid[i] <= 22 && handGrid[i] <= maxH) {
         clogCount++;
         if (!nearBottleneckCell[i]) clearCount++;
       }
@@ -886,31 +886,31 @@ export function renderSmoothHandFloodRasters(handGrid, slopeGrid, bottlenecks, g
           const h = sampleBilinear(smoothHand, width, height, xf, yf);
           const sl = sampleBilinear(smoothSlope, width, height, xf, yf);
 
-          const slopeMask = 1 - smoothstep(21, 29, sl);
-          const handMask = 1 - smoothstep(Math.max(0.5, maxH - 1.1), maxH + 0.8, h);
+          const slopeMask = 1 - smoothstep(16, 24, sl);
+          const handMask = 1 - smoothstep(Math.max(0.2, maxH - 0.45), maxH + 0.35, h);
           const clearMask = scenario === 'cleared' ? clearanceField[y * outSize + x] : 1;
           const alpha = slopeMask * handMask * clearMask;
           if (alpha <= 0.01) continue;
 
-          // Color gradient by depth (HAND <=2.2m crimson, <=4.8m deep sky blue, >4.8m bright cyan)
+          // Calm translucent water-corridor tones (#0369a1 -> #0284c7 -> #7dd3fc)
           let rCol, gCol, bCol;
-          if (h <= 2.4) {
-            const f = smoothstep(1.2, 2.8, h);
-            rCol = 220 * (1 - f) + 2 * f;
-            gCol = 38 * (1 - f) + 132 * f;
-            bCol = 38 * (1 - f) + 199 * f;
+          if (h <= 0.9) {
+            const f = smoothstep(0.2, 0.9, h);
+            rCol = 3 * (1 - f) + 2 * f;
+            gCol = 105 * (1 - f) + 132 * f;
+            bCol = 161 * (1 - f) + 199 * f;
           } else {
-            const f = smoothstep(2.4, 6.2, h);
-            rCol = 2 * (1 - f) + 56 * f;
-            gCol = 132 * (1 - f) + 189 * f;
-            bCol = 199 * (1 - f) + 248 * f;
+            const f = smoothstep(0.9, 3.2, h);
+            rCol = 2 * (1 - f) + 125 * f;
+            gCol = 132 * (1 - f) + 211 * f;
+            bCol = 199 * (1 - f) + 252 * f;
           }
 
           const pIdx = (y * outSize + x) * 4;
           rgba[pIdx] = clamp255(rCol);
           rgba[pIdx + 1] = clamp255(gCol);
           rgba[pIdx + 2] = clamp255(bCol);
-          rgba[pIdx + 3] = clamp255(alpha * 195);
+          rgba[pIdx + 3] = clamp255(alpha * 145);
         }
       }
       pngs[`${scenario}-${levelName}`] = encodePngRgba(outSize, outSize, rgba);
@@ -1018,7 +1018,7 @@ export function pointToSegmentMeters(pt, a, b) {
  * waterways (~bufferMeters) so burned channels are not visually duplicated while
  * unmapped uphill tributaries terminating at verified junctions remain intact.
  */
-export function filterOverlappingFlowPaths(flowPathsFC, verifiedFeatures, bufferMeters = 28) {
+export function filterOverlappingFlowPaths(flowPathsFC, verifiedFeatures, bufferMeters = 48, overlapThreshold = 0.55) {
   if (!Array.isArray(verifiedFeatures) || verifiedFeatures.length === 0) {
     return {
       type: 'FeatureCollection',
@@ -1077,7 +1077,7 @@ export function filterOverlappingFlowPaths(flowPathsFC, verifiedFeatures, buffer
     }
     const overlapFraction = samplePts.length > 0 ? nearCount / samplePts.length : 0;
 
-    if (overlapFraction >= 0.65) {
+    if (overlapFraction >= overlapThreshold) {
       filteredCount++;
     } else {
       kept.push(feat);

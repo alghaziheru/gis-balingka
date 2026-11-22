@@ -22,12 +22,25 @@ interface TerrainTabProps {
   onSwitchToDetail: () => void;
 }
 
-function LayerGlyph({ kind }: { kind: 'waterway' | 'flow' | 'das' | 'hillshade' | 'contour' | 'slope' | 'osm' }) {
+function LayerGlyph({
+  kind
+}: {
+  kind: 'waterway' | 'canal' | 'structure' | 'crossing' | 'flow' | 'das' | 'hillshade' | 'contour' | 'slope' | 'osm';
+}) {
   if (kind === 'waterway') {
     return <span className="inline-block h-[3.5px] w-4 shrink-0 rounded-full bg-[#0369a1]" />;
   }
+  if (kind === 'canal') {
+    return <span className="inline-block h-[2.5px] w-4 shrink-0 rounded-full bg-[#0d9488]" />;
+  }
+  if (kind === 'structure') {
+    return <span className="inline-block h-3 w-3 shrink-0 rounded-[3px] border border-white bg-[#047857] shadow-[0_0_0_1px_rgba(22,28,26,0.2)]" />;
+  }
+  if (kind === 'crossing') {
+    return <span className="inline-block h-3 w-3 shrink-0 rounded-full border-2 border-[#475569] bg-[#e2e8f0]" />;
+  }
   if (kind === 'flow') {
-    return <span className="inline-block h-0 w-4 shrink-0 border-t-2 border-dashed border-[#0ea5e9]" />;
+    return <span className="inline-block h-0 w-4 shrink-0 border-t-2 border-dashed border-[#b45309]" />;
   }
   if (kind === 'das') {
     return <span className="inline-block h-3 w-4 shrink-0 rounded-[2px] border-2 border-[#1b382d] bg-[#1b382d]/10" />;
@@ -83,9 +96,11 @@ export function TerrainTab({
   const detailLayerItems: {
     key: keyof LayerToggles;
     label: string;
-    glyph: 'waterway' | 'hillshade' | 'das' | 'contour' | 'slope' | 'osm';
+    glyph: 'waterway' | 'structure' | 'crossing' | 'hillshade' | 'das' | 'contour' | 'slope' | 'osm';
   }[] = [
     { key: 'verifiedWaterways', label: t.lblVerifiedWaterways, glyph: 'waterway' },
+    { key: 'structures', label: t.lblStructures, glyph: 'structure' },
+    { key: 'unverifiedCrossings', label: t.lblUnverifiedCrossings, glyph: 'crossing' },
     { key: 'hillshade', label: t.lblHillshade, glyph: 'hillshade' },
     { key: 'das', label: t.lblDas, glyph: 'das' },
     { key: 'contours', label: t.lblContours, glyph: 'contour' },
@@ -146,6 +161,24 @@ export function TerrainTab({
                 type="checkbox"
                 checked={layers.verifiedWaterways}
                 onChange={e => onToggleLayer('verifiedWaterways', e.target.checked)}
+                className="h-4.5 w-4.5 cursor-pointer accent-[#0369a1]"
+              />
+            </label>
+
+            <div className="flex items-center gap-2.5 py-2 pl-0.5 text-[12.5px] text-[#434d49]">
+              <LayerGlyph kind="canal" />
+              <span>{t.lblVerifiedCanals}</span>
+            </div>
+
+            <label className="flex min-h-[44px] cursor-pointer items-center justify-between gap-3 py-1.5">
+              <span className="flex items-center gap-2.5 text-[13.5px] font-medium text-[#161c1a]">
+                <LayerGlyph kind="structure" />
+                <span>{t.lblStructures}</span>
+              </span>
+              <input
+                type="checkbox"
+                checked={layers.structures}
+                onChange={e => onToggleLayer('structures', e.target.checked)}
                 className="h-4.5 w-4.5 cursor-pointer accent-[#0369a1]"
               />
             </label>
