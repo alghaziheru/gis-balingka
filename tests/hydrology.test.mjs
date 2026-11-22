@@ -9,6 +9,7 @@ import {
   computeSlopePercent,
   computeHAND,
   burnStreamsIntoDem,
+  filterOverlappingFlowPaths,
   chaikinSmooth,
   encodePngRgba,
   DX,
@@ -148,4 +149,57 @@ test('generated Balingka-only block assets, smooth PNGs, and mask.geojson are va
     assert.equal(fc.type, 'FeatureCollection');
     assert(fc.features.length >= 1, `${file} empty`);
   }
+});
+
+test('filterOverlappingFlowPaths drops DEM reaches near verified waterways while preserving distant tributaries', () => {
+  const verified = [
+    {
+      type: 'Feature',
+      properties: { id: 'ww-1', name: 'Batang Uji' },
+      geometry: {
+        type: 'LineString',
+        coordinates: [
+          [100.320, -0.340],
+          [100.320, -0.330]
+        ]
+      }
+    }
+  ];
+  const flowPathsFC = {
+    type: 'FeatureCollection',
+    features: [
+      {
+        type: 'Feature',
+        properties: { id: 'flow-dup', tier: 1 },
+        geometry: {
+          type: 'LineString',
+          // ~10m east of verified waterway
+          coordinates: [
+            [100.32009, -0.340],
+            [100.32009, -0.335],
+            [100.32009, -0.330]
+          ]
+        }
+      },
+      {
+        type: 'Feature',
+        properties: { id: 'flow-trib', tier: 2 },
+        geometry: {
+          type: 'LineString',
+          // ~300m east flowing into the river
+          coordinates: [
+            [100.323, -0.335],
+            [100.3215, -0.335],
+            [100.32009, -0.335]
+          ]
+        }
+      }
+    ]
+  };
+  const res = filterOverlappingFlowPaths(flowPathsFC, verified, 28);
+  assert.equal(res.filteredCount, 1);
+  assert.deepEqual(
+    res.features.map(f => f.properties.id),
+    ['flow-trib']
+  );
 });

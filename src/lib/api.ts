@@ -5,6 +5,7 @@ import type {
   EditorStatus,
   ExportBundle,
   GeoFeatureCollection,
+  HydroStatus,
   SuggestionStatus,
   SuppressedDemSegment,
   VerifiedWaterwayFeature,
@@ -117,15 +118,50 @@ export async function verifyEditorPassphrase(passphrase: string): Promise<boolea
 export async function fetchWaterwaysState(): Promise<{
   waterways: VerifiedWaterwayFeature[];
   suppressedDem: SuppressedDemSegment[];
+  hydroStatus: HydroStatus;
 }> {
   const data = await apiFetch<{
     waterways: { features: VerifiedWaterwayFeature[] };
     suppressedDem: SuppressedDemSegment[];
+    hydroStatus?: HydroStatus;
   }>('/api/waterways');
+  const waterways = data.waterways?.features || [];
   return {
-    waterways: data.waterways?.features || [],
-    suppressedDem: data.suppressedDem || []
+    waterways,
+    suppressedDem: data.suppressedDem || [],
+    hydroStatus: data.hydroStatus || {
+      dirty: false,
+      lastRecomputedAt: null,
+      burnedCellCount: 0,
+      verifiedWaterwayCount: waterways.length
+    }
   };
+}
+
+export async function recomputeHydrology(payload: {
+  actor: string;
+  carveDepthM?: number;
+}): Promise<{
+  ok: boolean;
+  summary: {
+    hydroConditioned: boolean;
+    burnedCellCount: number;
+    verifiedWaterwayCount: number;
+    flowSegmentCount: number;
+    filteredOverlapCount: number;
+    crossingsDetected: number;
+    recomputedAt: string;
+  };
+  hydroStatus: HydroStatus;
+  state: {
+    waterways: { features: VerifiedWaterwayFeature[] };
+    suppressedDem: SuppressedDemSegment[];
+  };
+}> {
+  return apiFetch('/api/hydrology/recompute', {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  });
 }
 
 export async function createWaterway(payload: {

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   GeoJSONSource,
+  ImageSource,
   Map as MapLibreMap,
   Marker,
   NavigationControl,
@@ -15,6 +16,7 @@ import {
 } from 'maplibre-gl';
 import maplibreWorkerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url';
 import type { DemClient } from '../lib/demClient';
+import { snapPointToWaterways } from '../lib/geometry';
 import type {
   ActiveTool,
   BasemapId,
@@ -75,15 +77,21 @@ interface MapViewProps {
   profileHover: ProfileSample | null;
   verifiedWaterways: VerifiedWaterwayFeature[];
   suppressedDemIds: string[];
+  dataVersion: number;
+  apiAvailable: boolean;
+  requiresPassphrase: boolean;
   editorUnlocked: boolean;
   editingWaterway: { id: string | null; coordinates: [number, number][]; sourceRef?: string | null } | null;
   drawVertices: [number, number][];
   flyRequest: FlyRequest | null;
   onMapClick: (lngLat: [number, number]) => void;
+  onOpenUnlock: () => void;
   onSelectWaterway: (feature: VerifiedWaterwayFeature) => void;
   onPromoteDemSegment: (segId: string, coords: [number, number][]) => void;
+  onRedrawDemSegment: (segId: string) => void;
   onSuppressDemSegment: (segId: string) => void;
   onChangeEditingCoords: (coords: [number, number][]) => void;
+  onSnapFeedback?: (msg: string) => void;
   onCursorTelemetry: (t: { lng: number; lat: number; elev: number; slope: number }) => void;
 }
 
@@ -192,6 +200,22 @@ export function MapView(props: MapViewProps) {
   onSuppressDemRef.current = props.onSuppressDemSegment;
   const onChangeEditingCoordsRef = useRef(props.onChangeEditingCoords);
   onChangeEditingCoordsRef.current = props.onChangeEditingCoords;
+  const datasetsRef = useRef(props.datasets);
+  datasetsRef.current = props.datasets;
+  const layersRef = useRef(props.layers);
+  layersRef.current = props.layers;
+  const apiAvailableRef = useRef(props.apiAvailable);
+  apiAvailableRef.current = props.apiAvailable;
+  const requiresPassphraseRef = useRef(props.requiresPassphrase);
+  requiresPassphraseRef.current = props.requiresPassphrase;
+  const onOpenUnlockRef = useRef(props.onOpenUnlock);
+  onOpenUnlockRef.current = props.onOpenUnlock;
+  const onRedrawDemRef = useRef(props.onRedrawDemSegment);
+  onRedrawDemRef.current = props.onRedrawDemSegment;
+  const onSnapFeedbackRef = useRef(props.onSnapFeedback);
+  onSnapFeedbackRef.current = props.onSnapFeedback;
+  const animPathsRef = useRef<GeoFeature[]>([]);
+  const isDraggingVertexRef = useRef(false);
 
   const openPopup = (lngLat: [number, number], p: GeoProperties | undefined, isCommunity = false) => {
     const map = mapRef.current;
@@ -508,10 +532,10 @@ export function MapView(props: MapViewProps) {
         source: 'src-flow-particles',
         paint: {
           'circle-radius': ['get', 'radius'],
-          'circle-color': '#e0f2fe',
-          'circle-stroke-color': '#0284c7',
-          'circle-stroke-width': 1.5,
-          'circle-opacity': 0.95
+          'circle-color': ['case', ['==', ['get', 'kind'], 'verified'], '#ffffff', '#e0f2fe'],
+          'circle-stroke-color': ['case', ['==', ['get', 'kind'], 'verified'], '#0369a1', '#0284c7'],
+          'circle-stroke-width': ['case', ['==', ['get', 'kind'], 'verified'], 1.8, 1.4],
+          'circle-opacity': 0.96
         }
       });
 
@@ -671,6 +695,19 @@ export function MapView(props: MapViewProps) {
         paint: { 'line-color': '#06b6d4', 'line-width': 3.5, 'line-dasharray': [2, 1.5] }
       });
 
+      map.addSource('src-snap-indicator', { type: 'geojson', data: asGeoInput(EMPTY_FC) });
+      map.addLayer({
+        id: 'snap-indicator-ring',
+        type: 'circle',
+        source: 'src-snap-indicator',
+        paint: {
+          'circle-radius': 9,
+          'circle-color': 'rgba(5, 150, 105, 0.16)',
+          'circle-stroke-color': '#059669',
+          'circle-stroke-width': 2.5
+        }
+      });
+
       // Balingka-only OSM Jorong / Village labels
       const placedLabels: [number, number][] = [];
       const priorityPlaces = ds.osmContext.features
@@ -749,7 +786,8 @@ export function MapView(props: MapViewProps) {
             if (popupRef.current) popupRef.current.remove();
             const wwId = String(propsObj.id || '');
             const fullFeat = verifiedWaterwaysRef.current.find(w => w.properties.id === wwId);
-            const canEdit = editorUnlockedRef.current && Boolean(fullFeat);
+            const canEdit = editorUnlockedRef.current && apiAvailableRef.current && Boolean(fullFeat);
+            const canUnlock = !editorUnlockedRef.current && apiAvailableRef.current && requiresPassphraseRef.current;
             const isDetail = viewModeRef.current === 'detail';
             const kindLabels: Record<string, { id: string; en: string }> = {
               river: { id: 'Sungai Utama', en: 'River' },
@@ -766,6 +804,20 @@ export function MapView(props: MapViewProps) {
             };
             const kLabel = kindLabels[String(propsObj.kind)]?.[isEn ? 'en' : 'id'] || String(propsObj.kind || '');
             const sLabel = statusLabels[String(propsObj.status)]?.[isEn ? 'en' : 'id'] || String(propsObj.status || '');
+            let actionHtml = '';
+            if (canEdit) {
+              actionHtml = `<button id="popup-edit-ww" type="button" style="margin-top:6px;width:100%;padding:7px 10px;border-radius:8px;border:1px solid #0369a1;background:#0369a1;color:#fff;font-size:12px;font-weight:700;cursor:pointer;">
+                ${isEn ? 'Correct Alignment / Direction' : 'Koreksi Jalur & Arah'}
+              </button>`;
+            } else if (canUnlock) {
+              actionHtml = `<button id="popup-unlock-ww" type="button" style="margin-top:6px;width:100%;padding:7px 10px;border-radius:8px;border:1px solid #0369a1;background:#fff;color:#0369a1;font-size:12px;font-weight:700;cursor:pointer;">
+                ${isEn ? 'Unlock Editor to Correct' : 'Buka Editor untuk Koreksi'}
+              </button>`;
+            } else if (!apiAvailableRef.current) {
+              actionHtml = `<div style="margin-top:6px;padding:6px 8px;border-radius:6px;background:#f2f3ef;font-size:11px;color:#434d49;">
+                ${isEn ? 'Run `pnpm run server` to edit river alignment & burn into DEM.' : 'Jalankan `pnpm run server` untuk mengedit jalur sungai & bakar ke DEM.'}
+              </div>`;
+            }
             const html = `
               <div>
                 <span style="display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:700;margin-bottom:6px;background:rgba(3,105,161,0.12);color:#0369a1;">
@@ -777,13 +829,7 @@ export function MapView(props: MapViewProps) {
                 </div>
                 ${propsObj.notes ? `<p style="margin:0 0 6px;font-size:12.5px;line-height:1.45;color:#434d49;">${escapeHtml(propsObj.notes)}</p>` : ''}
                 ${isDetail && propsObj.updated_by ? `<div style="font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#636f6a;margin-bottom:6px;">${escapeHtml(propsObj.updated_by)}</div>` : ''}
-                ${
-                  canEdit
-                    ? `<button id="popup-edit-ww" type="button" style="margin-top:6px;width:100%;padding:7px 10px;border-radius:8px;border:1px solid #0369a1;background:#0369a1;color:#fff;font-size:12px;font-weight:700;cursor:pointer;">
-                        ${isEn ? 'Correct Alignment' : 'Koreksi Jalur Ini'}
-                      </button>`
-                    : ''
-                }
+                ${actionHtml}
               </div>
             `;
             const pop = new Popup({ offset: 12 }).setLngLat([e.lngLat.lng, e.lngLat.lat]).setHTML(html).addTo(map);
@@ -793,6 +839,11 @@ export function MapView(props: MapViewProps) {
                 pop.remove();
                 onSelectWaterwayRef.current(fullFeat);
               });
+            } else if (canUnlock) {
+              pop.getElement()?.querySelector('#popup-unlock-ww')?.addEventListener('click', () => {
+                pop.remove();
+                onOpenUnlockRef.current();
+              });
             }
             return;
           }
@@ -800,13 +851,36 @@ export function MapView(props: MapViewProps) {
           if (lid === 'flows-line') {
             if (popupRef.current) popupRef.current.remove();
             const segId = String(propsObj.id || '');
-            const rawFlow = ds.flowPaths.features.find(f => String(f.properties?.id) === segId);
+            const rawFlow = datasetsRef.current.flowPaths.features.find(f => String(f.properties?.id) === segId);
             const coords =
               rawFlow?.geometry.type === 'LineString'
                 ? subsampleCoordsForEditing(rawFlow.geometry.coordinates, 18)
                 : [];
-            const canEdit = editorUnlockedRef.current && coords.length >= 2;
+            const canEdit = editorUnlockedRef.current && apiAvailableRef.current && coords.length >= 2;
+            const canUnlock = !editorUnlockedRef.current && apiAvailableRef.current && requiresPassphraseRef.current;
             const isDetail = viewModeRef.current === 'detail';
+            let flowActionHtml = '';
+            if (canEdit) {
+              flowActionHtml = `<div style="display:flex;flex-direction:column;gap:6px;margin-top:8px;">
+                <button id="popup-redraw-dem" type="button" style="padding:7px 10px;border-radius:8px;border:1px solid #0369a1;background:#0369a1;color:#fff;font-size:12px;font-weight:700;cursor:pointer;">
+                  ${isEn ? 'Trace Real River Fresh' : 'Gambar Ulang Sungai Asli'}
+                </button>
+                <button id="popup-promote-dem" type="button" style="padding:6px 10px;border-radius:8px;border:1px solid #0369a1;background:#fff;color:#0369a1;font-size:12px;font-weight:700;cursor:pointer;">
+                  ${isEn ? 'Adjust Existing Vertices' : 'Geser Titik Jalur'}
+                </button>
+                <button id="popup-suppress-dem" type="button" style="padding:6px 10px;border-radius:8px;border:1px solid rgba(22,28,26,0.2);background:#fff;color:#b91c1c;font-size:12px;font-weight:700;cursor:pointer;">
+                  ${isEn ? 'Mark False & Hide Segment' : 'Tandai Keliru & Sembunyikan'}
+                </button>
+              </div>`;
+            } else if (canUnlock) {
+              flowActionHtml = `<button id="popup-unlock-dem" type="button" style="margin-top:8px;width:100%;padding:7px 10px;border-radius:8px;border:1px solid #0369a1;background:#fff;color:#0369a1;font-size:12px;font-weight:700;cursor:pointer;">
+                ${isEn ? 'Unlock Editor to Fix Path' : 'Buka Editor untuk Koreksi Jalur'}
+              </button>`;
+            } else if (!apiAvailableRef.current) {
+              flowActionHtml = `<div style="margin-top:8px;padding:6px 8px;border-radius:6px;background:#f2f3ef;font-size:11px;color:#434d49;">
+                ${isEn ? 'Run `pnpm run server` to replace this estimate with the real river.' : 'Jalankan `pnpm run server` untuk mengganti garis perkiraan ini dengan sungai asli.'}
+              </div>`;
+            }
             const html = `
               <div>
                 <span style="display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:700;margin-bottom:6px;background:rgba(180,83,9,0.14);color:#b45309;">
@@ -829,23 +903,16 @@ export function MapView(props: MapViewProps) {
                       </div>`
                     : ''
                 }
-                ${
-                  canEdit
-                    ? `<div style="display:flex;flex-direction:column;gap:6px;margin-top:8px;">
-                        <button id="popup-promote-dem" type="button" style="padding:7px 10px;border-radius:8px;border:1px solid #0369a1;background:#0369a1;color:#fff;font-size:12px;font-weight:700;cursor:pointer;">
-                          ${isEn ? 'Promote & Adjust Vertices' : 'Promosikan & Koreksi Jalur'}
-                        </button>
-                        <button id="popup-suppress-dem" type="button" style="padding:6px 10px;border-radius:8px;border:1px solid rgba(22,28,26,0.2);background:#fff;color:#b91c1c;font-size:12px;font-weight:700;cursor:pointer;">
-                          ${isEn ? 'Mark False & Hide Segment' : 'Tandai Keliru & Sembunyikan'}
-                        </button>
-                      </div>`
-                    : ''
-                }
+                ${flowActionHtml}
               </div>
             `;
             const pop = new Popup({ offset: 12 }).setLngLat([e.lngLat.lng, e.lngLat.lat]).setHTML(html).addTo(map);
             popupRef.current = pop;
             if (canEdit) {
+              pop.getElement()?.querySelector('#popup-redraw-dem')?.addEventListener('click', () => {
+                pop.remove();
+                onRedrawDemRef.current(segId);
+              });
               pop.getElement()?.querySelector('#popup-promote-dem')?.addEventListener('click', () => {
                 pop.remove();
                 onPromoteDemRef.current(segId, coords);
@@ -853,6 +920,11 @@ export function MapView(props: MapViewProps) {
               pop.getElement()?.querySelector('#popup-suppress-dem')?.addEventListener('click', () => {
                 pop.remove();
                 onSuppressDemRef.current(segId);
+              });
+            } else if (canUnlock) {
+              pop.getElement()?.querySelector('#popup-unlock-dem')?.addEventListener('click', () => {
+                pop.remove();
+                onOpenUnlockRef.current();
               });
             }
             return;
@@ -863,7 +935,7 @@ export function MapView(props: MapViewProps) {
         });
       }
 
-      const animPaths = ds.flowPaths.features
+      animPathsRef.current = ds.flowPaths.features
         .filter((f: GeoFeature) => f.geometry.type === 'LineString' && Number(f.properties?.tier) <= 2)
         .sort((a: GeoFeature, b: GeoFeature) => Number(b.properties?.length_m || 0) - Number(a.properties?.length_m || 0))
         .slice(0, 38);
@@ -881,25 +953,46 @@ export function MapView(props: MapViewProps) {
           const src = map.getSource('src-flow-particles') as GeoJSONSource | undefined;
           if (src) {
             const maxTier = tabRef.current === 'sim' ? 2 : flowDensityRef.current;
-            if (maxTier === 0) {
+            const showVerified = layersRef.current.verifiedWaterways;
+            if (maxTier === 0 && !showVerified) {
               src.setData(asGeoInput(EMPTY_FC));
             } else {
               const features: GeoFeature[] = [];
-              for (let i = 0; i < animPaths.length; i++) {
-                const f = animPaths[i];
-                if (f.geometry.type !== 'LineString') continue;
-                if (suppressedDemSetRef.current.has(String(f.properties?.id || ''))) continue;
-                const tier = Number(f.properties?.tier || 2);
-                if (tier > maxTier) continue;
-                const coords = f.geometry.coordinates;
-                const count = tier === 1 ? 2 : 1;
-                for (let k = 0; k < count; k++) {
-                  const frac = (particlePhase + k / count + i * 0.17) % 1;
-                  features.push({
-                    type: 'Feature',
-                    properties: { radius: tier === 1 ? 3.8 : 2.8 },
-                    geometry: { type: 'Point', coordinates: interpolateLine(coords, frac) }
-                  });
+              if (showVerified) {
+                for (let i = 0; i < verifiedWaterwaysRef.current.length; i++) {
+                  const ww = verifiedWaterwaysRef.current[i];
+                  const coords = ww.geometry.coordinates;
+                  if (!coords || coords.length < 2) continue;
+                  const count = Math.max(1, Math.min(8, Math.round((ww.properties.length_m || 400) / 320)));
+                  const radius = ww.properties.kind === 'river' ? 3.6 : 2.9;
+                  for (let k = 0; k < count; k++) {
+                    const frac = (particlePhase + k / count + i * 0.13) % 1;
+                    features.push({
+                      type: 'Feature',
+                      properties: { kind: 'verified', radius },
+                      geometry: { type: 'Point', coordinates: interpolateLine(coords, frac) }
+                    });
+                  }
+                }
+              }
+              if (maxTier > 0) {
+                const animPaths = animPathsRef.current;
+                for (let i = 0; i < animPaths.length; i++) {
+                  const f = animPaths[i];
+                  if (f.geometry.type !== 'LineString') continue;
+                  if (suppressedDemSetRef.current.has(String(f.properties?.id || ''))) continue;
+                  const tier = Number(f.properties?.tier || 2);
+                  if (tier > maxTier) continue;
+                  const coords = f.geometry.coordinates;
+                  const count = tier === 1 ? 2 : 1;
+                  for (let k = 0; k < count; k++) {
+                    const frac = (particlePhase + k / count + i * 0.17) % 1;
+                    features.push({
+                      type: 'Feature',
+                      properties: { kind: 'dem', radius: tier === 1 ? 3.4 : 2.6 },
+                      geometry: { type: 'Point', coordinates: interpolateLine(coords, frac) }
+                    });
+                  }
                 }
               }
               src.setData(asGeoInput({ type: 'FeatureCollection', features }));
@@ -915,16 +1008,56 @@ export function MapView(props: MapViewProps) {
     });
 
     map.on('click', (e: MapMouseEvent) => {
-      if (!activeToolRef.current) return;
-      onMapClickRef.current([e.lngLat.lng, e.lngLat.lat]);
+      const tool = activeToolRef.current;
+      if (!tool) return;
+      const pt: [number, number] = [Number(e.lngLat.lng.toFixed(6)), Number(e.lngLat.lat.toFixed(6))];
+      if (tool === 'drawWaterway' || tool === 'redrawWaterway') {
+        const snap = snapPointToWaterways(
+          pt,
+          verifiedWaterwaysRef.current,
+          editingWaterwayRef.current?.id || null,
+          22
+        );
+        if (snap.snapped && snap.targetName) {
+          onSnapFeedbackRef.current?.(
+            langRef.current === 'en' ? `Snapped to ${snap.targetName}` : `Menempel ke ${snap.targetName}`
+          );
+        }
+        onMapClickRef.current(snap.point);
+        return;
+      }
+      onMapClickRef.current(pt);
     });
 
     let lastTel = 0;
     map.on('mousemove', (e: MapMouseEvent) => {
+      if (isDraggingVertexRef.current) return;
       const now = performance.now();
       if (now - lastTel < 65) return;
       lastTel = now;
       const { lng, lat } = e.lngLat;
+      const tool = activeToolRef.current;
+      if (tool === 'drawWaterway' || tool === 'redrawWaterway') {
+        const snapSrc = map.getSource('src-snap-indicator') as GeoJSONSource | undefined;
+        if (snapSrc) {
+          const snap = snapPointToWaterways(
+            [lng, lat],
+            verifiedWaterwaysRef.current,
+            editingWaterwayRef.current?.id || null,
+            22
+          );
+          snapSrc.setData(
+            asGeoInput(
+              snap.snapped
+                ? {
+                    type: 'FeatureCollection',
+                    features: [{ type: 'Feature', properties: {}, geometry: { type: 'Point', coordinates: snap.point } }]
+                  }
+                : EMPTY_FC
+            )
+          );
+        }
+      }
       onCursorRef.current({
         lng,
         lat,
@@ -991,7 +1124,7 @@ export function MapView(props: MapViewProps) {
     const flowVis = maxTier > 0;
     map.setLayoutProperty('flows-glow', 'visibility', vis(flowVis));
     map.setLayoutProperty('flows-line', 'visibility', vis(flowVis));
-    map.setLayoutProperty('flow-particles', 'visibility', vis(flowVis));
+    map.setLayoutProperty('flow-particles', 'visibility', vis(flowVis || props.layers.verifiedWaterways));
     if (flowVis) {
       const tierExpr: ExpressionSpecification = ['<=', ['get', 'tier'], maxTier];
       const flowFilter: FilterSpecification =
@@ -1068,10 +1201,50 @@ export function MapView(props: MapViewProps) {
     });
   }, [mapReady, props.is3D]);
 
+  // Refresh recomputed flow paths, drainage crossings, and HAND flood rasters live
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapLoadedRef.current) return;
+
+    animPathsRef.current = props.datasets.flowPaths.features
+      .filter((f: GeoFeature) => f.geometry.type === 'LineString' && Number(f.properties?.tier) <= 2)
+      .sort((a: GeoFeature, b: GeoFeature) => Number(b.properties?.length_m || 0) - Number(a.properties?.length_m || 0))
+      .slice(0, 38);
+
+    const flowSrc = map.getSource('src-flows') as GeoJSONSource | undefined;
+    if (flowSrc) flowSrc.setData(asGeoInput(props.datasets.flowPaths));
+
+    const draftSrc = map.getSource('src-draft-pts') as GeoJSONSource | undefined;
+    if (draftSrc) draftSrc.setData(asGeoInput(props.datasets.drainageDraft));
+
+    if (props.dataVersion > 0) {
+      const { bbox } = props.datasets;
+      const imgCoords: [[number, number], [number, number], [number, number], [number, number]] = [
+        [bbox.west, bbox.north],
+        [bbox.east, bbox.north],
+        [bbox.east, bbox.south],
+        [bbox.west, bbox.south]
+      ];
+      for (const hid of HAND_LAYERS) {
+        const imgSrc = map.getSource(`img-${hid}`) as ImageSource | undefined;
+        if (imgSrc && typeof imgSrc.updateImage === 'function') {
+          imgSrc.updateImage({
+            url: `/data/raster-${hid}.png?v=${props.dataVersion}`,
+            coordinates: imgCoords
+          });
+        }
+      }
+    }
+  }, [mapReady, props.dataVersion, props.datasets]);
+
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
     map.getCanvas().style.cursor = props.activeTool ? 'crosshair' : '';
+    if (props.activeTool !== 'drawWaterway' && props.activeTool !== 'redrawWaterway' && mapLoadedRef.current) {
+      const snapSrc = map.getSource('src-snap-indicator') as GeoJSONSource | undefined;
+      if (snapSrc) snapSrc.setData(asGeoInput(EMPTY_FC));
+    }
   }, [props.activeTool]);
 
   useEffect(() => {
@@ -1197,6 +1370,9 @@ export function MapView(props: MapViewProps) {
     }
   }, [mapReady, props.drawVertices]);
 
+  const editingId = props.editingWaterway?.id ?? null;
+  const editingCoords = props.editingWaterway?.coordinates ?? null;
+
   // Interactive draggable vertex & midpoint handles for waterway alignment correction
   useEffect(() => {
     const map = mapRef.current;
@@ -1204,20 +1380,22 @@ export function MapView(props: MapViewProps) {
 
     vertexMarkersRef.current.forEach(m => m.remove());
     vertexMarkersRef.current = [];
+    isDraggingVertexRef.current = false;
 
     const src = map.getSource('src-editing-waterway') as GeoJSONSource | undefined;
-    const editing = props.editingWaterway;
-    if (!editing || !props.editorUnlocked || editing.coordinates.length < 2) {
+    if (!editingCoords || !props.editorUnlocked || editingCoords.length < 2) {
       if (src) src.setData(asGeoInput(EMPTY_FC));
       return;
     }
 
-    const coords = editing.coordinates;
+    const coords = editingCoords;
+    const liveCoords = coords.map(c => [c[0], c[1]] as [number, number]);
+    const midpointMarkers: Marker[] = [];
     if (src) {
       src.setData(
         asGeoInput({
           type: 'FeatureCollection',
-          features: [{ type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: coords } }]
+          features: [{ type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: liveCoords } }]
         })
       );
     }
@@ -1225,8 +1403,12 @@ export function MapView(props: MapViewProps) {
     // Vertex drag handles
     coords.forEach((pt, idx) => {
       const el = document.createElement('div');
-      el.className = 'vertex-handle';
-      el.title = `Vertex #${idx + 1} (Drag to move, right-click/double-click to remove)`;
+      const roleClass =
+        idx === 0 ? 'vertex-handle--start' : idx === coords.length - 1 ? 'vertex-handle--end' : '';
+      const roleLabel =
+        idx === 0 ? ' [Hulu / Upstream]' : idx === coords.length - 1 ? ' [Hilir / Downstream]' : '';
+      el.className = `vertex-handle ${roleClass}`.trim();
+      el.title = `Vertex #${idx + 1}${roleLabel} (Drag to move, right-click/double-click to remove)`;
       el.addEventListener('click', ev => ev.stopPropagation());
       const removeVertex = (ev: MouseEvent) => {
         ev.preventDefault();
@@ -1240,13 +1422,78 @@ export function MapView(props: MapViewProps) {
       el.addEventListener('dblclick', removeVertex);
 
       const mk = new Marker({ element: el, anchor: 'center', draggable: true }).setLngLat(pt).addTo(map);
-      mk.on('dragend', () => {
+      mk.on('dragstart', () => {
+        isDraggingVertexRef.current = true;
+      });
+      mk.on('drag', () => {
         const ll = mk.getLngLat();
+        const rawPt: [number, number] = [Number(ll.lng.toFixed(6)), Number(ll.lat.toFixed(6))];
+        const snap = snapPointToWaterways(
+          rawPt,
+          verifiedWaterwaysRef.current,
+          editingId,
+          22
+        );
+        liveCoords[idx] = snap.point;
+        if (idx > 0 && midpointMarkers[idx - 1]) {
+          const prevPt = liveCoords[idx - 1];
+          midpointMarkers[idx - 1].setLngLat([
+            Number(((prevPt[0] + snap.point[0]) / 2).toFixed(6)),
+            Number(((prevPt[1] + snap.point[1]) / 2).toFixed(6))
+          ]);
+        }
+        if (idx < liveCoords.length - 1 && midpointMarkers[idx]) {
+          const nextPt = liveCoords[idx + 1];
+          midpointMarkers[idx].setLngLat([
+            Number(((snap.point[0] + nextPt[0]) / 2).toFixed(6)),
+            Number(((snap.point[1] + nextPt[1]) / 2).toFixed(6))
+          ]);
+        }
+        if (src) {
+          src.setData(
+            asGeoInput({
+              type: 'FeatureCollection',
+              features: [{ type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: liveCoords } }]
+            })
+          );
+        }
+        const snapSrc = map.getSource('src-snap-indicator') as GeoJSONSource | undefined;
+        if (snapSrc) {
+          snapSrc.setData(
+            asGeoInput(
+              snap.snapped
+                ? {
+                    type: 'FeatureCollection',
+                    features: [{ type: 'Feature', properties: {}, geometry: { type: 'Point', coordinates: snap.point } }]
+                  }
+                : EMPTY_FC
+            )
+          );
+        }
+      });
+      mk.on('dragend', () => {
+        isDraggingVertexRef.current = false;
+        const ll = mk.getLngLat();
+        const rawPt: [number, number] = [Number(ll.lng.toFixed(6)), Number(ll.lat.toFixed(6))];
+        const snap = snapPointToWaterways(
+          rawPt,
+          verifiedWaterwaysRef.current,
+          editingId,
+          22
+        );
+        const snapSrc = map.getSource('src-snap-indicator') as GeoJSONSource | undefined;
+        if (snapSrc) snapSrc.setData(asGeoInput(EMPTY_FC));
+        if (snap.snapped) {
+          mk.setLngLat(snap.point);
+          if (snap.targetName) {
+            onSnapFeedbackRef.current?.(
+              langRef.current === 'en' ? `Snapped to ${snap.targetName}` : `Menempel ke ${snap.targetName}`
+            );
+          }
+        }
         const cur = editingWaterwayRef.current?.coordinates;
         if (!cur) return;
-        const next = cur.map((c, i) =>
-          i === idx ? ([Number(ll.lng.toFixed(6)), Number(ll.lat.toFixed(6))] as [number, number]) : c
-        );
+        const next = cur.map((c, i) => (i === idx ? snap.point : c));
         onChangeEditingCoordsRef.current(next);
       });
       vertexMarkersRef.current.push(mk);
@@ -1274,14 +1521,16 @@ export function MapView(props: MapViewProps) {
         onChangeEditingCoordsRef.current(next);
       });
       const mk = new Marker({ element: el, anchor: 'center' }).setLngLat(mid).addTo(map);
+      midpointMarkers.push(mk);
       vertexMarkersRef.current.push(mk);
     }
 
     return () => {
+      isDraggingVertexRef.current = false;
       vertexMarkersRef.current.forEach(m => m.remove());
       vertexMarkersRef.current = [];
     };
-  }, [mapReady, props.editingWaterway, props.editorUnlocked]);
+  }, [mapReady, editingId, editingCoords, props.editorUnlocked]);
 
   return <div ref={containerRef} className="absolute inset-0 h-full w-full" aria-label="Balingka GIS Map" />;
 }

@@ -11,6 +11,7 @@ import {
   computeHAND,
   burnStreamsIntoDem,
   extractFlowPathsGeoJSON,
+  filterOverlappingFlowPaths,
   extractContoursGeoJSON,
   detectRoadStreamCrossings,
   renderSmoothTerrainRasters,
@@ -375,11 +376,13 @@ async function main() {
   const slope = computeSlopePercent(elev, width, height, cellSizeX, cellSizeY);
   const hand = computeHAND(elev, dir, acc, width, height, 75);
 
-  const flowPaths = extractFlowPathsGeoJSON(elev, dir, acc, gridMeta, {
+  const rawFlowPaths = extractFlowPathsGeoJSON(elev, dir, acc, gridMeta, {
     main: 240,
     normal: 75,
     detail: 25
   });
+  const deduped = filterOverlappingFlowPaths(rawFlowPaths, verified.features, 28);
+  const flowPaths = { type: 'FeatureCollection', features: deduped.features };
   const contours = extractContoursGeoJSON(elev, gridMeta, 25);
 
   const osm = await fetchRealOSM(bbox);

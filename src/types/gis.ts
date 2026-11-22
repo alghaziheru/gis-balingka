@@ -11,7 +11,8 @@ export type ActiveTool =
   | 'raindrop'
   | 'profileA'
   | 'profileB'
-  | 'drawWaterway';
+  | 'drawWaterway'
+  | 'redrawWaterway';
 
 export type GeoProperties = Record<string, string | number | boolean | null | undefined>;
 
@@ -73,7 +74,16 @@ export interface DatasetMetadata {
   simAreasHa: SimAreasHa;
   verifiedWaterwayCount?: number;
   hydroConditioned?: boolean;
+  hydroRecomputedAt?: string;
+  burnedCellCount?: number;
   licenses: { name: string; license: string }[];
+}
+
+export interface HydroStatus {
+  dirty: boolean;
+  lastRecomputedAt: string | null;
+  burnedCellCount: number;
+  verifiedWaterwayCount: number;
 }
 
 export interface RaindropTrace {
@@ -83,6 +93,7 @@ export interface RaindropTrace {
   dropM: number;
   lengthM: number;
   avgSlopePct: number;
+  snappedToWaterway?: string;
 }
 
 export interface ProfileSample {

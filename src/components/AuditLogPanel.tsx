@@ -21,7 +21,8 @@ const ACTION_BADGE: Record<string, string> = {
   restore_dem: 'bg-[#047857]/12 text-[#047857]',
   delete: 'bg-[#b91c1c]/12 text-[#b91c1c]',
   revert: 'bg-[#0f766e]/12 text-[#115e59]',
-  resolve_suggestion: 'bg-[#0f766e]/12 text-[#115e59]'
+  resolve_suggestion: 'bg-[#0f766e]/12 text-[#115e59]',
+  recompute_hydrology: 'bg-[#0369a1]/12 text-[#0369a1]'
 };
 
 function summarizeDiff(log: AuditLogEntry, isEn: boolean): string {
@@ -30,6 +31,11 @@ function summarizeDiff(log: AuditLogEntry, isEn: boolean): string {
   if (log.action === 'seed') {
     const count = Array.isArray(a?.seeded) ? a.seeded.length : 0;
     return isEn ? `Seeded ${count} OSM waterways` : `Data awal ${count} sungai OSM`;
+  }
+  if (log.action === 'recompute_hydrology') {
+    const cells = Number(a?.burnedCellCount || 0);
+    const ww = Number(a?.verifiedWaterwayCount || 0);
+    return isEn ? `Burned ${ww} waterways (${cells} DEM cells)` : `Bakar ${ww} sungai (${cells} sel DEM)`;
   }
   if (log.action === 'suppress_dem') {
     return isEn ? 'DEM segment hidden from reference' : 'Perkiraan DEM disembunyikan';
@@ -55,7 +61,11 @@ function summarizeDiff(log: AuditLogEntry, isEn: boolean): string {
 }
 
 function canRevertLog(log: AuditLogEntry): boolean {
-  return log.action !== 'seed' && (log.entity_type === 'waterway' || log.entity_type === 'dem_segment');
+  return (
+    log.action !== 'seed' &&
+    log.action !== 'recompute_hydrology' &&
+    (log.entity_type === 'waterway' || log.entity_type === 'dem_segment')
+  );
 }
 
 export function AuditLogPanel({

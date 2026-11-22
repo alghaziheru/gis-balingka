@@ -1,9 +1,25 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { Crosshair, Download, Lock, Pencil, Plus, RotateCcw, Trash2, Undo2, Unlock } from 'lucide-react';
+import {
+  ArrowLeftRight,
+  CheckCircle2,
+  Crosshair,
+  Download,
+  Lock,
+  Pencil,
+  PenTool,
+  Plus,
+  RefreshCw,
+  RotateCcw,
+  Trash2,
+  Undo2,
+  Unlock
+} from 'lucide-react';
 import { I18N } from '../i18n/translations';
 import { fetchExportBundle } from '../lib/api';
+import type { DemClient } from '../lib/demClient';
 import type {
   DrainageStatus,
+  HydroStatus,
   Language,
   SuppressedDemSegment,
   VerifiedWaterwayFeature,
@@ -24,6 +40,7 @@ export interface ActiveEditingWaterway {
 
 interface WaterwayEditorPanelProps {
   lang: Language;
+  demClient: DemClient | null;
   apiAvailable: boolean;
   editorUnlocked: boolean;
   requiresPassphrase: boolean;
@@ -35,19 +52,26 @@ interface WaterwayEditorPanelProps {
   suppressedDem: SuppressedDemSegment[];
   editingWaterway: ActiveEditingWaterway | null;
   isDrawingNew: boolean;
+  isRedrawing: boolean;
+  hydroStatus: HydroStatus;
+  recomputingHydro: boolean;
   onStartDrawNew: () => void;
   onStartEditExisting: (feature: VerifiedWaterwayFeature) => void;
+  onStartRedrawEditing: () => void;
+  onFlipEditingDirection: () => void;
   onUpdateDraftCoords: (coords: [number, number][]) => void;
   onCancelEdit: () => void;
   onSaveWaterway: (draft: ActiveEditingWaterway, reason: string) => Promise<void>;
   onDeleteWaterway: (id: string, reason: string) => Promise<void>;
   onRestoreDem: (segId: string) => Promise<void>;
+  onRecomputeHydrology: () => Promise<void>;
   onFlyToWaterway: (feature: VerifiedWaterwayFeature) => void;
   onNotify: (msg: string) => void;
 }
 
 export function WaterwayEditorPanel({
   lang,
+  demClient,
   apiAvailable,
   editorUnlocked,
   requiresPassphrase,
@@ -59,13 +83,19 @@ export function WaterwayEditorPanel({
   suppressedDem,
   editingWaterway,
   isDrawingNew,
+  isRedrawing,
+  hydroStatus,
+  recomputingHydro,
   onStartDrawNew,
   onStartEditExisting,
+  onStartRedrawEditing,
+  onFlipEditingDirection,
   onUpdateDraftCoords,
   onCancelEdit,
   onSaveWaterway,
   onDeleteWaterway,
   onRestoreDem,
+  onRecomputeHydrology,
   onFlyToWaterway,
   onNotify
 }: WaterwayEditorPanelProps) {
@@ -209,44 +239,91 @@ export function WaterwayEditorPanel({
         )}
       </section>
 
-      {editingWaterway && editorUnlocked && apiAvailable && (
-        <section className="rounded-xl border-2 border-[#0369a1] bg-white p-3.5">
-          <div className="mb-2 flex items-center justify-between gap-2">
-            <strong className="text-[13.5px] text-[#0369a1]">
-              {editingWaterway.id
-                ? isEn
-                  ? 'Editing Waterway Vertices'
-                  : 'Sedang Mengoreksi Jalur'
-                : isEn
-                ? 'New / Promoted Waterway'
-                : 'Jalur Baru / Promosi DEM'}
-            </strong>
-            <span className="font-mono-num rounded bg-[#0369a1]/10 px-2 py-0.5 text-[12px] font-bold text-[#0369a1]">
-              {editingWaterway.coordinates.length} pts
-            </span>
-          </div>
+      {editingWaterway && editorUnlocked && apiAvailable && (() => {
+        const coords = editingWaterway.coordinates;
+        const hasCoords = coords.length >= 2;
+        const startElev = hasCoords && demClient ? Math.round(demClient.getElevation(coords[0][0], coords[0][1])) : null;
+        const endElev =
+          hasCoords && demClient
+            ? Math.round(demClient.getElevation(coords[coords.length - 1][0], coords[coords.length - 1][1]))
+            : null;
+        const uphillWarning = startElev !== null && endElev !== null && startElev < endElev;
 
-          <p className="mb-2.5 rounded-lg bg-[#f2f3ef] p-2.5 text-[12.5px] text-[#434d49]">{t.wwEditHint}</p>
+        return (
+          <section className="rounded-xl border-2 border-[#0369a1] bg-white p-3.5">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <strong className="text-[13.5px] text-[#0369a1]">
+                {editingWaterway.id
+                  ? isEn
+                    ? 'Editing Waterway Vertices'
+                    : 'Sedang Mengoreksi Jalur'
+                  : isEn
+                  ? 'New / Promoted Waterway'
+                  : 'Jalur Baru / Promosi DEM'}
+              </strong>
+              <span className="font-mono-num rounded bg-[#0369a1]/10 px-2 py-0.5 text-[12px] font-bold text-[#0369a1]">
+                {coords.length} pts
+              </span>
+            </div>
 
-          <div className="mb-3 flex gap-1.5">
-            {editingWaterway.coordinates.length > 2 && (
+            {hasCoords && startElev !== null && endElev !== null && (
+              <div
+                className={`mb-2.5 flex items-center justify-between gap-2 rounded-lg border px-2.5 py-2 text-[12px] ${
+                  uphillWarning
+                    ? 'border-[#b45309]/35 bg-[#b45309]/10 text-[#92400e]'
+                    : 'border-[#047857]/25 bg-[#047857]/8 text-[#065f46]'
+                }`}
+              >
+                <span className="font-semibold">{t.wwDirectionSummary}</span>
+                <span className="font-mono-num font-bold">
+                  {startElev}m → {endElev}m {uphillWarning ? (isEn ? '(Uphill!)' : '(Menanjak!)') : ''}
+                </span>
+              </div>
+            )}
+
+            <p className="mb-2.5 rounded-lg bg-[#f2f3ef] p-2.5 text-[12.5px] text-[#434d49]">{t.wwEditHint}</p>
+
+            <div className="mb-3 flex flex-wrap gap-1.5">
+              {hasCoords && (
+                <button
+                  type="button"
+                  onClick={onFlipEditingDirection}
+                  className="inline-flex min-h-[34px] items-center gap-1 rounded-md border border-[#161c1a]/15 bg-white px-2.5 py-1 text-[12px] font-semibold text-[#161c1a] hover:bg-[#f2f3ef]"
+                >
+                  <ArrowLeftRight className="h-3.5 w-3.5 text-[#0369a1]" />
+                  <span>{t.wwFlipDir}</span>
+                </button>
+              )}
               <button
                 type="button"
-                onClick={() => onUpdateDraftCoords(editingWaterway.coordinates.slice(0, -1))}
-                className="inline-flex min-h-[34px] items-center gap-1 rounded-md border border-[#161c1a]/15 bg-white px-2.5 py-1 text-[12px] font-semibold text-[#434d49] hover:bg-[#f2f3ef]"
+                onClick={onStartRedrawEditing}
+                className={`inline-flex min-h-[34px] items-center gap-1 rounded-md border px-2.5 py-1 text-[12px] font-semibold transition ${
+                  isRedrawing
+                    ? 'border-[#0369a1] bg-[#0369a1] text-white'
+                    : 'border-[#161c1a]/15 bg-white text-[#161c1a] hover:bg-[#f2f3ef]'
+                }`}
               >
-                <Undo2 className="h-3.5 w-3.5" />
-                <span>{isEn ? 'Pop Last Pt' : 'Hapus Titik Akhir'}</span>
+                <PenTool className="h-3.5 w-3.5" />
+                <span>{t.wwTraceFresh}</span>
               </button>
-            )}
-            <button
-              type="button"
-              onClick={onCancelEdit}
-              className="min-h-[34px] rounded-md border border-[#161c1a]/15 bg-white px-2.5 py-1 text-[12px] font-semibold text-[#434d49] hover:bg-[#f2f3ef]"
-            >
-              {isEn ? 'Cancel' : 'Batal'}
-            </button>
-          </div>
+              {coords.length > 2 && (
+                <button
+                  type="button"
+                  onClick={() => onUpdateDraftCoords(coords.slice(0, -1))}
+                  className="inline-flex min-h-[34px] items-center gap-1 rounded-md border border-[#161c1a]/15 bg-white px-2.5 py-1 text-[12px] font-semibold text-[#434d49] hover:bg-[#f2f3ef]"
+                >
+                  <Undo2 className="h-3.5 w-3.5" />
+                  <span>{isEn ? 'Pop Last Pt' : 'Hapus Titik Akhir'}</span>
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={onCancelEdit}
+                className="min-h-[34px] rounded-md border border-[#161c1a]/15 bg-white px-2.5 py-1 text-[12px] font-semibold text-[#434d49] hover:bg-[#f2f3ef]"
+              >
+                {isEn ? 'Cancel' : 'Batal'}
+              </button>
+            </div>
 
           <form onSubmit={handleSubmit} className="flex flex-col gap-2.5">
             <div>
@@ -357,6 +434,60 @@ export function WaterwayEditorPanel({
               )}
             </div>
           </form>
+        </section>
+        );
+      })()}
+
+      {apiAvailable && (
+        <section
+          className={`rounded-xl border p-3.5 ${
+            hydroStatus.dirty ? 'border-[#b45309]/40 bg-[#fffbeb]' : 'border-[#161c1a]/12 bg-white'
+          }`}
+        >
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <span className="text-[13px] font-bold text-[#161c1a]">{t.hydroCardTitle}</span>
+            <span
+              className={`inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-bold ${
+                hydroStatus.dirty
+                  ? 'bg-[#b45309]/15 text-[#b45309]'
+                  : 'bg-[#047857]/12 text-[#047857]'
+              }`}
+            >
+              {!hydroStatus.dirty && <CheckCircle2 className="h-3 w-3" />}
+              <span>{hydroStatus.dirty ? t.hydroDirtyBadge : t.hydroSyncedBadge}</span>
+            </span>
+          </div>
+
+          <p className="mb-2.5 text-[12px] leading-relaxed text-[#434d49]">{t.hydroRecomputeDesc}</p>
+
+          {(hydroStatus.lastRecomputedAt || hydroStatus.burnedCellCount > 0) && (
+            <div className="font-mono-num mb-2.5 text-[11px] text-[#636f6a]">
+              {hydroStatus.burnedCellCount > 0
+                ? `${hydroStatus.burnedCellCount} ${isEn ? 'burned cells' : 'sel terbakar'}`
+                : ''}
+              {hydroStatus.lastRecomputedAt
+                ? `${hydroStatus.burnedCellCount > 0 ? ' · ' : ''}${new Date(hydroStatus.lastRecomputedAt).toLocaleString()}`
+                : ''}
+            </div>
+          )}
+
+          {editorUnlocked ? (
+            <button
+              type="button"
+              disabled={recomputingHydro}
+              onClick={onRecomputeHydrology}
+              className={`inline-flex min-h-[40px] w-full items-center justify-center gap-2 rounded-lg py-2 text-[13px] font-bold text-white transition disabled:opacity-60 ${
+                hydroStatus.dirty ? 'bg-[#b45309] hover:bg-[#92400e]' : 'bg-[#0369a1] hover:bg-[#075985]'
+              }`}
+            >
+              <RefreshCw className={`h-4 w-4 ${recomputingHydro ? 'animate-spin' : ''}`} />
+              <span>{recomputingHydro ? t.hydroRecomputing : t.hydroRecomputeBtn}</span>
+            </button>
+          ) : (
+            <div className="text-[12px] font-medium text-[#636f6a]">
+              {isEn ? 'Unlock Editor Mode to run DEM stream-burning.' : 'Buka Mode Editor untuk menjalankan stream-burning DEM.'}
+            </div>
+          )}
         </section>
       )}
 

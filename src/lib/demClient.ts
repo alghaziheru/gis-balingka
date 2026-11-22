@@ -1,4 +1,5 @@
-import type { DemGridData, ElevationProfileResult, RaindropTrace } from '../types/gis';
+import { pointToSegmentMeters } from './geometry';
+import type { DemGridData, ElevationProfileResult, RaindropTrace, VerifiedWaterwayFeature } from '../types/gis';
 
 export function haversineMeters(lng1: number, lat1: number, lng2: number, lat2: number): number {
   const R = 6371000;
@@ -66,7 +67,111 @@ export class DemClient {
     return Math.min(180, Math.round(Math.hypot(dzdx, dzdy) * 100));
   }
 
-  traceRaindrop(startLng: number, startLat: number): RaindropTrace {
+  private findClosestWaterwayHit(
+    pt: [number, number],
+    waterways: VerifiedWaterwayFeature[],
+    visitedIds: Set<string>,
+    thresholdMeters: number
+  ): {
+    ww: VerifiedWaterwayFeature;
+    segIndex: number;
+    closest: [number, number];
+    distM: number;
+  } | null {
+    let best: {
+      ww: VerifiedWaterwayFeature;
+      segIndex: number;
+      closest: [number, number];
+      distM: number;
+    } | null = null;
+
+    for (const ww of waterways) {
+      if (visitedIds.has(ww.properties.id)) continue;
+      const coords = ww.geometry.coordinates;
+      if (!coords || coords.length < 2) continue;
+      for (let i = 0; i < coords.length - 1; i++) {
+        const hit = pointToSegmentMeters(pt, coords[i], coords[i + 1]);
+        if (hit.distM <= thresholdMeters && (!best || hit.distM < best.distM)) {
+          best = { ww, segIndex: i, closest: hit.closest, distM: hit.distM };
+        }
+      }
+    }
+    return best;
+  }
+
+  private followWaterwayDownstream(
+    ww: VerifiedWaterwayFeature,
+    segIndex: number,
+    entryPt: [number, number],
+    path: [number, number][],
+    waterways: VerifiedWaterwayFeature[],
+    visitedIds: Set<string>
+  ): [number, number] {
+    visitedIds.add(ww.properties.id);
+    const coords = ww.geometry.coordinates;
+    const first = coords[0];
+    const last = coords[coords.length - 1];
+    const forwardDownhill = this.getElevation(first[0], first[1]) >= this.getElevation(last[0], last[1]);
+
+    const lastInPath = path[path.length - 1];
+    if (haversineMeters(lastInPath[0], lastInPath[1], entryPt[0], entryPt[1]) > 1) {
+      path.push(entryPt);
+    }
+
+    const tail: [number, number][] = [];
+    if (forwardDownhill) {
+      for (let i = segIndex + 1; i < coords.length; i++) {
+        tail.push(coords[i]);
+      }
+    } else {
+      for (let i = segIndex; i >= 0; i--) {
+        tail.push(coords[i]);
+      }
+    }
+
+    for (let k = 0; k < tail.length; k++) {
+      const pt = tail[k];
+      const prev = path[path.length - 1];
+      if (haversineMeters(prev[0], prev[1], pt[0], pt[1]) > 1) {
+        path.push(pt);
+      }
+
+      // Check junction transition onto an unvisited receiving waterway near downstream vertices
+      if (k > 0 || tail.length === 1) {
+        const junctionHit = this.findClosestWaterwayHit(pt, waterways, visitedIds, 30);
+        if (junctionHit) {
+          return this.followWaterwayDownstream(
+            junctionHit.ww,
+            junctionHit.segIndex,
+            junctionHit.closest,
+            path,
+            waterways,
+            visitedIds
+          );
+        }
+      }
+    }
+
+    const outlet = path[path.length - 1];
+    const outletJunction = this.findClosestWaterwayHit(outlet, waterways, visitedIds, 30);
+    if (outletJunction) {
+      return this.followWaterwayDownstream(
+        outletJunction.ww,
+        outletJunction.segIndex,
+        outletJunction.closest,
+        path,
+        waterways,
+        visitedIds
+      );
+    }
+    return outlet;
+  }
+
+  traceRaindrop(
+    startLng: number,
+    startLat: number,
+    verifiedWaterways: VerifiedWaterwayFeature[] = []
+  ): RaindropTrace {
     const { bbox, width, height } = this.grid;
     const stepLng = (bbox.east - bbox.west) / width;
     const stepLat = (bbox.north - bbox.south) / height;
@@ -87,12 +192,34 @@ export class DemClient {
     let curLat = startLat;
     let curElev = this.getElevation(curLng, curLat);
     let prevDir: [number, number] = [0.6, 0.7];
+    let snappedToWaterway: string | undefined;
 
+    const visitedWaterways = new Set<string>();
     const seen = new Set<string>();
     const quant = (x: number, y: number) => `${Math.round(x * 3500)},${Math.round(y * 3500)}`;
     seen.add(quant(curLng, curLat));
 
     for (let s = 0; s < 140; s++) {
+      if (verifiedWaterways.length > 0) {
+        const wwHit = this.findClosestWaterwayHit([curLng, curLat], verifiedWaterways, visitedWaterways, 28);
+        if (wwHit) {
+          if (!snappedToWaterway) snappedToWaterway = wwHit.ww.properties.name;
+          const outlet = this.followWaterwayDownstream(
+            wwHit.ww,
+            wwHit.segIndex,
+            wwHit.closest,
+            path,
+            verifiedWaterways,
+            visitedWaterways
+          );
+          curLng = outlet[0];
+          curLat = outlet[1];
+          curElev = this.getElevation(curLng, curLat);
+          seen.add(quant(curLng, curLat));
+          continue;
+        }
+      }
+
       let bestScore = Infinity;
       let bestNext: [number, number] | null = null;
       let bestElev = curElev;
@@ -143,7 +270,8 @@ export class DemClient {
       endElev,
       dropM,
       lengthM,
-      avgSlopePct
+      avgSlopePct,
+      snappedToWaterway
     };
   }
 

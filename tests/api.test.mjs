@@ -3,7 +3,11 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { createAppServer } from '../server/index.mjs';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const PUBLIC_DATA_DIR = path.resolve(__dirname, '..', 'public', 'data');
 
 function makeTempDb(prefix) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -174,6 +178,94 @@ test('ADMIN_PASSPHRASE locks waterway edits & suggestion moderation while keepin
     const bundle = await bundleRes.json();
     assert.ok(bundle.verifiedWaterways.features.length >= 3);
     assert.ok(bundle.auditLogs.length >= 2);
+  } finally {
+    await new Promise(resolve => server.close(resolve));
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('POST /api/hydrology/recompute burns verified waterways into temp DEM data, updates HAND rasters, and resets dirty flag', async () => {
+  const { dir, dbPath } = makeTempDb('balingka-api-hydro-');
+  const tempPublicData = path.join(dir, 'public-data');
+  fs.mkdirSync(tempPublicData, { recursive: true });
+  for (const name of ['dem-grid.json', 'osm-context.geojson', 'metadata.json']) {
+    fs.copyFileSync(path.join(PUBLIC_DATA_DIR, name), path.join(tempPublicData, name));
+  }
+
+  const { server } = createAppServer({
+    dbPath,
+    distDir: null,
+    publicDataDir: tempPublicData,
+    adminPassphrase: 'hydro-pass-2026'
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const { port } = server.address();
+  const base = `http://127.0.0.1:${port}`;
+
+  try {
+    // 1. Create/promote a waterway -> sets hydroStatus.dirty = true
+    const createRes = await fetch(`${base}/api/waterways`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Admin-Passphrase': 'hydro-pass-2026'
+      },
+      body: JSON.stringify({
+        name: 'Alur Sawah Koreksi',
+        kind: 'stream',
+        status: 'normal',
+        source: 'dem_promoted',
+        source_ref: 'flow-77',
+        notes: 'Uji stream burning',
+        coordinates: [
+          [100.322, -0.340],
+          [100.324, -0.335],
+          [100.325, -0.330]
+        ],
+        actor: 'Wali Uji',
+        reason: 'Uji sinkronisasi DEM'
+      })
+    });
+    assert.equal(createRes.status, 201);
+
+    const stateBefore = await (await fetch(`${base}/api/waterways`)).json();
+    assert.equal(stateBefore.hydroStatus.dirty, true);
+    assert.ok(stateBefore.suppressedDem.some(s => s.seg_id === 'flow-77'));
+
+    // 2. Unauthorized recompute -> 401
+    const unauth = await fetch(`${base}/api/hydrology/recompute`, { method: 'POST' });
+    assert.equal(unauth.status, 401);
+
+    // 3. Authorized recompute -> 200 & writes updated assets
+    const recomputeRes = await fetch(`${base}/api/hydrology/recompute`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Admin-Passphrase': 'hydro-pass-2026'
+      },
+      body: JSON.stringify({ actor: 'Wali Uji', carveDepthM: 3.5 })
+    });
+    assert.equal(recomputeRes.status, 200);
+    const recomputed = await recomputeRes.json();
+    assert.equal(recomputed.ok, true);
+    assert.equal(recomputed.hydroStatus.dirty, false);
+    assert.ok(recomputed.summary.burnedCellCount > 0);
+    assert.equal(recomputed.state.suppressedDem.length, 0);
+
+    const nextMeta = JSON.parse(fs.readFileSync(path.join(tempPublicData, 'metadata.json'), 'utf8'));
+    assert.equal(nextMeta.hydroConditioned, true);
+    assert.ok(nextMeta.burnedCellCount > 0);
+    assert.ok(fs.existsSync(path.join(tempPublicData, 'flow-paths.geojson')));
+    assert.ok(fs.existsSync(path.join(tempPublicData, 'drainage-draft.geojson')));
+    for (const scenario of ['clogged', 'cleared']) {
+      for (const lvl of ['low', 'med', 'high']) {
+        const png = fs.readFileSync(path.join(tempPublicData, `raster-hand-${scenario}-${lvl}.png`));
+        assert.equal(png.toString('ascii', 1, 4), 'PNG');
+      }
+    }
+
+    const audit = await (await fetch(`${base}/api/audit`)).json();
+    assert.equal(audit.logs[0].action, 'recompute_hydrology');
   } finally {
     await new Promise(resolve => server.close(resolve));
     fs.rmSync(dir, { recursive: true, force: true });

@@ -31,6 +31,7 @@ import {
   fetchWaterwaysState,
   loadEditorName,
   loadStoredPassphrase,
+  recomputeHydrology,
   restoreDemSegment,
   revertAuditLog,
   saveEditorName,
@@ -40,6 +41,7 @@ import {
   verifyEditorPassphrase
 } from './lib/api';
 import { DemClient } from './lib/demClient';
+import { orientCoordinatesDownhill } from './lib/geometry';
 import { loadChecklistState, saveChecklistState } from './lib/storage';
 import type {
   ActiveTool,
@@ -49,6 +51,7 @@ import type {
   DemGridData,
   DrainageStatus,
   ElevationProfileResult,
+  HydroStatus,
   Language,
   LayerToggles,
   ProfileSample,
@@ -118,6 +121,14 @@ export function App() {
   const [suppressedDem, setSuppressedDem] = useState<SuppressedDemSegment[]>([]);
   const [editingWaterway, setEditingWaterway] = useState<ActiveEditingWaterway | null>(null);
   const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
+  const [dataVersion, setDataVersion] = useState(0);
+  const [hydroStatus, setHydroStatus] = useState<HydroStatus>({
+    dirty: false,
+    lastRecomputedAt: null,
+    burnedCellCount: 0,
+    verifiedWaterwayCount: 0
+  });
+  const [recomputingHydro, setRecomputingHydro] = useState(false);
 
   const [flyRequest, setFlyRequest] = useState<FlyRequest | null>(null);
   const flyCounter = useRef(0);
@@ -216,6 +227,7 @@ export function App() {
           if (!cancelled) {
             setVerifiedWaterways(wwState.waterways);
             setSuppressedDem(wwState.suppressedDem);
+            setHydroStatus(wwState.hydroStatus);
             setAuditLogs(logs);
           }
         } else {
@@ -310,6 +322,9 @@ export function App() {
       if (tab === 'editor') {
         setTab('terrain');
       }
+      if (editingWaterway) {
+        setEditingWaterway(null);
+      }
       if (activeTool) {
         setActiveTool(null);
         setDrawVertices([]);
@@ -320,7 +335,7 @@ export function App() {
   const handleMapClick = (lngLat: [number, number]) => {
     if (!demClient) return;
     if (activeTool === 'raindrop') {
-      setRaindrop(demClient.traceRaindrop(lngLat[0], lngLat[1]));
+      setRaindrop(demClient.traceRaindrop(lngLat[0], lngLat[1], verifiedWaterways));
       setActiveTool(null);
     } else if (activeTool === 'profileA') {
       setProfileResult(null);
@@ -333,7 +348,7 @@ export function App() {
       setProfilePts([ptA, lngLat]);
       setProfileResult(demClient.sampleElevationProfile(ptA, lngLat, 60));
       setActiveTool(null);
-    } else if (activeTool === 'drawWaterway') {
+    } else if (activeTool === 'drawWaterway' || activeTool === 'redrawWaterway') {
       setDrawVertices(prev => [...prev, lngLat]);
     }
   };
@@ -342,7 +357,53 @@ export function App() {
     const [wwState, logs] = await Promise.all([fetchWaterwaysState(), fetchAuditLogs()]);
     setVerifiedWaterways(wwState.waterways);
     setSuppressedDem(wwState.suppressedDem);
+    setHydroStatus(wwState.hydroStatus);
     setAuditLogs(logs);
+  };
+
+  const handleRecomputeHydrology = async () => {
+    setRecomputingHydro(true);
+    try {
+      const res = await recomputeHydrology({ actor: actorName, carveDepthM: 3.5 });
+      const nextVer = Date.now();
+      const [metaRes, flowRes, draftRes, logs] = await Promise.all([
+        fetch(`/data/metadata.json?v=${nextVer}`),
+        fetch(`/data/flow-paths.geojson?v=${nextVer}`),
+        fetch(`/data/drainage-draft.geojson?v=${nextVer}`),
+        fetchAuditLogs()
+      ]);
+      if (metaRes.ok && flowRes.ok && draftRes.ok) {
+        const [nextMeta, nextFlows, nextDraft] = await Promise.all([
+          metaRes.json(),
+          flowRes.json(),
+          draftRes.json()
+        ]);
+        setMetadata(nextMeta as DatasetMetadata);
+        setDatasets(prev =>
+          prev
+            ? {
+                ...prev,
+                flowPaths: nextFlows,
+                drainageDraft: nextDraft
+              }
+            : prev
+        );
+      }
+      setVerifiedWaterways(res.state.waterways.features);
+      setSuppressedDem(res.state.suppressedDem);
+      setHydroStatus(res.hydroStatus);
+      setAuditLogs(logs);
+      setDataVersion(nextVer);
+      notify(
+        lang === 'en'
+          ? `DEM burned (${res.summary.burnedCellCount} cells) & flood/flow maps updated.`
+          : `DEM berhasil dibakar (${res.summary.burnedCellCount} sel) & peta aliran/banjir diperbarui.`
+      );
+    } catch (err) {
+      notify(err instanceof Error ? err.message : 'Hydrology recompute failed');
+    } finally {
+      setRecomputingHydro(false);
+    }
   };
 
   const handleCameraPreset = (preset: string) => {
@@ -367,6 +428,7 @@ export function App() {
     if (activeTool === 'profileA') return t.bannerProfileA;
     if (activeTool === 'profileB') return t.bannerProfileB;
     if (activeTool === 'drawWaterway') return t.bannerDrawWaterway;
+    if (activeTool === 'redrawWaterway') return t.bannerRedrawWaterway;
     return '';
   })();
 
@@ -383,6 +445,19 @@ export function App() {
           ['sim', t.tabSim, Droplets],
           ['drainage', t.tabDrainage, ShieldAlert]
         ] as const);
+
+  const suppressedDemIds = useMemo(() => suppressedDem.map(s => s.seg_id), [suppressedDem]);
+  const mapEditingWaterway = useMemo(
+    () =>
+      editingWaterway
+        ? {
+            id: editingWaterway.id,
+            coordinates: editingWaterway.coordinates,
+            sourceRef: editingWaterway.sourceRef
+          }
+        : null,
+    [editingWaterway?.id, editingWaterway?.coordinates, editingWaterway?.sourceRef]
+  );
 
   const mobileHeightClass =
     mobileSheetMode === 'full'
@@ -415,20 +490,16 @@ export function App() {
           profilePts={profilePts}
           profileHover={profileHover}
           verifiedWaterways={verifiedWaterways}
-          suppressedDemIds={suppressedDem.map(s => s.seg_id)}
+          suppressedDemIds={suppressedDemIds}
+          dataVersion={dataVersion}
+          apiAvailable={apiAvailable}
+          requiresPassphrase={requiresPassphrase}
           editorUnlocked={editorUnlocked}
-          editingWaterway={
-            editingWaterway
-              ? {
-                  id: editingWaterway.id,
-                  coordinates: editingWaterway.coordinates,
-                  sourceRef: editingWaterway.sourceRef
-                }
-              : null
-          }
+          editingWaterway={mapEditingWaterway}
           drawVertices={drawVertices}
           flyRequest={flyRequest}
           onMapClick={handleMapClick}
+          onOpenUnlock={() => setUnlockModalOpen(true)}
           onSelectWaterway={feat => {
             setViewMode('detail');
             setTab('editor');
@@ -448,6 +519,9 @@ export function App() {
             setViewMode('detail');
             setTab('editor');
             setEditorSubTab('waterways');
+            const oriented = demClient
+              ? orientCoordinatesDownhill(coords, (x, y) => demClient.getElevation(x, y)).coordinates
+              : coords;
             setEditingWaterway({
               id: null,
               name: `Alur Koreksi (${segId})`,
@@ -456,8 +530,25 @@ export function App() {
               source: 'dem_promoted',
               sourceRef: segId,
               notes: '',
-              coordinates: coords
+              coordinates: oriented
             });
+          }}
+          onRedrawDemSegment={segId => {
+            setViewMode('detail');
+            setTab('editor');
+            setEditorSubTab('waterways');
+            setEditingWaterway({
+              id: null,
+              name: `Alur Koreksi (${segId})`,
+              kind: 'stream',
+              status: 'normal',
+              source: 'dem_promoted',
+              sourceRef: segId,
+              notes: '',
+              coordinates: []
+            });
+            setDrawVertices([]);
+            setActiveTool('redrawWaterway');
           }}
           onSuppressDemSegment={async segId => {
             try {
@@ -475,6 +566,7 @@ export function App() {
           onChangeEditingCoords={coords => {
             setEditingWaterway(prev => (prev ? { ...prev, coordinates: coords } : prev));
           }}
+          onSnapFeedback={msg => notify(msg)}
           onCursorTelemetry={setCursorTelemetry}
         />
       ) : (
@@ -691,6 +783,7 @@ export function App() {
           {tab === 'editor' && viewMode === 'detail' && (
             <EditorTab
               lang={lang}
+              demClient={demClient}
               subTab={editorSubTab}
               onChangeSubTab={sub => {
                 setEditorSubTab(sub);
@@ -718,6 +811,8 @@ export function App() {
               verifiedWaterways={verifiedWaterways}
               suppressedDem={suppressedDem}
               editingWaterway={editingWaterway}
+              hydroStatus={hydroStatus}
+              recomputingHydro={recomputingHydro}
               onStartDrawWaterway={() => {
                 setEditingWaterway(null);
                 setDrawVertices([]);
@@ -737,10 +832,27 @@ export function App() {
                 const mid = feat.geometry.coordinates[Math.floor(feat.geometry.coordinates.length / 2)];
                 if (mid) flyTo(mid, { zoom: 15.6 });
               }}
+              onStartRedrawEditing={() => {
+                setDrawVertices([]);
+                setActiveTool(prev => (prev === 'redrawWaterway' ? null : 'redrawWaterway'));
+              }}
+              onFlipEditingDirection={() => {
+                setEditingWaterway(prev => {
+                  if (!prev || prev.coordinates.length < 2) return prev;
+                  return { ...prev, coordinates: [...prev.coordinates].reverse() };
+                });
+                notify(lang === 'en' ? 'Flow direction flipped.' : 'Arah aliran dibalik (Hulu ↔ Hilir).');
+              }}
               onUpdateEditingCoords={coords => {
                 setEditingWaterway(prev => (prev ? { ...prev, coordinates: coords } : prev));
               }}
-              onCancelWaterwayEdit={() => setEditingWaterway(null)}
+              onCancelWaterwayEdit={() => {
+                setEditingWaterway(null);
+                if (activeTool === 'redrawWaterway') {
+                  setActiveTool(null);
+                  setDrawVertices([]);
+                }
+              }}
               onSaveWaterway={async (draft, reason) => {
                 try {
                   if (draft.id) {
@@ -792,6 +904,7 @@ export function App() {
                   notify(err instanceof Error ? err.message : 'Restore failed');
                 }
               }}
+              onRecomputeHydrology={handleRecomputeHydrology}
               onFlyToWaterway={feat => {
                 const mid = feat.geometry.coordinates[Math.floor(feat.geometry.coordinates.length / 2)];
                 if (mid) flyTo(mid, { zoom: 15.6 });
@@ -841,7 +954,7 @@ export function App() {
           }`}
         >
           <span>{bannerMessage}</span>
-          {activeTool === 'drawWaterway' && (
+          {(activeTool === 'drawWaterway' || activeTool === 'redrawWaterway') && (
             <button
               type="button"
               onClick={() => {
@@ -849,15 +962,32 @@ export function App() {
                   notify(t.toastNeed2Pts);
                   return;
                 }
-                setEditingWaterway({
-                  id: null,
-                  name: '',
-                  kind: 'canal',
-                  status: 'normal',
-                  source: 'manual',
-                  notes: '',
-                  coordinates: [...drawVertices]
-                });
+                const oriented = demClient
+                  ? orientCoordinatesDownhill(drawVertices, (x, y) => demClient.getElevation(x, y))
+                  : { coordinates: [...drawVertices], reversed: false };
+                if (activeTool === 'redrawWaterway' && editingWaterway) {
+                  setEditingWaterway({
+                    ...editingWaterway,
+                    coordinates: oriented.coordinates
+                  });
+                } else {
+                  setEditingWaterway({
+                    id: null,
+                    name: '',
+                    kind: 'canal',
+                    status: 'normal',
+                    source: 'manual',
+                    notes: '',
+                    coordinates: oriented.coordinates
+                  });
+                }
+                if (oriented.reversed) {
+                  notify(
+                    lang === 'en'
+                      ? 'Auto-oriented downhill (upstream → downstream).'
+                      : 'Arah jalur otomatis disesuaikan ke hilir (hulu → hilir).'
+                  );
+                }
                 setDrawVertices([]);
                 setActiveTool(null);
               }}

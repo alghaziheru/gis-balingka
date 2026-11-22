@@ -335,6 +335,13 @@ export function TerrainTab({
                 {t.clear}
               </button>
             </div>
+            {raindrop.snappedToWaterway && (
+              <div className="mb-2 rounded-lg border border-[#0369a1]/25 bg-[#0369a1]/8 px-2.5 py-1.5 text-[12px] font-semibold text-[#0369a1]">
+                {isEn
+                  ? `Drains into verified waterway: ${raindrop.snappedToWaterway}`
+                  : `Masuk ke sungai terverifikasi: ${raindrop.snappedToWaterway}`}
+              </div>
+            )}
             <div className="grid grid-cols-2 gap-2">
               <div className="rounded-lg bg-[#fafaf8] px-3 py-2">
                 <div className="text-[12px] text-[#636f6a]">{t.mStartElev}</div>

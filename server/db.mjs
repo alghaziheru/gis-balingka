@@ -179,7 +179,28 @@ export function createStore(dbPath = DEFAULT_DB_PATH, seedGeoJsonPath = DEFAULT_
       resolution_note TEXT NOT NULL DEFAULT '',
       resolved_at TEXT
     );
+
+    CREATE TABLE IF NOT EXISTS app_meta (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
   `);
+
+  function getMeta(key, fallback = null) {
+    const row = db.prepare('SELECT value FROM app_meta WHERE key = ?').get(key);
+    return row ? row.value : fallback;
+  }
+
+  function setMeta(key, value) {
+    db.prepare(`
+      INSERT INTO app_meta (key, value) VALUES (?, ?)
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value
+    `).run(key, String(value));
+  }
+
+  function markHydroDirty() {
+    setMeta('hydro_dirty', '1');
+  }
 
   const insertAuditStmt = db.prepare(`
     INSERT INTO audit_logs (
@@ -273,6 +294,18 @@ export function createStore(dbPath = DEFAULT_DB_PATH, seedGeoJsonPath = DEFAULT_
   seedFromOsmIfNeeded();
 
   return {
+    getHydroStatus() {
+      const verifiedWaterwayCount = db
+        .prepare('SELECT COUNT(*) AS cnt FROM waterways WHERE deleted = 0')
+        .get().cnt;
+      return {
+        dirty: getMeta('hydro_dirty', '0') === '1',
+        lastRecomputedAt: getMeta('last_hydro_recompute_at', null),
+        burnedCellCount: Number(getMeta('last_burned_cells', '0')) || 0,
+        verifiedWaterwayCount
+      };
+    },
+
     getState() {
       const wwRows = db
         .prepare('SELECT * FROM waterways WHERE deleted = 0 ORDER BY updated_at DESC, name ASC')
@@ -291,7 +324,8 @@ export function createStore(dbPath = DEFAULT_DB_PATH, seedGeoJsonPath = DEFAULT_
           replaced_by_waterway_id: r.replaced_by_waterway_id || null,
           updated_by: r.updated_by,
           updated_at: r.updated_at
-        }))
+        })),
+        hydroStatus: this.getHydroStatus()
       };
     },
 
@@ -331,6 +365,7 @@ export function createStore(dbPath = DEFAULT_DB_PATH, seedGeoJsonPath = DEFAULT_
 
       const row = db.prepare('SELECT * FROM waterways WHERE id = ?').get(id);
       const snapshot = rowToSnapshot(row);
+      markHydroDirty();
       const log = appendAudit({
         createdAt: now,
         actor,
@@ -374,6 +409,7 @@ export function createStore(dbPath = DEFAULT_DB_PATH, seedGeoJsonPath = DEFAULT_
 
       const updated = db.prepare('SELECT * FROM waterways WHERE id = ?').get(id);
       const after = rowToSnapshot(updated);
+      markHydroDirty();
       const log = appendAudit({
         createdAt: now,
         actor,
@@ -401,6 +437,7 @@ export function createStore(dbPath = DEFAULT_DB_PATH, seedGeoJsonPath = DEFAULT_
       const now = new Date().toISOString();
 
       db.prepare('UPDATE waterways SET deleted = 1, updated_by = ?, updated_at = ? WHERE id = ?').run(actor, now, id);
+      markHydroDirty();
 
       const log = appendAudit({
         createdAt: now,
@@ -436,6 +473,7 @@ export function createStore(dbPath = DEFAULT_DB_PATH, seedGeoJsonPath = DEFAULT_
       `).run(segId, reason, replacedBy, actor, now);
 
       const row = db.prepare('SELECT * FROM suppressed_dem_segments WHERE seg_id = ?').get(segId);
+      markHydroDirty();
       const log = appendAudit({
         createdAt: now,
         actor,
@@ -463,6 +501,7 @@ export function createStore(dbPath = DEFAULT_DB_PATH, seedGeoJsonPath = DEFAULT_
       const now = new Date().toISOString();
 
       db.prepare('DELETE FROM suppressed_dem_segments WHERE seg_id = ?').run(cleanId);
+      markHydroDirty();
       const log = appendAudit({
         createdAt: now,
         actor,
@@ -492,8 +531,8 @@ export function createStore(dbPath = DEFAULT_DB_PATH, seedGeoJsonPath = DEFAULT_
         throw err;
       }
       const target = parseLogRow(targetRow);
-      if (target.action === 'seed') {
-        throw new Error('Initial OSM seed entry cannot be reverted.');
+      if (target.action === 'seed' || target.action === 'recompute_hydrology') {
+        throw new Error('This system entry cannot be reverted.');
       }
 
       const actor = String(payload?.actor || 'Editor').trim() || 'Editor';
@@ -514,6 +553,7 @@ export function createStore(dbPath = DEFAULT_DB_PATH, seedGeoJsonPath = DEFAULT_
           if (target.action === 'promote_dem' && target.after?.source_ref) {
             db.prepare('DELETE FROM suppressed_dem_segments WHERE seg_id = ?').run(target.after.source_ref);
           }
+          markHydroDirty();
           const log = appendAudit({
             createdAt: now,
             actor,
@@ -564,6 +604,7 @@ export function createStore(dbPath = DEFAULT_DB_PATH, seedGeoJsonPath = DEFAULT_
           now
         );
         const restoredRow = db.prepare('SELECT * FROM waterways WHERE id = ?').get(snap.id);
+        markHydroDirty();
         const log = appendAudit({
           createdAt: now,
           actor,
@@ -583,6 +624,7 @@ export function createStore(dbPath = DEFAULT_DB_PATH, seedGeoJsonPath = DEFAULT_
         const curSup = db.prepare('SELECT * FROM suppressed_dem_segments WHERE seg_id = ?').get(target.entity_id) || null;
         if (!target.before) {
           db.prepare('DELETE FROM suppressed_dem_segments WHERE seg_id = ?').run(target.entity_id);
+          markHydroDirty();
           const log = appendAudit({
             createdAt: now,
             actor,
@@ -608,6 +650,7 @@ export function createStore(dbPath = DEFAULT_DB_PATH, seedGeoJsonPath = DEFAULT_
             updated_at = excluded.updated_at
         `).run(b.seg_id, b.reason || '', b.replaced_by_waterway_id || null, actor, now);
         const restoredSup = db.prepare('SELECT * FROM suppressed_dem_segments WHERE seg_id = ?').get(b.seg_id);
+        markHydroDirty();
         const log = appendAudit({
           createdAt: now,
           actor,
@@ -624,6 +667,32 @@ export function createStore(dbPath = DEFAULT_DB_PATH, seedGeoJsonPath = DEFAULT_
       }
 
       throw new Error(`Audit log of type "${target.entity_type}" cannot be reverted.`);
+    },
+
+    markHydroRecomputed({
+      actor = 'Editor',
+      burnedCellCount = 0,
+      verifiedWaterwayCount = 0,
+      recomputedAt = new Date().toISOString(),
+      summary = {}
+    }) {
+      setMeta('hydro_dirty', '0');
+      setMeta('last_hydro_recompute_at', recomputedAt);
+      setMeta('last_burned_cells', String(burnedCellCount));
+      db.prepare('DELETE FROM suppressed_dem_segments WHERE replaced_by_waterway_id IS NOT NULL').run();
+
+      const log = appendAudit({
+        createdAt: recomputedAt,
+        actor,
+        action: 'recompute_hydrology',
+        entityType: 'system',
+        entityId: 'hydrology',
+        entityName: 'Stream-Burning & Hidrologi DEM',
+        reason: `Bakar ${verifiedWaterwayCount} sungai terverifikasi (${burnedCellCount} sel DEM) & hitung ulang peta aliran/banjir.`,
+        before: null,
+        after: summary
+      });
+      return { log, hydroStatus: this.getHydroStatus(), state: this.getState() };
     },
 
     listSuggestions() {

@@ -1,10 +1,12 @@
 import { History, Waves } from 'lucide-react';
 import { I18N } from '../i18n/translations';
+import type { DemClient } from '../lib/demClient';
 import { AuditLogPanel } from './AuditLogPanel';
 import { WaterwayEditorPanel, type ActiveEditingWaterway } from './WaterwayEditorPanel';
 import type {
   ActiveTool,
   AuditLogEntry,
+  HydroStatus,
   Language,
   SuppressedDemSegment,
   VerifiedWaterwayFeature
@@ -14,6 +16,7 @@ export type EditorSubTab = 'waterways' | 'audit';
 
 interface EditorTabProps {
   lang: Language;
+  demClient: DemClient | null;
   subTab: EditorSubTab;
   onChangeSubTab: (sub: EditorSubTab) => void;
   activeTool: ActiveTool;
@@ -28,13 +31,18 @@ interface EditorTabProps {
   verifiedWaterways: VerifiedWaterwayFeature[];
   suppressedDem: SuppressedDemSegment[];
   editingWaterway: ActiveEditingWaterway | null;
+  hydroStatus: HydroStatus;
+  recomputingHydro: boolean;
   onStartDrawWaterway: () => void;
   onStartEditWaterway: (feature: VerifiedWaterwayFeature) => void;
+  onStartRedrawEditing: () => void;
+  onFlipEditingDirection: () => void;
   onUpdateEditingCoords: (coords: [number, number][]) => void;
   onCancelWaterwayEdit: () => void;
   onSaveWaterway: (draft: ActiveEditingWaterway, reason: string) => Promise<void>;
   onDeleteWaterway: (id: string, reason: string) => Promise<void>;
   onRestoreDem: (segId: string) => Promise<void>;
+  onRecomputeHydrology: () => Promise<void>;
   onFlyToWaterway: (feature: VerifiedWaterwayFeature) => void;
   auditLogs: AuditLogEntry[];
   onRevertAuditLog: (logId: number) => Promise<void>;
@@ -43,6 +51,7 @@ interface EditorTabProps {
 
 export function EditorTab({
   lang,
+  demClient,
   subTab,
   onChangeSubTab,
   activeTool,
@@ -57,13 +66,18 @@ export function EditorTab({
   verifiedWaterways,
   suppressedDem,
   editingWaterway,
+  hydroStatus,
+  recomputingHydro,
   onStartDrawWaterway,
   onStartEditWaterway,
+  onStartRedrawEditing,
+  onFlipEditingDirection,
   onUpdateEditingCoords,
   onCancelWaterwayEdit,
   onSaveWaterway,
   onDeleteWaterway,
   onRestoreDem,
+  onRecomputeHydrology,
   onFlyToWaterway,
   auditLogs,
   onRevertAuditLog,
@@ -100,6 +114,7 @@ export function EditorTab({
       {subTab === 'waterways' && (
         <WaterwayEditorPanel
           lang={lang}
+          demClient={demClient}
           apiAvailable={apiAvailable}
           editorUnlocked={editorUnlocked}
           requiresPassphrase={requiresPassphrase}
@@ -111,13 +126,19 @@ export function EditorTab({
           suppressedDem={suppressedDem}
           editingWaterway={editingWaterway}
           isDrawingNew={activeTool === 'drawWaterway'}
+          isRedrawing={activeTool === 'redrawWaterway'}
+          hydroStatus={hydroStatus}
+          recomputingHydro={recomputingHydro}
           onStartDrawNew={onStartDrawWaterway}
           onStartEditExisting={onStartEditWaterway}
+          onStartRedrawEditing={onStartRedrawEditing}
+          onFlipEditingDirection={onFlipEditingDirection}
           onUpdateDraftCoords={onUpdateEditingCoords}
           onCancelEdit={onCancelWaterwayEdit}
           onSaveWaterway={onSaveWaterway}
           onDeleteWaterway={onDeleteWaterway}
           onRestoreDem={onRestoreDem}
+          onRecomputeHydrology={onRecomputeHydrology}
           onFlyToWaterway={onFlyToWaterway}
           onNotify={onNotify}
         />

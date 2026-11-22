@@ -981,3 +981,112 @@ export function burnStreamsIntoDem(rawElev, streamFeatures, gridMeta, carveDepth
 
   return { elev: burned, burnedCellCount };
 }
+
+export function pointToSegmentMeters(pt, a, b) {
+  const cosLat = Math.max(0.1, Math.cos((pt[1] * Math.PI) / 180));
+  const mPerDegLng = 111320 * cosLat;
+  const mPerDegLat = 110540;
+
+  const px = pt[0] * mPerDegLng;
+  const py = pt[1] * mPerDegLat;
+  const ax = a[0] * mPerDegLng;
+  const ay = a[1] * mPerDegLat;
+  const bx = b[0] * mPerDegLng;
+  const by = b[1] * mPerDegLat;
+
+  const dx = bx - ax;
+  const dy = by - ay;
+  const lenSq = dx * dx + dy * dy;
+  let t = 0;
+  if (lenSq > 1e-12) {
+    t = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / lenSq));
+  }
+  const cx = ax + dx * t;
+  const cy = ay + dy * t;
+  return {
+    distM: Math.hypot(px - cx, py - cy),
+    closest: [
+      Number((a[0] + (b[0] - a[0]) * t).toFixed(6)),
+      Number((a[1] + (b[1] - a[1]) * t).toFixed(6))
+    ],
+    t
+  };
+}
+
+/**
+ * Removes DEM-derived dashed flow segments that mostly run along already-verified
+ * waterways (~bufferMeters) so burned channels are not visually duplicated while
+ * unmapped uphill tributaries terminating at verified junctions remain intact.
+ */
+export function filterOverlappingFlowPaths(flowPathsFC, verifiedFeatures, bufferMeters = 28) {
+  if (!Array.isArray(verifiedFeatures) || verifiedFeatures.length === 0) {
+    return {
+      type: 'FeatureCollection',
+      features: flowPathsFC?.features || [],
+      filteredCount: 0
+    };
+  }
+
+  const verifiedLines = verifiedFeatures
+    .filter(f => f?.geometry?.type === 'LineString' && Array.isArray(f.geometry.coordinates) && f.geometry.coordinates.length >= 2)
+    .map(f => f.geometry.coordinates);
+
+  if (verifiedLines.length === 0) {
+    return {
+      type: 'FeatureCollection',
+      features: flowPathsFC?.features || [],
+      filteredCount: 0
+    };
+  }
+
+  const minDistToVerified = pt => {
+    let best = Infinity;
+    for (const line of verifiedLines) {
+      for (let i = 0; i < line.length - 1; i++) {
+        const hit = pointToSegmentMeters(pt, line[i], line[i + 1]);
+        if (hit.distM < best) best = hit.distM;
+        if (best <= bufferMeters * 0.4) return best;
+      }
+    }
+    return best;
+  };
+
+  const kept = [];
+  let filteredCount = 0;
+
+  for (const feat of flowPathsFC?.features || []) {
+    const coords = feat?.geometry?.coordinates;
+    if (feat?.geometry?.type !== 'LineString' || !Array.isArray(coords) || coords.length < 2) {
+      continue;
+    }
+
+    const samplePts = [];
+    for (let i = 0; i < coords.length; i++) {
+      samplePts.push(coords[i]);
+      if (i < coords.length - 1) {
+        const segLen = haversineMeters(coords[i][0], coords[i][1], coords[i + 1][0], coords[i + 1][1]);
+        if (segLen > 25) {
+          samplePts.push([(coords[i][0] + coords[i + 1][0]) * 0.5, (coords[i][1] + coords[i + 1][1]) * 0.5]);
+        }
+      }
+    }
+
+    let nearCount = 0;
+    for (const pt of samplePts) {
+      if (minDistToVerified(pt) <= bufferMeters) nearCount++;
+    }
+    const overlapFraction = samplePts.length > 0 ? nearCount / samplePts.length : 0;
+
+    if (overlapFraction >= 0.65) {
+      filteredCount++;
+    } else {
+      kept.push(feat);
+    }
+  }
+
+  return {
+    type: 'FeatureCollection',
+    features: kept,
+    filteredCount
+  };
+}

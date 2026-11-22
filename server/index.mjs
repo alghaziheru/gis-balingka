@@ -4,10 +4,12 @@ import http from 'node:http';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { createStore, DEFAULT_DB_PATH, DEFAULT_SEED_PATH } from './db.mjs';
+import { recomputeHydrologyFromLocalData } from '../scripts/lib/recompute-hydrology.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
 const DEFAULT_DIST_DIR = path.join(ROOT, 'dist');
+const DEFAULT_PUBLIC_DATA_DIR = path.join(ROOT, 'public', 'data');
 
 const MIME_TYPES = {
   '.html': 'text/html; charset=utf-8',
@@ -122,6 +124,7 @@ export function createAppServer({
   dbPath = DEFAULT_DB_PATH,
   seedGeoJsonPath = DEFAULT_SEED_PATH,
   distDir = DEFAULT_DIST_DIR,
+  publicDataDir = DEFAULT_PUBLIC_DATA_DIR,
   adminPassphrase = ''
 } = {}) {
   const store = createStore(dbPath, seedGeoJsonPath);
@@ -204,6 +207,7 @@ export function createAppServer({
         (method === 'POST' && pathname === '/api/dem-segments/suppress') ||
         (method === 'DELETE' && pathname.startsWith('/api/dem-segments/')) ||
         (method === 'POST' && /^\/api\/audit\/\d+\/revert$/.test(pathname)) ||
+        (method === 'POST' && pathname === '/api/hydrology/recompute') ||
         (method === 'PATCH' && /^\/api\/suggestions\/\d+$/.test(pathname));
 
       if (needsEditor && !isEditorAuthorized(req)) {
@@ -246,6 +250,33 @@ export function createAppServer({
         const body = await readJsonBody(req, 16 * 1024).catch(() => ({}));
         const result = store.revertAuditLog(revertMatch[1], body);
         return sendJson(res, 200, result);
+      }
+
+      if (method === 'POST' && pathname === '/api/hydrology/recompute') {
+        const body = await readJsonBody(req, 16 * 1024).catch(() => ({}));
+        const actor = String(body?.actor || 'Editor').trim() || 'Editor';
+        const carveDepthM = Number(body?.carveDepthM) || 3.5;
+        const currentState = store.getState();
+        const summary = recomputeHydrologyFromLocalData({
+          publicDataDir,
+          distDataDir: distDir ? path.join(distDir, 'data') : null,
+          verifiedFeatures: currentState.waterways.features,
+          suppressedDemIds: new Set(currentState.suppressedDem.map(s => s.seg_id)),
+          carveDepthM
+        });
+        const marked = store.markHydroRecomputed({
+          actor,
+          burnedCellCount: summary.burnedCellCount,
+          verifiedWaterwayCount: summary.verifiedWaterwayCount,
+          recomputedAt: summary.recomputedAt,
+          summary
+        });
+        return sendJson(res, 200, {
+          ok: true,
+          summary,
+          hydroStatus: marked.hydroStatus,
+          state: marked.state
+        });
       }
 
       const sugMatch = pathname.match(/^\/api\/suggestions\/(\d+)$/);
