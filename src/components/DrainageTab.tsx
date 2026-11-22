@@ -1,5 +1,6 @@
 import { CHECKLIST_ITEMS, I18N } from '../i18n/translations';
 import type { DrainageStatus, Language, LayerToggles, ViewMode } from '../types/gis';
+import { LegendIcon, type LegendIconKind } from './LegendIcon';
 
 interface DrainageTabProps {
   lang: Language;
@@ -45,15 +46,15 @@ export function DrainageTab({
     { id: 'critical', label: t.fCritical, color: '#b91c1c' }
   ];
 
-  const infraLayers: [keyof LayerToggles, string, string][] = isDetail
+  const infraLayers: [keyof LayerToggles, string, LegendIconKind][] = isDetail
     ? [
-        ['evac', t.lblEvac, '#047857'],
-        ['landslide', t.lblLandslide, '#c2410c'],
-        ['bronjong', t.lblBronjong, '#0369a1']
+        ['evac', t.lblEvac, 'evacuation'],
+        ['landslide', t.lblLandslide, 'landslide'],
+        ['bronjong', t.lblBronjong, 'bronjong']
       ]
     : [
-        ['evac', t.lblEvac, '#047857'],
-        ['landslide', t.lblLandslide, '#c2410c']
+        ['evac', t.lblEvac, 'evacuation'],
+        ['landslide', t.lblLandslide, 'landslide']
       ];
 
   return (
@@ -64,6 +65,17 @@ export function DrainageTab({
         <p className="mt-0 mb-2.5 text-[12.5px] text-[#636f6a]">
           {isDetail ? t.drainFilterTitle : t.drainSimpleHint}
         </p>
+
+        <div className="mb-2.5 flex flex-wrap items-center gap-3 border-b border-[#161c1a]/10 pb-2.5 text-[12px] text-[#434d49]">
+          <span className="inline-flex items-center gap-1.5">
+            <LegendIcon kind="bridge" size={16} />
+            <span>{isEn ? 'Verified bridge/culvert' : 'Jembatan / gorong-gorong'}</span>
+          </span>
+          <span className="inline-flex items-center gap-1.5">
+            <LegendIcon kind="crossing" size={16} />
+            <span>{t.fUnverified}</span>
+          </span>
+        </div>
 
         <div className="flex flex-wrap gap-1.5 border-b border-[#161c1a]/10 pb-3">
           {filterChips.map(ch => {
@@ -93,13 +105,10 @@ export function DrainageTab({
         </div>
 
         <div className="divide-y divide-[#161c1a]/10 pt-1.5">
-          {infraLayers.map(([key, label, swatch]) => (
+          {infraLayers.map(([key, label, iconKind]) => (
             <label key={key} className="flex min-h-[42px] cursor-pointer items-center justify-between gap-2.5 py-1">
               <span className="flex items-center gap-2.5 text-[13px] font-medium text-[#161c1a]">
-                <span
-                  className="h-3 w-3 shrink-0 rounded-full border border-white shadow-[0_0_0_1px_rgba(22,28,26,0.2)]"
-                  style={{ background: swatch }}
-                />
+                <LegendIcon kind={iconKind} />
                 <span>{label}</span>
               </span>
               <input

@@ -34,3 +34,10 @@ pnpm-debug.log*
 Thumbs.db
 .idea/
 tmp/
+
+# Personal local feedback notes
+feedback-local/
+
+# Python bytecode caches
+__pycache__/
+*.pyc

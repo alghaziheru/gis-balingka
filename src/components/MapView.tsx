@@ -15,16 +15,21 @@ import {
   type StyleSpecification
 } from 'maplibre-gl';
 import maplibreWorkerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url';
+import { isPointInNagari, lookupAgamAtPoint } from '../lib/agamLookup';
+import type { CascadeEngine } from '../lib/cascadeEngine';
 import type { DemClient } from '../lib/demClient';
 import { haversineMeters, snapPointToWaterways } from '../lib/geometry';
 import type {
   ActiveTool,
+  AgamContextData,
   BasemapId,
   BBox,
+  CascadeSimParams,
   DrainageStatus,
   GeoFeature,
   GeoFeatureCollection,
   GeoProperties,
+  JorongBoundaryFeature,
   Language,
   LayerToggles,
   ProfileSample,
@@ -33,7 +38,8 @@ import type {
   TabId,
   VerifiedStructureFeature,
   VerifiedWaterwayFeature,
-  ViewMode
+  ViewMode,
+  WaterwayKind
 } from '../types/gis';
 
 setWorkerUrl(maplibreWorkerUrl);
@@ -51,10 +57,14 @@ export interface LoadedDatasets {
   center: [number, number];
   mask: GeoFeatureCollection;
   watershed: GeoFeatureCollection;
+  nagariBoundary: GeoFeatureCollection;
+  settlements: GeoFeatureCollection;
   contours: GeoFeatureCollection;
   flowPaths: GeoFeatureCollection;
   osmContext: GeoFeatureCollection;
   drainageDraft: GeoFeatureCollection;
+  agamRbiRivers: GeoFeatureCollection;
+  agamContext: AgamContextData | null;
 }
 
 interface MapViewProps {
@@ -73,12 +83,15 @@ interface MapViewProps {
   simDurationMin: number;
   simProgress: number;
   simScenario: 'clogged' | 'cleared';
+  cascadeEngine: CascadeEngine | null;
+  cascadeParams: CascadeSimParams;
   drainFilter: 'all' | DrainageStatus;
   raindrop: RaindropTrace | null;
   profilePts: [number, number][];
   profileHover: ProfileSample | null;
   verifiedWaterways: VerifiedWaterwayFeature[];
   verifiedStructures: VerifiedStructureFeature[];
+  jorongBoundaries: JorongBoundaryFeature[];
   suppressedDemIds: string[];
   dataVersion: number;
   apiAvailable: boolean;
@@ -100,6 +113,7 @@ interface MapViewProps {
   ) => void;
   onMoveEditingStructure: (coords: [number, number]) => void;
   onPromoteDemSegment: (segId: string, coords: [number, number][]) => void;
+  onPromoteRbiRiver: (name: string, kind: WaterwayKind, coords: [number, number][]) => void;
   onRedrawDemSegment: (segId: string) => void;
   onSuppressDemSegment: (segId: string) => void;
   onChangeEditingCoords: (coords: [number, number][]) => void;
@@ -111,6 +125,8 @@ type MapGeoInput = Parameters<GeoJSONSource['setData']>[0];
 const asGeoInput = (fc: GeoFeatureCollection): MapGeoInput => fc as unknown as MapGeoInput;
 
 const EMPTY_FC: GeoFeatureCollection = { type: 'FeatureCollection', features: [] };
+const TRANSPARENT_1PX_PNG =
+  'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';
 
 const HAND_LAYERS = [
   'hand-clogged-low',
@@ -255,6 +271,88 @@ function registerCartographicIcons(map: MapLibreMap): void {
       ctx.stroke();
     });
   }
+
+  const drawBadgeFrame = (ctx: CanvasRenderingContext2D, s: number, fill: string) => {
+    const pad = 3;
+    const w = s - pad * 2;
+    ctx.fillStyle = fill;
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 2.2;
+    ctx.beginPath();
+    ctx.roundRect(pad, pad, w, w, 6);
+    ctx.fill();
+    ctx.stroke();
+  };
+
+  // Unverified road-stream crossing badge
+  addCanvasIcon('icon-crossing-unverified', 28, (ctx, s) => {
+    drawBadgeFrame(ctx, s, '#475569');
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 2.1;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(s * 0.28, s * 0.35);
+    ctx.lineTo(s * 0.72, s * 0.65);
+    ctx.moveTo(s * 0.28, s * 0.65);
+    ctx.lineTo(s * 0.72, s * 0.35);
+    ctx.stroke();
+    ctx.fillStyle = '#e2e8f0';
+    ctx.strokeStyle = '#475569';
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.arc(s * 0.5, s * 0.5, s * 0.09, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+  });
+
+  // Evacuation safe-ground shelter badge
+  addCanvasIcon('icon-evacuation', 28, (ctx, s) => {
+    drawBadgeFrame(ctx, s, '#047857');
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.moveTo(s * 0.27, s * 0.5);
+    ctx.lineTo(s * 0.5, s * 0.28);
+    ctx.lineTo(s * 0.73, s * 0.5);
+    ctx.lineTo(s * 0.64, s * 0.5);
+    ctx.lineTo(s * 0.64, s * 0.72);
+    ctx.lineTo(s * 0.36, s * 0.72);
+    ctx.lineTo(s * 0.36, s * 0.5);
+    ctx.closePath();
+    ctx.fill();
+  });
+
+  // Gabion / check-dam candidate badge
+  addCanvasIcon('icon-bronjong', 28, (ctx, s) => {
+    drawBadgeFrame(ctx, s, '#0369a1');
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.roundRect(s * 0.25, s * 0.57, s * 0.5, s * 0.14, 1.5);
+    ctx.roundRect(s * 0.32, s * 0.37, s * 0.36, s * 0.14, 1.5);
+    ctx.fill();
+  });
+
+  // Steep slope / landslide hazard badge
+  addCanvasIcon('icon-landslide', 28, (ctx, s) => {
+    drawBadgeFrame(ctx, s, '#c2410c');
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.moveTo(s * 0.5, s * 0.27);
+    ctx.lineTo(s * 0.75, s * 0.7);
+    ctx.lineTo(s * 0.25, s * 0.7);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = '#c2410c';
+    ctx.lineWidth = 2;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(s * 0.5, s * 0.43);
+    ctx.lineTo(s * 0.5, s * 0.56);
+    ctx.stroke();
+    ctx.fillStyle = '#c2410c';
+    ctx.beginPath();
+    ctx.arc(s * 0.5, s * 0.63, 1.2, 0, Math.PI * 2);
+    ctx.fill();
+  });
 }
 
 export function MapView(props: MapViewProps) {
@@ -292,6 +390,10 @@ export function MapView(props: MapViewProps) {
   simRainRef.current = props.simRain;
   const simProgressRef = useRef(props.simProgress);
   simProgressRef.current = props.simProgress;
+  const floodCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const landslideCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const lastCascadeTsRef = useRef(0);
+  const lastCascadeKeyRef = useRef('');
   const editorUnlockedRef = useRef(props.editorUnlocked);
   editorUnlockedRef.current = props.editorUnlocked;
   const verifiedWaterwaysRef = useRef(props.verifiedWaterways);
@@ -312,6 +414,8 @@ export function MapView(props: MapViewProps) {
   onMoveEditingStructureRef.current = props.onMoveEditingStructure;
   const onPromoteDemRef = useRef(props.onPromoteDemSegment);
   onPromoteDemRef.current = props.onPromoteDemSegment;
+  const onPromoteRbiRef = useRef(props.onPromoteRbiRiver);
+  onPromoteRbiRef.current = props.onPromoteRbiRiver;
   const onSuppressDemRef = useRef(props.onSuppressDemSegment);
   onSuppressDemRef.current = props.onSuppressDemSegment;
   const onChangeEditingCoordsRef = useRef(props.onChangeEditingCoords);
@@ -417,7 +521,8 @@ export function MapView(props: MapViewProps) {
       pop.getElement()?.querySelector('#popup-verify-crossing')?.addEventListener('click', () => {
         pop.remove();
         const draftId = String(p.id || '');
-        const suggestedKind: StructureKind = draftId.startsWith('br-') ? 'bridge' : 'culvert';
+        const suggestedKind: StructureKind =
+          draftId.startsWith('br-') || draftId.startsWith('big-br-') ? 'bridge' : 'culvert';
         onVerifyCrossingRef.current(draftId, lngLat, String(name || ''), suggestedKind);
       });
     } else if (canUnlockCrossing) {
@@ -474,6 +579,10 @@ export function MapView(props: MapViewProps) {
         'img-elev': { type: 'image', url: '/data/raster-elev.png', coordinates: imgCoords },
         'img-relief': { type: 'image', url: '/data/raster-relief.png', coordinates: imgCoords },
         'img-slope': { type: 'image', url: '/data/raster-slope.png', coordinates: imgCoords },
+        'img-landcover': { type: 'image', url: '/data/raster-landcover.png', coordinates: imgCoords },
+        'img-scour-change': { type: 'image', url: '/data/raster-scour-change.png', coordinates: imgCoords },
+        'img-cascade-flood': { type: 'image', url: TRANSPARENT_1PX_PNG, coordinates: imgCoords },
+        'img-cascade-landslide': { type: 'image', url: TRANSPARENT_1PX_PNG, coordinates: imgCoords },
         'img-hand-clogged-low': { type: 'image', url: '/data/raster-hand-clogged-low.png', coordinates: imgCoords },
         'img-hand-clogged-med': { type: 'image', url: '/data/raster-hand-clogged-med.png', coordinates: imgCoords },
         'img-hand-clogged-high': { type: 'image', url: '/data/raster-hand-clogged-high.png', coordinates: imgCoords },
@@ -544,13 +653,13 @@ export function MapView(props: MapViewProps) {
       }
     };
 
-    const pad = 0.008;
+    const pad = 0.015;
     const map = new MapLibreMap({
       container: containerRef.current,
       style: initialStyle,
       center,
-      zoom: 14.3,
-      minZoom: 12.6,
+      zoom: 13.6,
+      minZoom: 11.4,
       maxZoom: 19,
       maxBounds: [
         [bbox.west - pad, bbox.south - pad],
@@ -573,6 +682,24 @@ export function MapView(props: MapViewProps) {
       const ds = props.datasets;
       registerCartographicIcons(map);
 
+      // 10m ESA WorldCover forest & land-cover overlay
+      map.addLayer({
+        id: 'landcover-overlay',
+        type: 'raster',
+        source: 'img-landcover',
+        layout: { visibility: 'none' },
+        paint: { 'raster-opacity': 0.62, 'raster-fade-duration': 150 }
+      });
+
+      // 10m Sentinel-2 pre-vs-post disaster scour & vegetation loss overlay
+      map.addLayer({
+        id: 'scour-change-overlay',
+        type: 'raster',
+        source: 'img-scour-change',
+        layout: { visibility: 'none' },
+        paint: { 'raster-opacity': 0.78, 'raster-fade-duration': 150 }
+      });
+
       // Smooth slope overlay (when toggled on top of Satellite/Elev/Topo)
       map.addLayer({
         id: 'slope-overlay',
@@ -592,6 +719,50 @@ export function MapView(props: MapViewProps) {
           paint: { 'raster-opacity': 0.86, 'raster-fade-duration': 180 }
         });
       }
+
+      // Dynamic physical cascade overlays (flood wave + steep-slope landslide risk)
+      map.addLayer({
+        id: 'cascade-landslide-overlay',
+        type: 'raster',
+        source: 'img-cascade-landslide',
+        layout: { visibility: 'none' },
+        paint: { 'raster-opacity': 0.82, 'raster-fade-duration': 0 }
+      });
+      map.addLayer({
+        id: 'cascade-flood-overlay',
+        type: 'raster',
+        source: 'img-cascade-flood',
+        layout: { visibility: 'none' },
+        paint: { 'raster-opacity': 0.88, 'raster-fade-duration': 0 }
+      });
+
+      map.addSource('src-settlements', { type: 'geojson', data: asGeoInput(ds.settlements) });
+      map.addLayer({
+        id: 'settlements-residential-fill',
+        type: 'fill',
+        source: 'src-settlements',
+        filter: ['==', ['get', 'kind'], 'residential'],
+        layout: { visibility: 'visible' },
+        paint: { 'fill-color': '#d97706', 'fill-opacity': 0.14 }
+      });
+      map.addLayer({
+        id: 'settlements-buildings-fill',
+        type: 'fill',
+        source: 'src-settlements',
+        filter: ['==', ['get', 'kind'], 'building'],
+        minzoom: 13.2,
+        layout: { visibility: 'visible' },
+        paint: { 'fill-color': '#ea580c', 'fill-opacity': 0.28 }
+      });
+      map.addLayer({
+        id: 'settlements-buildings-line',
+        type: 'line',
+        source: 'src-settlements',
+        filter: ['==', ['get', 'kind'], 'building'],
+        minzoom: 13.5,
+        layout: { visibility: 'visible' },
+        paint: { 'line-color': '#9a3412', 'line-width': 0.85, 'line-opacity': 0.82 }
+      });
 
       map.addSource('src-osm-context', { type: 'geojson', data: asGeoInput(ds.osmContext) });
       map.addLayer({
@@ -735,7 +906,130 @@ export function MapView(props: MapViewProps) {
         }
       });
 
-      // Studio Mask hiding everything outside the Nagari Balingka block + crisp architectural border
+      map.addSource('src-das', { type: 'geojson', data: asGeoInput(ds.watershed) });
+      map.addLayer({
+        id: 'das-line',
+        type: 'line',
+        source: 'src-das',
+        layout: { visibility: 'none' },
+        paint: { 'line-color': '#1b382d', 'line-width': 2.2, 'line-opacity': 0.65 }
+      });
+
+      const agamCtx = ds.agamContext;
+      map.addSource('src-agam-landslide', {
+        type: 'geojson',
+        data: asGeoInput(agamCtx?.landslideHazard || EMPTY_FC)
+      });
+      map.addLayer({
+        id: 'agam-landslide-fill',
+        type: 'fill',
+        source: 'src-agam-landslide',
+        layout: { visibility: 'none' },
+        paint: {
+          'fill-color': [
+            'match',
+            ['get', 'level'],
+            'Tinggi',
+            '#dc2626',
+            'Sedang',
+            '#d97706',
+            '#65a30d'
+          ],
+          'fill-opacity': 0.24
+        }
+      });
+      map.addLayer({
+        id: 'agam-landslide-line',
+        type: 'line',
+        source: 'src-agam-landslide',
+        layout: { visibility: 'none' },
+        paint: {
+          'line-color': [
+            'match',
+            ['get', 'level'],
+            'Tinggi',
+            '#991b1b',
+            'Sedang',
+            '#b45309',
+            '#3f6212'
+          ],
+          'line-width': 1.2
+        }
+      });
+
+      map.addSource('src-agam-forest', {
+        type: 'geojson',
+        data: asGeoInput(agamCtx?.forestStatus || EMPTY_FC)
+      });
+      map.addLayer({
+        id: 'agam-forest-fill',
+        type: 'fill',
+        source: 'src-agam-forest',
+        layout: { visibility: 'none' },
+        paint: {
+          'fill-color': [
+            'match',
+            ['get', 'fungsi'],
+            'HL',
+            '#166534',
+            'KSA/KPA',
+            '#0f766e',
+            '#cbd5e1'
+          ],
+          'fill-opacity': ['match', ['get', 'fungsi'], 'APL', 0.05, 0.22]
+        }
+      });
+      map.addLayer({
+        id: 'agam-forest-line',
+        type: 'line',
+        source: 'src-agam-forest',
+        layout: { visibility: 'none' },
+        paint: { 'line-color': '#14532d', 'line-width': 1.3, 'line-dasharray': [4, 2] }
+      });
+
+      map.addSource('src-agam-soil', {
+        type: 'geojson',
+        data: asGeoInput(agamCtx?.soil || EMPTY_FC)
+      });
+      map.addLayer({
+        id: 'agam-soil-fill',
+        type: 'fill',
+        source: 'src-agam-soil',
+        layout: { visibility: 'none' },
+        paint: {
+          'fill-color': [
+            'match',
+            ['get', 'soilType'],
+            'Andosol',
+            '#b45309',
+            '#57534e'
+          ],
+          'fill-opacity': 0.22
+        }
+      });
+      map.addLayer({
+        id: 'agam-soil-line',
+        type: 'line',
+        source: 'src-agam-soil',
+        layout: { visibility: 'none' },
+        paint: { 'line-color': '#78350f', 'line-width': 1.1 }
+      });
+
+      map.addSource('src-agam-rbi', { type: 'geojson', data: asGeoInput(ds.agamRbiRivers || EMPTY_FC) });
+      map.addLayer({
+        id: 'agam-rbi-line',
+        type: 'line',
+        source: 'src-agam-rbi',
+        layout: { visibility: 'none', 'line-cap': 'round', 'line-join': 'round' },
+        paint: {
+          'line-color': '#0e7490',
+          'line-width': ['match', ['get', 'kind'], 'river', 3.0, 2.0],
+          'line-dasharray': [4, 2.5],
+          'line-opacity': 0.9
+        }
+      });
+
+      // Studio Mask hiding everything outside the official Nagari Balingka territory
       map.addSource('src-mask', { type: 'geojson', data: asGeoInput(ds.mask) });
       map.addLayer({
         id: 'studio-mask-fill',
@@ -744,53 +1038,64 @@ export function MapView(props: MapViewProps) {
         paint: { 'fill-color': '#e5ebe8', 'fill-opacity': 1 }
       });
 
-      map.addSource('src-das', { type: 'geojson', data: asGeoInput(ds.watershed) });
+      map.addSource('src-nagari-boundary', { type: 'geojson', data: asGeoInput(ds.nagariBoundary) });
       map.addLayer({
-        id: 'das-line',
+        id: 'nagari-boundary-casing',
         type: 'line',
-        source: 'src-das',
-        paint: { 'line-color': '#1b382d', 'line-width': 2.5, 'line-opacity': 0.9 }
+        source: 'src-nagari-boundary',
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        paint: { 'line-color': '#ffffff', 'line-width': 4.5, 'line-opacity': 0.85 }
+      });
+      map.addLayer({
+        id: 'nagari-boundary-line',
+        type: 'line',
+        source: 'src-nagari-boundary',
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        paint: { 'line-color': '#14532d', 'line-width': 2.5, 'line-dasharray': [5, 2.5], 'line-opacity': 0.96 }
+      });
+
+      map.addSource('src-jorong-boundaries', { type: 'geojson', data: asGeoInput(EMPTY_FC) });
+      map.addLayer({
+        id: 'jorong-fill',
+        type: 'fill',
+        source: 'src-jorong-boundaries',
+        paint: {
+          'fill-color': ['case', ['==', ['get', 'status'], 'verified'], '#0f766e', '#64748b'],
+          'fill-opacity': 0.1
+        }
+      });
+      map.addLayer({
+        id: 'jorong-line',
+        type: 'line',
+        source: 'src-jorong-boundaries',
+        paint: {
+          'line-color': ['case', ['==', ['get', 'status'], 'verified'], '#0f766e', '#475569'],
+          'line-width': ['case', ['==', ['get', 'status'], 'verified'], 2.4, 1.8],
+          'line-dasharray': [3, 2]
+        }
       });
 
       map.addSource('src-draft-pts', { type: 'geojson', data: asGeoInput(ds.drainageDraft) });
       map.addLayer({
         id: 'draft-points',
-        type: 'circle',
+        type: 'symbol',
         source: 'src-draft-pts',
-        layout: { visibility: 'none' },
-        paint: {
-          'circle-radius': ['match', ['get', 'kind'], 'evacuation', 7.5, 'bronjong', 7, 5.5],
-          'circle-color': [
-            'case',
-            ['==', ['get', 'kind'], 'evacuation'],
-            '#047857',
-            ['==', ['get', 'kind'], 'bronjong'],
-            '#0369a1',
-            ['==', ['get', 'kind'], 'landslide'],
-            '#c2410c',
-            [
-              'match',
-              ['get', 'status'],
-              'unverified',
-              '#e2e8f0',
-              'normal',
-              '#047857',
-              'clogged',
-              '#b45309',
-              'damaged',
-              '#c2410c',
-              'critical',
-              '#b91c1c',
-              '#e2e8f0'
-            ]
+        layout: {
+          visibility: 'none',
+          'icon-image': [
+            'match',
+            ['get', 'kind'],
+            'evacuation',
+            'icon-evacuation',
+            'bronjong',
+            'icon-bronjong',
+            'landslide',
+            'icon-landslide',
+            'icon-crossing-unverified'
           ],
-          'circle-stroke-color': [
-            'case',
-            ['==', ['get', 'status'], 'unverified'],
-            '#475569',
-            '#ffffff'
-          ],
-          'circle-stroke-width': 2
+          'icon-size': ['match', ['get', 'kind'], 'drainage', 0.78, 0.92],
+          'icon-allow-overlap': true,
+          'icon-ignore-placement': true
         }
       });
 
@@ -896,6 +1201,13 @@ export function MapView(props: MapViewProps) {
 
       map.addSource('src-draw-preview', { type: 'geojson', data: asGeoInput(EMPTY_FC) });
       map.addLayer({
+        id: 'draw-preview-poly',
+        type: 'fill',
+        source: 'src-draw-preview',
+        filter: ['==', ['geometry-type'], 'Polygon'],
+        paint: { 'fill-color': '#0284c7', 'fill-opacity': 0.18 }
+      });
+      map.addLayer({
         id: 'draw-preview-line',
         type: 'line',
         source: 'src-draw-preview',
@@ -997,7 +1309,8 @@ export function MapView(props: MapViewProps) {
         'osm-waterways',
         'verified-waterways-line',
         'verified-culverts-line',
-        'flows-line'
+        'flows-line',
+        'agam-rbi-line'
       ];
       for (const lid of interactiveLayers) {
         map.on('mouseenter', lid, () => {
@@ -1185,8 +1498,8 @@ export function MapView(props: MapViewProps) {
                 <p style="margin:0 0 6px;font-size:12.5px;line-height:1.45;color:#434d49;">
                   ${
                     isEn
-                      ? 'Estimated automatically from satellite elevation; real village drains may sit 15–45m to the side.'
-                      : 'Dihitung otomatis dari data elevasi satelit; posisi parit atau sungai asli bisa bergeser 15–45 meter.'
+                      ? 'Estimated automatically from BIG DEMNAS 8m elevation; narrow village drains may still differ in the field.'
+                      : 'Dihitung otomatis dari elevasi BIG DEMNAS 8m; posisi parit atau gorong-gorong sempit di lapangan masih bisa berbeda.'
                   }
                 </p>
                 ${
@@ -1223,6 +1536,49 @@ export function MapView(props: MapViewProps) {
             return;
           }
 
+          if (lid === 'agam-rbi-line') {
+            if (popupRef.current) popupRef.current.remove();
+            const rbiName = String(propsObj.name || 'Anak Sungai RBI');
+            const rbiKind: WaterwayKind = propsObj.kind === 'river' ? 'river' : 'stream';
+            const rawCoords = (feat.geometry.type === 'LineString' ? feat.geometry.coordinates : []) as [number, number][];
+            const coords = rawCoords.map((c: [number, number]) => [Number(c[0]), Number(c[1])] as [number, number]);
+            const canEdit = editorUnlockedRef.current && apiAvailableRef.current;
+            const canUnlock = !editorUnlockedRef.current && apiAvailableRef.current && requiresPassphraseRef.current;
+            const actionHtml = canEdit
+              ? `<button id="popup-promote-rbi" type="button" style="margin-top:8px;width:100%;padding:7px 10px;border-radius:8px;border:1px solid #0369a1;background:#0369a1;color:#fff;font-size:12px;font-weight:700;cursor:pointer;">
+                  ${isEn ? 'Promote to Verified Waterway' : 'Jadikan Jalur Air Terverifikasi'}
+                </button>`
+              : canUnlock
+              ? `<button id="popup-unlock-rbi" type="button" style="margin-top:8px;width:100%;padding:7px 10px;border-radius:8px;border:1px solid #0369a1;background:#fff;color:#0369a1;font-size:12px;font-weight:700;cursor:pointer;">
+                  ${isEn ? 'Unlock Editor to Promote' : 'Buka Editor untuk Verifikasi'}
+                </button>`
+              : '';
+            const html = `
+              <div>
+                <span style="display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:700;margin-bottom:6px;background:rgba(14,116,144,0.14);color:#0e7490">
+                  Pemkab Agam · RBI 1:50k
+                </span>
+                <h4 style="margin:0 0 4px;font-size:14px;font-weight:700;color:#161c1a;">${escapeHtml(rbiName)}</h4>
+                <div style="font-size:11.5px;color:#434d49;">DAS ${escapeHtml(propsObj.das || 'MASANG KIRI')}</div>
+                ${actionHtml}
+              </div>
+            `;
+            const pop = new Popup({ offset: 12 }).setLngLat([e.lngLat.lng, e.lngLat.lat]).setHTML(html).addTo(map);
+            popupRef.current = pop;
+            if (canEdit) {
+              pop.getElement()?.querySelector('#popup-promote-rbi')?.addEventListener('click', () => {
+                pop.remove();
+                onPromoteRbiRef.current(rbiName, rbiKind, coords);
+              });
+            } else if (canUnlock) {
+              pop.getElement()?.querySelector('#popup-unlock-rbi')?.addEventListener('click', () => {
+                pop.remove();
+                onOpenUnlockRef.current();
+              });
+            }
+            return;
+          }
+
           const isComm = lid.startsWith('community');
           openPopup([e.lngLat.lng, e.lngLat.lat], propsObj, isComm);
         });
@@ -1247,16 +1603,19 @@ export function MapView(props: MapViewProps) {
             particlePhase = (particlePhase + dt * speed) % 1;
 
             if (src) {
-              const maxTier = simProgressRef.current >= 0.35 || simRainRef.current >= 60 ? 2 : 1;
-              const showVerified = layersRef.current.verifiedWaterways;
+              const prog = simProgressRef.current;
+              const minDemTier = prog <= 0.25 ? 2 : 1;
+              const maxDemTier = prog <= 0.25 ? 3 : 2;
+              const showVerified = layersRef.current.verifiedWaterways && prog > 0.22;
               const features: GeoFeature[] = [];
               if (showVerified) {
                 for (let i = 0; i < verifiedWaterwaysRef.current.length; i++) {
                   const ww = verifiedWaterwaysRef.current[i];
+                  if (prog <= 0.45 && ww.properties.kind === 'river') continue;
                   const coords = ww.geometry.coordinates;
                   if (!coords || coords.length < 2) continue;
                   const count = Math.max(1, Math.min(8, Math.round((ww.properties.length_m || 400) / 320)));
-                  const radius = ww.properties.kind === 'river' ? 3.5 : 2.8;
+                  const radius = ww.properties.kind === 'river' ? (prog > 0.65 ? 4.0 : 3.4) : 2.8;
                   for (let k = 0; k < count; k++) {
                     const frac = (particlePhase + k / count + i * 0.13) % 1;
                     features.push({
@@ -1273,7 +1632,7 @@ export function MapView(props: MapViewProps) {
                 if (f.geometry.type !== 'LineString') continue;
                 if (suppressedDemSetRef.current.has(String(f.properties?.id || ''))) continue;
                 const tier = Number(f.properties?.tier || 2);
-                if (tier > maxTier) continue;
+                if (tier < minDemTier || tier > maxDemTier) continue;
                 const coords = f.geometry.coordinates;
                 const count = tier === 1 ? 2 : 1;
                 for (let k = 0; k < count; k++) {
@@ -1299,8 +1658,70 @@ export function MapView(props: MapViewProps) {
 
     map.on('click', (e: MapMouseEvent) => {
       const tool = activeToolRef.current;
-      if (!tool) return;
       const pt: [number, number] = [Number(e.lngLat.lng.toFixed(6)), Number(e.lngLat.lat.toFixed(6))];
+      if (!tool) {
+        const hitLayers = [
+          'verified-structures-symbol',
+          'draft-points',
+          'community-points',
+          'community-lines',
+          'osm-waterways',
+          'verified-waterways-line',
+          'verified-culverts-line',
+          'flows-line',
+          'agam-rbi-line'
+        ].filter(lid => Boolean(map.getLayer(lid)));
+        const hits = hitLayers.length > 0 ? map.queryRenderedFeatures(e.point, { layers: hitLayers }) : [];
+        if (hits.length > 0) return;
+
+        if (!isPointInNagari(datasetsRef.current.nagariBoundary, pt[0], pt[1])) return;
+        const agamCtx = datasetsRef.current.agamContext;
+        const prof = lookupAgamAtPoint(agamCtx, pt[0], pt[1]);
+        if (!prof) return;
+
+        if (popupRef.current) popupRef.current.remove();
+        const isEn = langRef.current === 'en';
+        const elev = Math.round(demRef.current.getElevation(pt[0], pt[1]));
+        const slope = Math.round(demRef.current.getSlopePercent(pt[0], pt[1]));
+        const lsLevel =
+          prof.landslideLevel || (isEn ? 'Not mapped high-risk' : 'Tidak tercatat rawan');
+        const lsColor =
+          prof.landslideLevel === 'Tinggi'
+            ? '#b91c1c'
+            : prof.landslideLevel === 'Sedang'
+            ? '#b45309'
+            : prof.landslideLevel === 'Rendah'
+            ? '#3f6212'
+            : '#636f6a';
+        const row = (label: string, val: string | null) =>
+          val
+            ? `<div style="display:flex;justify-content:space-between;gap:10px;padding:3px 0;border-bottom:1px solid rgba(22,28,26,0.08);font-size:12px;">
+                <span style="color:#636f6a;flex-shrink:0;">${escapeHtml(label)}</span>
+                <strong style="color:#161c1a;text-align:right;">${escapeHtml(val)}</strong>
+              </div>`
+            : '';
+
+        const html = `
+          <div style="min-width:220px;">
+            <div style="font-size:11px;font-weight:700;color:#0369a1;margin-bottom:4px;">
+              ${isEn ? 'Pemkab Agam Site Profile' : 'Profil Titik Resmi Pemkab Agam'}
+            </div>
+            <div style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#434d49;margin-bottom:6px;">
+              ${elev} m dpl · ${isEn ? 'Slope' : 'Lereng'} ${slope}%
+            </div>
+            <div style="display:flex;justify-content:space-between;gap:10px;padding:3px 0;border-bottom:1px solid rgba(22,28,26,0.08);font-size:12px;">
+              <span style="color:#636f6a;">${isEn ? 'Landslide Zone' : 'Rawan Longsor'}</span>
+              <strong style="color:${lsColor};">${escapeHtml(lsLevel)}</strong>
+            </div>
+            ${row(isEn ? 'Soil Type' : 'Jenis Tanah', prof.soilType ? `${prof.soilType}${prof.soilSensitivity ? ` (${prof.soilSensitivity})` : ''}` : null)}
+            ${row(isEn ? 'Geology' : 'Geologi', prof.geology)}
+            ${row(isEn ? 'Forest SK 35' : 'Kawasan Hutan', prof.forestLabel ? `${prof.forestStatus} · ${prof.forestLabel}` : prof.forestStatus)}
+            ${row(isEn ? 'BMKG Rainfall' : 'Curah Hujan', prof.rainfallAnnualMm)}
+          </div>
+        `;
+        popupRef.current = new Popup({ offset: 10 }).setLngLat(pt).setHTML(html).addTo(map);
+        return;
+      }
       if (tool === 'drawWaterway' || tool === 'redrawWaterway') {
         const snap = snapPointToWaterways(
           pt,
@@ -1389,8 +1810,33 @@ export function MapView(props: MapViewProps) {
       lastTerrainExagRef.current = nextExag;
     }
 
-    map.setLayoutProperty('das-line', 'visibility', vis(props.layers.das));
+    map.setLayoutProperty('nagari-boundary-casing', 'visibility', vis(props.layers.das));
+    map.setLayoutProperty('nagari-boundary-line', 'visibility', vis(props.layers.das));
+    map.setLayoutProperty('jorong-fill', 'visibility', vis(props.layers.das));
+    map.setLayoutProperty('jorong-line', 'visibility', vis(props.layers.das));
+    map.setLayoutProperty('settlements-residential-fill', 'visibility', vis(props.layers.settlements));
+    map.setLayoutProperty('settlements-buildings-fill', 'visibility', vis(props.layers.settlements));
+    map.setLayoutProperty('settlements-buildings-line', 'visibility', vis(props.layers.settlements));
+    map.setLayoutProperty('landcover-overlay', 'visibility', vis(props.layers.landCover));
+    map.setLayoutProperty('scour-change-overlay', 'visibility', vis(props.layers.scourChange));
+    map.setLayoutProperty('agam-landslide-fill', 'visibility', vis(props.layers.agamLandslide));
+    map.setLayoutProperty('agam-landslide-line', 'visibility', vis(props.layers.agamLandslide));
+    map.setLayoutProperty('agam-forest-fill', 'visibility', vis(props.layers.agamForestStatus));
+    map.setLayoutProperty('agam-forest-line', 'visibility', vis(props.layers.agamForestStatus));
+    map.setLayoutProperty('agam-soil-fill', 'visibility', vis(props.layers.agamSoilGeology));
+    map.setLayoutProperty('agam-soil-line', 'visibility', vis(props.layers.agamSoilGeology));
+    map.setLayoutProperty('agam-rbi-line', 'visibility', vis(props.layers.agamRbiRivers));
     map.setLayoutProperty('contours-line', 'visibility', vis(props.layers.contours));
+
+    const jbSrc = map.getSource('src-jorong-boundaries') as GeoJSONSource | undefined;
+    if (jbSrc) {
+      jbSrc.setData(
+        asGeoInput({
+          type: 'FeatureCollection',
+          features: props.jorongBoundaries as unknown as GeoFeature[]
+        })
+      );
+    }
     contourMarkersRef.current.forEach(c => {
       c.el.style.display = props.layers.contours ? 'block' : 'none';
     });
@@ -1467,11 +1913,12 @@ export function MapView(props: MapViewProps) {
       map.setFilter('flows-arrows', flowFilter);
     }
 
-    // Smooth HAND Raster Overlays for Simulation Tab (conservative 0.8 / 1.8 / 3.2m corridors)
+    // Physical Cascade Flood & Landslide Overlays (falling back to static HAND if cascadeEngine unavailable)
     const showFlood = isRaining;
+    const useDynamicCascade = Boolean(props.cascadeEngine);
     let activeHandId: string | null = null;
     let handOpacity = 0.72;
-    if (showFlood) {
+    if (showFlood && !useDynamicCascade) {
       const accumulatedMm = props.simRain * ((props.simDurationMin * props.simProgress) / 60);
       const effectiveLoad = props.simRain * 0.45 + accumulatedMm * 0.55;
       const level = effectiveLoad < 45 ? 'low' : effectiveLoad < 105 ? 'med' : 'high';
@@ -1483,6 +1930,70 @@ export function MapView(props: MapViewProps) {
       const isOn = hid === activeHandId;
       map.setLayoutProperty(hid, 'visibility', vis(isOn));
       if (isOn) map.setPaintProperty(hid, 'raster-opacity', handOpacity);
+    }
+
+    const showCascadeLayers = showFlood && useDynamicCascade;
+    map.setLayoutProperty('cascade-flood-overlay', 'visibility', vis(showCascadeLayers));
+    map.setLayoutProperty('cascade-landslide-overlay', 'visibility', vis(showCascadeLayers));
+    let cascadeTimer: number | null = null;
+    if (showCascadeLayers && props.cascadeEngine) {
+      const cp = props.cascadeParams;
+      const engine = props.cascadeEngine;
+      const cacheKey = `${cp.rainMmHr}|${cp.durationMin}|${cp.progress.toFixed(3)}|${cp.soilMoisture}|${cp.rainPattern}|${cp.drainCondition}|${cp.forestScenario}`;
+      const renderCascade = () => {
+        lastCascadeKeyRef.current = cacheKey;
+        lastCascadeTsRef.current = performance.now();
+        engine.evaluate(cp);
+        const outSize = 256;
+        const { floodRgba, landslideRgba } = engine.renderRgba(outSize);
+
+        if (!floodCanvasRef.current) {
+          const c = document.createElement('canvas');
+          c.width = outSize;
+          c.height = outSize;
+          floodCanvasRef.current = c;
+        }
+        if (!landslideCanvasRef.current) {
+          const c = document.createElement('canvas');
+          c.width = outSize;
+          c.height = outSize;
+          landslideCanvasRef.current = c;
+        }
+
+        const { bbox } = props.datasets;
+        const imgCoords: [[number, number], [number, number], [number, number], [number, number]] = [
+          [bbox.west, bbox.north],
+          [bbox.east, bbox.north],
+          [bbox.east, bbox.south],
+          [bbox.west, bbox.south]
+        ];
+
+        const fCtx = floodCanvasRef.current.getContext('2d');
+        const lCtx = landslideCanvasRef.current.getContext('2d');
+        if (fCtx) {
+          fCtx.putImageData(new ImageData(new Uint8ClampedArray(floodRgba), outSize, outSize), 0, 0);
+          const srcFlood = map.getSource('img-cascade-flood') as ImageSource | undefined;
+          if (srcFlood && typeof srcFlood.updateImage === 'function') {
+            srcFlood.updateImage({ url: floodCanvasRef.current.toDataURL('image/png'), coordinates: imgCoords });
+          }
+        }
+        if (lCtx) {
+          lCtx.putImageData(new ImageData(new Uint8ClampedArray(landslideRgba), outSize, outSize), 0, 0);
+          const srcLs = map.getSource('img-cascade-landslide') as ImageSource | undefined;
+          if (srcLs && typeof srcLs.updateImage === 'function') {
+            srcLs.updateImage({ url: landslideCanvasRef.current.toDataURL('image/png'), coordinates: imgCoords });
+          }
+        }
+      };
+
+      if (cacheKey !== lastCascadeKeyRef.current) {
+        const elapsed = performance.now() - lastCascadeTsRef.current;
+        if (elapsed >= 70) {
+          renderCascade();
+        } else {
+          cascadeTimer = window.setTimeout(renderCascade, 75 - elapsed);
+        }
+      }
     }
 
     // Draft Crossings (filtered to hide points already covered by verified structures) & Hazard/Evac Points
@@ -1542,6 +2053,9 @@ export function MapView(props: MapViewProps) {
       }
       map.setFilter('draft-points', ['any', ...anyClauses] as FilterSpecification);
     }
+    return () => {
+      if (cascadeTimer !== null) window.clearTimeout(cascadeTimer);
+    };
   }, [
     mapReady,
     props.basemap,
@@ -1554,9 +2068,12 @@ export function MapView(props: MapViewProps) {
     props.simDurationMin,
     props.simProgress,
     props.simScenario,
+    props.cascadeEngine,
+    props.cascadeParams,
     props.drainFilter,
     props.verifiedWaterways,
     props.verifiedStructures,
+    props.jorongBoundaries,
     props.datasets.drainageDraft,
     props.suppressedDemIds
   ]);
@@ -1736,9 +2253,16 @@ export function MapView(props: MapViewProps) {
           geometry: { type: 'LineString', coordinates: props.drawVertices }
         });
       }
+      if (props.activeTool === 'drawJorong' && props.drawVertices.length >= 3) {
+        feats.push({
+          type: 'Feature',
+          properties: {},
+          geometry: { type: 'Polygon', coordinates: [[...props.drawVertices, props.drawVertices[0]]] }
+        });
+      }
       src.setData(asGeoInput({ type: 'FeatureCollection', features: feats }));
     }
-  }, [mapReady, props.drawVertices]);
+  }, [mapReady, props.drawVertices, props.activeTool]);
 
   const editingId = props.editingWaterway?.id ?? null;
   const editingCoords = props.editingWaterway?.coordinates ?? null;

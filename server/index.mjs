@@ -182,6 +182,10 @@ export function createAppServer({
         return sendJson(res, 200, { structures: store.getState().structures });
       }
 
+      if (method === 'GET' && pathname === '/api/jorong-boundaries') {
+        return sendJson(res, 200, { jorongBoundaries: store.getState().jorongBoundaries });
+      }
+
       if (method === 'GET' && pathname === '/api/audit') {
         const limit = Number(url.searchParams.get('limit') || 150);
         return sendJson(res, 200, { logs: store.listAuditLogs(limit) });
@@ -212,6 +216,9 @@ export function createAppServer({
         (method === 'POST' && pathname === '/api/structures') ||
         (method === 'PUT' && pathname.startsWith('/api/structures/')) ||
         (method === 'DELETE' && pathname.startsWith('/api/structures/')) ||
+        (method === 'POST' && pathname === '/api/jorong-boundaries') ||
+        (method === 'PUT' && pathname.startsWith('/api/jorong-boundaries/')) ||
+        (method === 'DELETE' && pathname.startsWith('/api/jorong-boundaries/')) ||
         (method === 'POST' && pathname === '/api/dem-segments/suppress') ||
         (method === 'DELETE' && pathname.startsWith('/api/dem-segments/')) ||
         (method === 'POST' && /^\/api\/audit\/\d+\/revert$/.test(pathname)) ||
@@ -255,6 +262,24 @@ export function createAppServer({
       if (stMatch && method === 'DELETE') {
         const body = await readJsonBody(req, 16 * 1024).catch(() => ({}));
         const result = store.deleteStructure(stMatch[1], body);
+        return sendJson(res, 200, result);
+      }
+
+      if (method === 'POST' && pathname === '/api/jorong-boundaries') {
+        const body = await readJsonBody(req, 256 * 1024);
+        const result = store.createJorongBoundary(body);
+        return sendJson(res, 201, result);
+      }
+
+      const jbMatch = pathname.match(/^\/api\/jorong-boundaries\/([^/]+)$/);
+      if (jbMatch && method === 'PUT') {
+        const body = await readJsonBody(req, 256 * 1024);
+        const result = store.updateJorongBoundary(jbMatch[1], body);
+        return sendJson(res, 200, result);
+      }
+      if (jbMatch && method === 'DELETE') {
+        const body = await readJsonBody(req, 16 * 1024).catch(() => ({}));
+        const result = store.deleteJorongBoundary(jbMatch[1], body);
         return sendJson(res, 200, result);
       }
 

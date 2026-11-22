@@ -545,3 +545,131 @@ test('Verified GeoJSON snapshots seed fresh DBs, recompute auto-exports them, an
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('waterway cross-sections & Jorong boundary API enforce auth, persist to SQLite, and support audit revert', async () => {
+  const { dir, dbPath } = makeTempDb('balingka-api-f3-');
+  const secret = 'balingka-test-pass';
+  const { server } = createAppServer({ dbPath, distDir: null, adminPassphrase: secret });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const { port } = server.address();
+  const base = `http://127.0.0.1:${port}`;
+
+  try {
+    // 1. Waterway cross-section fields persist and revert
+    const wwRes = await fetch(`${base}/api/waterways`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Admin-Passphrase': secret },
+      body: JSON.stringify({
+        name: 'Bandar Ukur Hilir',
+        kind: 'river',
+        status: 'clear',
+        source: 'manual',
+        notes: 'Ukur lapangan pasca galodo',
+        width_pre_m: 6.5,
+        width_post_m: 11.2,
+        depth_m: 2.1,
+        coordinates: [
+          [100.324, -0.334],
+          [100.326, -0.332]
+        ],
+        actor: 'Surveyor',
+        reason: 'Input lebar pra vs pasca bencana'
+      })
+    });
+    assert.equal(wwRes.status, 201);
+    const wwJson = await wwRes.json();
+    assert.equal(wwJson.feature.properties.width_pre_m, 6.5);
+    assert.equal(wwJson.feature.properties.width_post_m, 11.2);
+    assert.equal(wwJson.feature.properties.depth_m, 2.1);
+
+    const wwList = await (await fetch(`${base}/api/waterways`)).json();
+    const createdWw = wwList.waterways.features.find(f => f.properties.id === wwJson.feature.properties.id);
+    assert.equal(createdWw.properties.width_post_m, 11.2);
+
+    // 2. Public GET /api/jorong-boundaries works without auth, POST rejects without passphrase
+    const pubJorong = await fetch(`${base}/api/jorong-boundaries`);
+    assert.equal(pubJorong.status, 200);
+    const unauthPost = await fetch(`${base}/api/jorong-boundaries`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: 'Jorong Koto Hilalang',
+        status: 'indicative',
+        source_note: 'Diskusi peta warga',
+        coordinates: [
+          [100.321, -0.335],
+          [100.325, -0.335],
+          [100.325, -0.331],
+          [100.321, -0.331],
+          [100.321, -0.335]
+        ],
+        actor: 'Anon',
+        reason: 'Test unauth'
+      })
+    });
+    assert.equal(unauthPost.status, 401);
+
+    // 3. Authenticated POST/PUT/DELETE + export bundle + audit revert
+    const jbCreate = await fetch(`${base}/api/jorong-boundaries`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Admin-Passphrase': secret },
+      body: JSON.stringify({
+        name: 'Jorong Koto Hilalang',
+        status: 'indicative',
+        source_note: 'Delineasi bersama tokoh masyarakat',
+        coordinates: [
+          [100.321, -0.335],
+          [100.325, -0.335],
+          [100.325, -0.331],
+          [100.321, -0.331],
+          [100.321, -0.335]
+        ],
+        actor: 'Operator',
+        reason: 'Tambah batas indikatif jorong'
+      })
+    });
+    assert.equal(jbCreate.status, 201);
+    const jbJson = await jbCreate.json();
+    assert.equal(jbJson.feature.properties.name, 'Jorong Koto Hilalang');
+    assert.equal(jbJson.feature.properties.status, 'indicative');
+    assert.ok(jbJson.feature.properties.area_ha > 10);
+
+    const jbPut = await fetch(`${base}/api/jorong-boundaries/${encodeURIComponent(jbJson.feature.properties.id)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', 'X-Admin-Passphrase': secret },
+      body: JSON.stringify({
+        status: 'verified',
+        actor: 'Wali Nagari',
+        reason: 'Disahkan musyawarah jorong'
+      })
+    });
+    assert.equal(jbPut.status, 200);
+    const jbPutJson = await jbPut.json();
+    assert.equal(jbPutJson.feature.properties.status, 'verified');
+
+    const bundle = await (await fetch(`${base}/api/export/bundle`)).json();
+    assert.equal(bundle.jorongBoundaries.features.length, 1);
+
+    // Revert the PUT status update back to indicative
+    const revertRes = await fetch(`${base}/api/audit/${jbPutJson.log.id}/revert`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Admin-Passphrase': secret },
+      body: JSON.stringify({ actor: 'Admin', reason: 'Cek revert jorong' })
+    });
+    assert.equal(revertRes.status, 200);
+    const afterRevert = await (await fetch(`${base}/api/jorong-boundaries`)).json();
+    assert.equal(afterRevert.jorongBoundaries.features[0].properties.status, 'indicative');
+
+    const jbDel = await fetch(`${base}/api/jorong-boundaries/${encodeURIComponent(jbJson.feature.properties.id)}`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json', 'X-Admin-Passphrase': secret },
+      body: JSON.stringify({ actor: 'Admin', reason: 'Bersihkan uji' })
+    });
+    assert.equal(jbDel.status, 200);
+    const afterDel = await (await fetch(`${base}/api/jorong-boundaries`)).json();
+    assert.equal(afterDel.jorongBoundaries.features.length, 0);
+  } finally {
+    await new Promise(resolve => server.close(resolve));
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

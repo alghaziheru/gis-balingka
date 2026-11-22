@@ -35,6 +35,9 @@ export interface ActiveEditingWaterway {
   source: WaterwaySource;
   sourceRef?: string | null;
   notes: string;
+  widthPreM?: number | null;
+  widthPostM?: number | null;
+  depthM?: number | null;
   coordinates: [number, number][];
 }
 
@@ -105,6 +108,9 @@ export function WaterwayEditorPanel({
   const [kind, setKind] = useState<WaterwayKind>('stream');
   const [status, setStatus] = useState<DrainageStatus>('normal');
   const [notes, setNotes] = useState('');
+  const [widthPreStr, setWidthPreStr] = useState('');
+  const [widthPostStr, setWidthPostStr] = useState('');
+  const [depthStr, setDepthStr] = useState('');
   const [reason, setReason] = useState('');
   const [busy, setBusy] = useState(false);
 
@@ -114,6 +120,9 @@ export function WaterwayEditorPanel({
     setKind(editingWaterway.kind);
     setStatus(editingWaterway.status);
     setNotes(editingWaterway.notes);
+    setWidthPreStr(editingWaterway.widthPreM != null ? String(editingWaterway.widthPreM) : '');
+    setWidthPostStr(editingWaterway.widthPostM != null ? String(editingWaterway.widthPostM) : '');
+    setDepthStr(editingWaterway.depthM != null ? String(editingWaterway.depthM) : '');
     setReason(editingWaterway.source === 'dem_promoted' ? 'Promosi & sesuaikan segmen DEM ke lapangan' : '');
   }, [editingWaterway?.id, editingWaterway?.sourceRef, editingWaterway?.source]);
 
@@ -124,6 +133,12 @@ export function WaterwayEditorPanel({
       return;
     }
     if (!name.trim()) return;
+    const parseOptM = (s: string): number | null => {
+      const trimmed = s.trim();
+      if (!trimmed) return null;
+      const n = Number(trimmed);
+      return Number.isFinite(n) && n > 0 ? Number(n.toFixed(2)) : null;
+    };
     setBusy(true);
     try {
       await onSaveWaterway(
@@ -132,7 +147,10 @@ export function WaterwayEditorPanel({
           name: name.trim(),
           kind,
           status,
-          notes: notes.trim()
+          notes: notes.trim(),
+          widthPreM: parseOptM(widthPreStr),
+          widthPostM: parseOptM(widthPostStr),
+          depthM: parseOptM(depthStr)
         },
         reason.trim()
       );
@@ -378,6 +396,57 @@ export function WaterwayEditorPanel({
               </div>
             </div>
 
+            <div className="grid grid-cols-3 gap-1.5">
+              <div>
+                <label className="mb-1 block text-[11px] font-semibold text-[#434d49]" htmlFor="ww-wpre">
+                  {t.lblWidthPre}
+                </label>
+                <input
+                  id="ww-wpre"
+                  type="number"
+                  step="0.1"
+                  min="0.2"
+                  max="200"
+                  value={widthPreStr}
+                  onChange={e => setWidthPreStr(e.target.value)}
+                  placeholder="cth. 3.5"
+                  className="font-mono-num min-h-[36px] w-full rounded-lg border border-[#161c1a]/20 px-2 py-1 text-[12.5px] outline-none focus:border-[#0369a1]"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-[11px] font-semibold text-[#434d49]" htmlFor="ww-wpost">
+                  {t.lblWidthPost}
+                </label>
+                <input
+                  id="ww-wpost"
+                  type="number"
+                  step="0.1"
+                  min="0.2"
+                  max="200"
+                  value={widthPostStr}
+                  onChange={e => setWidthPostStr(e.target.value)}
+                  placeholder="cth. 7.0"
+                  className="font-mono-num min-h-[36px] w-full rounded-lg border border-[#161c1a]/20 px-2 py-1 text-[12.5px] outline-none focus:border-[#0369a1]"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-[11px] font-semibold text-[#434d49]" htmlFor="ww-depth">
+                  {t.lblDepthM}
+                </label>
+                <input
+                  id="ww-depth"
+                  type="number"
+                  step="0.1"
+                  min="0.2"
+                  max="30"
+                  value={depthStr}
+                  onChange={e => setDepthStr(e.target.value)}
+                  placeholder="cth. 1.5"
+                  className="font-mono-num min-h-[36px] w-full rounded-lg border border-[#161c1a]/20 px-2 py-1 text-[12.5px] outline-none focus:border-[#0369a1]"
+                />
+              </div>
+            </div>
+
             <div>
               <label className="mb-1 block text-[12px] font-semibold text-[#434d49]" htmlFor="ww-notes">
                 {t.lblFNotes}
@@ -515,6 +584,7 @@ export function WaterwayEditorPanel({
                   </span>
                   <span className="font-mono-num text-[11.5px] text-[#636f6a]">
                     {w.properties.kind} · {w.properties.length_m}m
+                    {w.properties.width_post_m ? ` · L=${w.properties.width_post_m}m` : ''}
                   </span>
                 </div>
               </div>

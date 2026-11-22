@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Layers, X } from 'lucide-react';
 import { I18N } from '../i18n/translations';
 import type { BasemapId, Language, LayerToggles, TabId, ViewMode } from '../types/gis';
+import { LegendIcon, type LegendIconKind } from './LegendIcon';
 
 interface TelemetryDockProps {
   lang: Language;
@@ -41,7 +42,7 @@ export function TelemetryDock({
   const mobileToggleItems: {
     id: string;
     label: string;
-    color: string;
+    icon: LegendIconKind;
     checked: boolean;
     onChange: (val: boolean) => void;
   }[] = [];
@@ -50,52 +51,108 @@ export function TelemetryDock({
     mobileToggleItems.push({
       id: 'ww',
       label: t.lblVerifiedWaterways,
-      color: '#0369a1',
+      icon: 'waterway',
       checked: layers.verifiedWaterways,
       onChange: v => onToggleLayer('verifiedWaterways', v)
     });
     mobileToggleItems.push({
       id: 'st',
       label: t.lblStructures,
-      color: '#047857',
+      icon: 'bridge',
       checked: layers.structures,
       onChange: v => onToggleLayer('structures', v)
     });
     mobileToggleItems.push({
+      id: 'set',
+      label: t.lblSettlements,
+      icon: 'settlements',
+      checked: layers.settlements,
+      onChange: v => onToggleLayer('settlements', v)
+    });
+    mobileToggleItems.push({
+      id: 'lc',
+      label: t.lblLandCover,
+      icon: 'landCover',
+      checked: layers.landCover,
+      onChange: v => onToggleLayer('landCover', v)
+    });
+    mobileToggleItems.push({
+      id: 'scour',
+      label: t.lblScourChange,
+      icon: 'scourChange',
+      checked: layers.scourChange,
+      onChange: v => onToggleLayer('scourChange', v)
+    });
+    mobileToggleItems.push({
+      id: 'agamLs',
+      label: t.lblAgamLandslide,
+      icon: 'agamLandslide',
+      checked: layers.agamLandslide,
+      onChange: v => onToggleLayer('agamLandslide', v)
+    });
+    mobileToggleItems.push({
       id: 'flow',
       label: t.lblFlowSimple,
-      color: '#b45309',
+      icon: 'flow',
       checked: flowDensity > 0,
       onChange: v => onChangeFlowDensity(v ? 1 : 0)
     });
     mobileToggleItems.push({
       id: 'das',
       label: t.lblDas,
-      color: '#1b382d',
+      icon: 'das',
       checked: layers.das,
       onChange: v => onToggleLayer('das', v)
     });
     if (isDetail) {
       mobileToggleItems.push({
+        id: 'agamRbi',
+        label: t.lblAgamRbiRivers,
+        icon: 'agamRbi',
+        checked: layers.agamRbiRivers,
+        onChange: v => onToggleLayer('agamRbiRivers', v)
+      });
+      mobileToggleItems.push({
+        id: 'agamForest',
+        label: t.lblAgamForest,
+        icon: 'agamForest',
+        checked: layers.agamForestStatus,
+        onChange: v => onToggleLayer('agamForestStatus', v)
+      });
+      mobileToggleItems.push({
+        id: 'agamSoil',
+        label: t.lblAgamSoil,
+        icon: 'agamSoil',
+        checked: layers.agamSoilGeology,
+        onChange: v => onToggleLayer('agamSoilGeology', v)
+      });
+      mobileToggleItems.push({
         id: 'contours',
         label: t.lblContours,
-        color: '#b45309',
+        icon: 'contour',
         checked: layers.contours,
         onChange: v => onToggleLayer('contours', v)
       });
       mobileToggleItems.push({
         id: 'slope',
         label: t.lblSlope,
-        color: '#c2410c',
+        icon: 'slope',
         checked: layers.slope,
         onChange: v => onToggleLayer('slope', v)
       });
     }
   } else if (tab === 'sim') {
     mobileToggleItems.push({
+      id: 'set',
+      label: t.lblSettlements,
+      icon: 'settlements',
+      checked: layers.settlements,
+      onChange: v => onToggleLayer('settlements', v)
+    });
+    mobileToggleItems.push({
       id: 'evac',
       label: t.lblEvac,
-      color: '#047857',
+      icon: 'evacuation',
       checked: layers.evac,
       onChange: v => onToggleLayer('evac', v)
     });
@@ -103,7 +160,7 @@ export function TelemetryDock({
       mobileToggleItems.push({
         id: 'bronjong',
         label: t.lblBronjong,
-        color: '#0369a1',
+        icon: 'bronjong',
         checked: layers.bronjong,
         onChange: v => onToggleLayer('bronjong', v)
       });
@@ -112,14 +169,14 @@ export function TelemetryDock({
     mobileToggleItems.push({
       id: 'evac',
       label: t.lblEvac,
-      color: '#047857',
+      icon: 'evacuation',
       checked: layers.evac,
       onChange: v => onToggleLayer('evac', v)
     });
     mobileToggleItems.push({
       id: 'landslide',
       label: t.lblLandslide,
-      color: '#c2410c',
+      icon: 'landslide',
       checked: layers.landslide,
       onChange: v => onToggleLayer('landslide', v)
     });
@@ -127,7 +184,7 @@ export function TelemetryDock({
       mobileToggleItems.push({
         id: 'bronjong',
         label: t.lblBronjong,
-        color: '#0369a1',
+        icon: 'bronjong',
         checked: layers.bronjong,
         onChange: v => onToggleLayer('bronjong', v)
       });
@@ -186,20 +243,20 @@ export function TelemetryDock({
               {tab === 'sim' && (
                 <div className="mb-2 flex flex-col gap-1 border-b border-[#161c1a]/10 pb-2 text-[12px]">
                   <div className="flex items-center gap-2 text-[#161c1a]">
-                    <span className="h-0 w-3 shrink-0 border-t-2 border-dashed border-[#b45309]" />
-                    <span>{isEn ? 'Rain runoff path (DEM)' : 'Arah air limpasan hujan'}</span>
+                    <LegendIcon kind="flow" size={16} />
+                    <span>{isEn ? 'Rain runoff wave (DEM)' : 'Gelombang air limpasan'}</span>
                   </div>
                   <div className="flex items-center gap-2 text-[#161c1a]">
                     <span className="h-2.5 w-2.5 shrink-0 rounded-[2px] bg-[#0369a1]" />
-                    <span>{isEn ? 'Valley corridor (≤0.8m)' : 'Dasar lembah (≤0,8m)'}</span>
-                  </div>
-                  <div className="flex items-center gap-2 text-[#161c1a]">
-                    <span className="h-2.5 w-2.5 shrink-0 rounded-[2px] bg-[#0284c7]" />
-                    <span>{isEn ? 'Low terrain (≤1.8m)' : 'Tanah rendah (≤1,8m)'}</span>
+                    <span>{isEn ? 'Deep valley surge (>1.5m)' : 'Luapan koridor utama (>1,5m)'}</span>
                   </div>
                   <div className="flex items-center gap-2 text-[#161c1a]">
                     <span className="h-2.5 w-2.5 shrink-0 rounded-[2px] bg-[#7dd3fc]" />
-                    <span>{isEn ? 'Outer basin (≤3.2m)' : 'Cekungan luar (≤3,2m)'}</span>
+                    <span>{isEn ? 'Shallow low-ground overflow' : 'Genangan koridor rendah'}</span>
+                  </div>
+                  <div className="flex items-center gap-2 text-[#161c1a]">
+                    <span className="h-2.5 w-2.5 shrink-0 rounded-[2px] bg-[#ea580c]" />
+                    <span>{isEn ? 'Saturated steep slope (landslide)' : 'Lereng jenuh rawan longsor'}</span>
                   </div>
                 </div>
               )}
@@ -246,10 +303,7 @@ export function TelemetryDock({
                     className="flex min-h-[36px] cursor-pointer items-center justify-between gap-2 py-1 text-[12.5px] text-[#161c1a]"
                   >
                     <span className="flex items-center gap-2">
-                      <span
-                        className="h-2.5 w-2.5 shrink-0 rounded-[3px] border border-black/15"
-                        style={{ background: item.color }}
-                      />
+                      <LegendIcon kind={item.icon} size={16} />
                       <span className="leading-snug">{item.label}</span>
                     </span>
                     <input

@@ -6,6 +6,8 @@ import type {
   ExportBundle,
   GeoFeatureCollection,
   HydroStatus,
+  JorongBoundaryFeature,
+  JorongBoundaryStatus,
   StructureKind,
   StructureSource,
   SuggestionStatus,
@@ -154,20 +156,24 @@ export async function verifyEditorPassphrase(passphrase: string): Promise<boolea
 export async function fetchWaterwaysState(): Promise<{
   waterways: VerifiedWaterwayFeature[];
   structures: VerifiedStructureFeature[];
+  jorongBoundaries: JorongBoundaryFeature[];
   suppressedDem: SuppressedDemSegment[];
   hydroStatus: HydroStatus;
 }> {
   const data = await apiFetch<{
     waterways: { features: VerifiedWaterwayFeature[] };
     structures?: { features: VerifiedStructureFeature[] };
+    jorongBoundaries?: { features: JorongBoundaryFeature[] };
     suppressedDem: SuppressedDemSegment[];
     hydroStatus?: HydroStatus;
   }>('/api/waterways');
   const waterways = data.waterways?.features || [];
   const structures = data.structures?.features || [];
+  const jorongBoundaries = data.jorongBoundaries?.features || [];
   return {
     waterways,
     structures,
+    jorongBoundaries,
     suppressedDem: data.suppressedDem || [],
     hydroStatus: data.hydroStatus || {
       dirty: false,
@@ -212,6 +218,9 @@ export async function createWaterway(payload: {
   source: WaterwaySource;
   source_ref?: string | null;
   notes: string;
+  width_pre_m?: number | null;
+  width_post_m?: number | null;
+  depth_m?: number | null;
   coordinates: [number, number][];
   actor: string;
   reason: string;
@@ -226,6 +235,9 @@ export async function updateWaterway(
     kind?: WaterwayKind;
     status?: DrainageStatus;
     notes?: string;
+    width_pre_m?: number | null;
+    width_post_m?: number | null;
+    depth_m?: number | null;
     coordinates?: [number, number][];
     actor: string;
     reason: string;
@@ -274,6 +286,38 @@ export async function updateStructure(
 
 export async function deleteStructure(id: string, payload: { actor: string; reason: string }): Promise<void> {
   await apiFetch(`/api/structures/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function createJorongBoundary(payload: {
+  name: string;
+  status: JorongBoundaryStatus;
+  source_note: string;
+  coordinates: [number, number][];
+  actor: string;
+  reason: string;
+}): Promise<{ feature: JorongBoundaryFeature; log: AuditLogEntry }> {
+  return apiFetch('/api/jorong-boundaries', { method: 'POST', body: JSON.stringify(payload) });
+}
+
+export async function updateJorongBoundary(
+  id: string,
+  payload: {
+    name?: string;
+    status?: JorongBoundaryStatus;
+    source_note?: string;
+    coordinates?: [number, number][];
+    actor: string;
+    reason: string;
+  }
+): Promise<{ feature: JorongBoundaryFeature; log: AuditLogEntry }> {
+  return apiFetch(`/api/jorong-boundaries/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(payload) });
+}
+
+export async function deleteJorongBoundary(id: string, payload: { actor: string; reason: string }): Promise<void> {
+  await apiFetch(`/api/jorong-boundaries/${encodeURIComponent(id)}`, {
     method: 'DELETE',
     body: JSON.stringify(payload)
   });

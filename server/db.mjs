@@ -13,6 +13,7 @@ export const DEFAULT_SEED_PATH = path.join(ROOT, 'public', 'data', 'osm-context.
 
 const VALID_KINDS = new Set(['river', 'stream', 'canal', 'drain', 'culvert']);
 const VALID_STRUCTURE_KINDS = new Set(['culvert', 'bridge']);
+const VALID_JORONG_STATUSES = new Set(['indicative', 'verified']);
 const VALID_STATUSES = new Set(['normal', 'clogged', 'damaged', 'critical']);
 const VALID_SUGGESTION_STATUSES = new Set(['open', 'reviewing', 'resolved', 'rejected']);
 
@@ -84,6 +85,93 @@ function normalizePoint(lngInput, latInput) {
   return [Number(lng.toFixed(6)), Number(lat.toFixed(6))];
 }
 
+function normalizePositiveMeters(val) {
+  if (val === null || val === undefined || val === '') return null;
+  const n = Number(val);
+  if (!Number.isFinite(n) || n <= 0 || n > 200) {
+    throw new Error('Dimension in meters must be between 0 and 200.');
+  }
+  return Number(n.toFixed(2));
+}
+
+function normalizeJorongStatus(status, fallback = 'indicative') {
+  const s = String(status || fallback).trim().toLowerCase();
+  return VALID_JORONG_STATUSES.has(s) ? s : fallback;
+}
+
+function normalizePolygonRing(ringInput) {
+  const ring = Array.isArray(ringInput?.[0]?.[0]) ? ringInput[0] : ringInput;
+  if (!Array.isArray(ring) || ring.length < 3) {
+    throw new Error('Polygon ring must contain at least 3 [lng, lat] pairs.');
+  }
+  const clean = ring.map(pt => {
+    if (!Array.isArray(pt) || pt.length < 2) {
+      throw new Error('Each polygon vertex must be a [lng, lat] pair.');
+    }
+    return normalizePoint(pt[0], pt[1]);
+  });
+  const first = clean[0];
+  const last = clean[clean.length - 1];
+  if (first[0] !== last[0] || first[1] !== last[1]) {
+    clean.push([first[0], first[1]]);
+  }
+  if (clean.length < 4) {
+    throw new Error('Polygon ring must have at least 3 distinct vertices.');
+  }
+  return clean;
+}
+
+function computePolygonAreaHa(ring) {
+  if (!Array.isArray(ring) || ring.length < 4) return 0;
+  let avgLat = 0;
+  for (let i = 0; i < ring.length - 1; i++) avgLat += ring[i][1];
+  avgLat /= Math.max(1, ring.length - 1);
+  const mPerDegLng = 111320 * Math.max(0.1, Math.cos((avgLat * Math.PI) / 180));
+  const mPerDegLat = 110540;
+  let area2 = 0;
+  for (let i = 0; i < ring.length - 1; i++) {
+    const x1 = ring[i][0] * mPerDegLng;
+    const y1 = ring[i][1] * mPerDegLat;
+    const x2 = ring[i + 1][0] * mPerDegLng;
+    const y2 = ring[i + 1][1] * mPerDegLat;
+    area2 += x1 * y2 - x2 * y1;
+  }
+  return Number((Math.abs(area2) * 0.5 / 10000).toFixed(1));
+}
+
+function jorongRowToFeature(row) {
+  return {
+    type: 'Feature',
+    properties: {
+      id: row.id,
+      name: row.name,
+      status: row.status,
+      source_note: row.source_note || '',
+      area_ha: Number(row.area_ha || 0),
+      updated_by: row.updated_by,
+      updated_at: row.updated_at
+    },
+    geometry: {
+      type: 'Polygon',
+      coordinates: [JSON.parse(row.coordinates_json)]
+    }
+  };
+}
+
+function jorongRowToSnapshot(row) {
+  return {
+    id: row.id,
+    name: row.name,
+    status: row.status,
+    source_note: row.source_note || '',
+    coordinates: JSON.parse(row.coordinates_json),
+    area_ha: Number(row.area_ha || 0),
+    updated_by: row.updated_by,
+    updated_at: row.updated_at,
+    deleted: Boolean(row.deleted)
+  };
+}
+
 function structureRowToFeature(row) {
   return {
     type: 'Feature',
@@ -137,6 +225,9 @@ function rowToFeature(row) {
       source_ref: row.source_ref || null,
       notes: row.notes || '',
       length_m: row.length_m,
+      width_pre_m: row.width_pre_m ?? null,
+      width_post_m: row.width_post_m ?? null,
+      depth_m: row.depth_m ?? null,
       updated_by: row.updated_by,
       updated_at: row.updated_at
     },
@@ -158,6 +249,9 @@ function rowToSnapshot(row) {
     notes: row.notes || '',
     coordinates: JSON.parse(row.coordinates_json),
     length_m: row.length_m,
+    width_pre_m: row.width_pre_m ?? null,
+    width_post_m: row.width_post_m ?? null,
+    depth_m: row.depth_m ?? null,
     updated_by: row.updated_by,
     updated_at: row.updated_at,
     deleted: Boolean(row.deleted)
@@ -260,7 +354,24 @@ export function createStore(dbPath = DEFAULT_DB_PATH, seedGeoJsonPath = DEFAULT_
       updated_at TEXT NOT NULL,
       deleted INTEGER NOT NULL DEFAULT 0
     );
+
+    CREATE TABLE IF NOT EXISTS jorong_boundaries (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'indicative',
+      source_note TEXT NOT NULL DEFAULT '',
+      coordinates_json TEXT NOT NULL,
+      area_ha REAL NOT NULL DEFAULT 0,
+      updated_by TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      deleted INTEGER NOT NULL DEFAULT 0
+    );
   `);
+
+  const wwCols = new Set(db.prepare('PRAGMA table_info(waterways)').all().map(c => c.name));
+  if (!wwCols.has('width_pre_m')) db.exec('ALTER TABLE waterways ADD COLUMN width_pre_m REAL;');
+  if (!wwCols.has('width_post_m')) db.exec('ALTER TABLE waterways ADD COLUMN width_post_m REAL;');
+  if (!wwCols.has('depth_m')) db.exec('ALTER TABLE waterways ADD COLUMN depth_m REAL;');
 
   function getMeta(key, fallback = null) {
     const row = db.prepare('SELECT value FROM app_meta WHERE key = ?').get(key);
@@ -324,8 +435,8 @@ export function createStore(dbPath = DEFAULT_DB_PATH, seedGeoJsonPath = DEFAULT_
     const insertWw = db.prepare(`
       INSERT INTO waterways (
         id, name, kind, status, source, source_ref, notes,
-        coordinates_json, length_m, updated_by, updated_at, deleted
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+        coordinates_json, length_m, width_pre_m, width_post_m, depth_m, updated_by, updated_at, deleted
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
     `);
     const insertSt = db.prepare(`
       INSERT INTO structures (
@@ -361,9 +472,15 @@ export function createStore(dbPath = DEFAULT_DB_PATH, seedGeoJsonPath = DEFAULT_
         const sourceRef = p.source_ref ? String(p.source_ref) : null;
         const notes = String(p.notes || '');
         const lengthM = computeLineLengthMeters(coords);
+        const widthPreM = normalizePositiveMeters(p.width_pre_m);
+        const widthPostM = normalizePositiveMeters(p.width_post_m);
+        const depthM = normalizePositiveMeters(p.depth_m);
         const updatedBy = String(p.updated_by || 'System (Git Seed)');
         const updatedAt = String(p.updated_at || now);
-        insertWw.run(id, name, kind, status, source, sourceRef, notes, JSON.stringify(coords), lengthM, updatedBy, updatedAt);
+        insertWw.run(
+          id, name, kind, status, source, sourceRef, notes,
+          JSON.stringify(coords), lengthM, widthPreM, widthPostM, depthM, updatedBy, updatedAt
+        );
         seededSummary.push({ id, name, kind, length_m: lengthM });
       }
 
@@ -443,7 +560,7 @@ export function createStore(dbPath = DEFAULT_DB_PATH, seedGeoJsonPath = DEFAULT_
       const lengthM = computeLineLengthMeters(coords);
       const sourceRef = String(f.properties?.id || id);
       const notes = 'Seed awal dari jaringan sungai OpenStreetMap Nagari Balingka.';
-      insertWw.run(id, name, kind, 'normal', 'osm', sourceRef, notes, JSON.stringify(coords), lengthM, 'System (OSM Seed)', now);
+      insertWw.run(id, name, kind, 'normal', 'osm', sourceRef, notes, JSON.stringify(coords), lengthM, null, null, null, 'System (OSM Seed)', now);
       seededSummary.push({ id, name, kind, length_m: lengthM });
     }
 
@@ -487,6 +604,9 @@ export function createStore(dbPath = DEFAULT_DB_PATH, seedGeoJsonPath = DEFAULT_
       const supRows = db
         .prepare('SELECT * FROM suppressed_dem_segments ORDER BY updated_at DESC')
         .all();
+      const jbRows = db
+        .prepare('SELECT * FROM jorong_boundaries WHERE deleted = 0 ORDER BY name ASC')
+        .all();
       return {
         waterways: {
           type: 'FeatureCollection',
@@ -495,6 +615,10 @@ export function createStore(dbPath = DEFAULT_DB_PATH, seedGeoJsonPath = DEFAULT_
         structures: {
           type: 'FeatureCollection',
           features: stRows.map(structureRowToFeature)
+        },
+        jorongBoundaries: {
+          type: 'FeatureCollection',
+          features: jbRows.map(jorongRowToFeature)
         },
         suppressedDem: supRows.map(r => ({
           seg_id: r.seg_id,
@@ -631,6 +755,108 @@ export function createStore(dbPath = DEFAULT_DB_PATH, seedGeoJsonPath = DEFAULT_
       return { deletedId: id, log };
     },
 
+    createJorongBoundary(payload) {
+      const name = String(payload?.name || '').trim();
+      if (!name) throw new Error('Jorong boundary name is required.');
+      const ring = normalizePolygonRing(payload?.coordinates);
+      const status = normalizeJorongStatus(payload?.status, 'indicative');
+      const sourceNote = String(payload?.source_note || '').trim().slice(0, 240);
+      const actor = String(payload?.actor || 'Editor').trim() || 'Editor';
+      const reason = String(payload?.reason || '').trim() || 'Tambah batas jorong';
+      const areaHa = computePolygonAreaHa(ring);
+      const id = `jb-${crypto.randomUUID().slice(0, 8)}`;
+      const now = new Date().toISOString();
+
+      db.prepare(`
+        INSERT INTO jorong_boundaries (
+          id, name, status, source_note, coordinates_json, area_ha, updated_by, updated_at, deleted
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)
+      `).run(id, name.slice(0, 100), status, sourceNote, JSON.stringify(ring), areaHa, actor, now);
+
+      const row = db.prepare('SELECT * FROM jorong_boundaries WHERE id = ?').get(id);
+      const log = appendAudit({
+        createdAt: now,
+        actor,
+        action: 'create_jorong',
+        entityType: 'jorong_boundary',
+        entityId: id,
+        entityName: name,
+        reason,
+        before: null,
+        after: jorongRowToSnapshot(row)
+      });
+      return { feature: jorongRowToFeature(row), log };
+    },
+
+    updateJorongBoundary(id, payload) {
+      const existing = db.prepare('SELECT * FROM jorong_boundaries WHERE id = ? AND deleted = 0').get(id);
+      if (!existing) {
+        const err = new Error('Jorong boundary not found.');
+        err.statusCode = 404;
+        throw err;
+      }
+      const before = jorongRowToSnapshot(existing);
+      const name = payload?.name !== undefined ? String(payload.name).trim() : existing.name;
+      if (!name) throw new Error('Jorong boundary name cannot be empty.');
+      const status = payload?.status !== undefined ? normalizeJorongStatus(payload.status, existing.status) : existing.status;
+      const sourceNote =
+        payload?.source_note !== undefined ? String(payload.source_note).trim().slice(0, 240) : existing.source_note;
+      const ring =
+        payload?.coordinates !== undefined
+          ? normalizePolygonRing(payload.coordinates)
+          : JSON.parse(existing.coordinates_json);
+      const areaHa = computePolygonAreaHa(ring);
+      const actor = String(payload?.actor || 'Editor').trim() || 'Editor';
+      const reason = String(payload?.reason || '').trim() || 'Perbarui batas jorong';
+      const now = new Date().toISOString();
+
+      db.prepare(`
+        UPDATE jorong_boundaries
+        SET name = ?, status = ?, source_note = ?, coordinates_json = ?, area_ha = ?, updated_by = ?, updated_at = ?
+        WHERE id = ?
+      `).run(name.slice(0, 100), status, sourceNote, JSON.stringify(ring), areaHa, actor, now, id);
+
+      const updated = db.prepare('SELECT * FROM jorong_boundaries WHERE id = ?').get(id);
+      const log = appendAudit({
+        createdAt: now,
+        actor,
+        action: 'update_jorong',
+        entityType: 'jorong_boundary',
+        entityId: id,
+        entityName: name,
+        reason,
+        before,
+        after: jorongRowToSnapshot(updated)
+      });
+      return { feature: jorongRowToFeature(updated), log };
+    },
+
+    deleteJorongBoundary(id, payload = {}) {
+      const existing = db.prepare('SELECT * FROM jorong_boundaries WHERE id = ? AND deleted = 0').get(id);
+      if (!existing) {
+        const err = new Error('Jorong boundary not found.');
+        err.statusCode = 404;
+        throw err;
+      }
+      const before = jorongRowToSnapshot(existing);
+      const actor = String(payload?.actor || 'Editor').trim() || 'Editor';
+      const reason = String(payload?.reason || '').trim() || 'Hapus batas jorong';
+      const now = new Date().toISOString();
+      db.prepare('UPDATE jorong_boundaries SET deleted = 1, updated_by = ?, updated_at = ? WHERE id = ?').run(actor, now, id);
+      const log = appendAudit({
+        createdAt: now,
+        actor,
+        action: 'delete_jorong',
+        entityType: 'jorong_boundary',
+        entityId: id,
+        entityName: existing.name,
+        reason,
+        before,
+        after: null
+      });
+      return { deletedId: id, log };
+    },
+
     createWaterway(payload) {
       const name = String(payload?.name || '').trim();
       if (!name) throw new Error('Waterway name is required.');
@@ -645,13 +871,19 @@ export function createStore(dbPath = DEFAULT_DB_PATH, seedGeoJsonPath = DEFAULT_
       const id = `ww-${crypto.randomUUID().slice(0, 8)}`;
       const now = new Date().toISOString();
       const lengthM = computeLineLengthMeters(coords);
+      const widthPreM = normalizePositiveMeters(payload?.width_pre_m);
+      const widthPostM = normalizePositiveMeters(payload?.width_post_m);
+      const depthM = normalizePositiveMeters(payload?.depth_m);
 
       db.prepare(`
         INSERT INTO waterways (
           id, name, kind, status, source, source_ref, notes,
-          coordinates_json, length_m, updated_by, updated_at, deleted
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
-      `).run(id, name, kind, status, source, sourceRef, notes, JSON.stringify(coords), lengthM, actor, now);
+          coordinates_json, length_m, width_pre_m, width_post_m, depth_m, updated_by, updated_at, deleted
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+      `).run(
+        id, name, kind, status, source, sourceRef, notes,
+        JSON.stringify(coords), lengthM, widthPreM, widthPostM, depthM, actor, now
+      );
 
       if (source === 'dem_promoted' && sourceRef) {
         db.prepare(`
@@ -699,15 +931,25 @@ export function createStore(dbPath = DEFAULT_DB_PATH, seedGeoJsonPath = DEFAULT_
         ? normalizeCoordinates(payload.coordinates)
         : JSON.parse(existing.coordinates_json);
       const lengthM = computeLineLengthMeters(coords);
+      const widthPreM =
+        payload?.width_pre_m !== undefined ? normalizePositiveMeters(payload.width_pre_m) : existing.width_pre_m ?? null;
+      const widthPostM =
+        payload?.width_post_m !== undefined ? normalizePositiveMeters(payload.width_post_m) : existing.width_post_m ?? null;
+      const depthM =
+        payload?.depth_m !== undefined ? normalizePositiveMeters(payload.depth_m) : existing.depth_m ?? null;
       const actor = String(payload?.actor || 'Editor').trim() || 'Editor';
       const reason = String(payload?.reason || '').trim() || 'Koreksi jalur & atribut';
       const now = new Date().toISOString();
 
       db.prepare(`
         UPDATE waterways
-        SET name = ?, kind = ?, status = ?, notes = ?, coordinates_json = ?, length_m = ?, updated_by = ?, updated_at = ?
+        SET name = ?, kind = ?, status = ?, notes = ?, coordinates_json = ?, length_m = ?,
+            width_pre_m = ?, width_post_m = ?, depth_m = ?, updated_by = ?, updated_at = ?
         WHERE id = ?
-      `).run(name, kind, status, notes, JSON.stringify(coords), lengthM, actor, now, id);
+      `).run(
+        name, kind, status, notes, JSON.stringify(coords), lengthM,
+        widthPreM, widthPostM, depthM, actor, now, id
+      );
 
       const updated = db.prepare('SELECT * FROM waterways WHERE id = ?').get(id);
       const after = rowToSnapshot(updated);
@@ -878,8 +1120,8 @@ export function createStore(dbPath = DEFAULT_DB_PATH, seedGeoJsonPath = DEFAULT_
         db.prepare(`
           INSERT INTO waterways (
             id, name, kind, status, source, source_ref, notes,
-            coordinates_json, length_m, updated_by, updated_at, deleted
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+            coordinates_json, length_m, width_pre_m, width_post_m, depth_m, updated_by, updated_at, deleted
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
           ON CONFLICT(id) DO UPDATE SET
             name = excluded.name,
             kind = excluded.kind,
@@ -889,6 +1131,9 @@ export function createStore(dbPath = DEFAULT_DB_PATH, seedGeoJsonPath = DEFAULT_
             notes = excluded.notes,
             coordinates_json = excluded.coordinates_json,
             length_m = excluded.length_m,
+            width_pre_m = excluded.width_pre_m,
+            width_post_m = excluded.width_post_m,
+            depth_m = excluded.depth_m,
             updated_by = excluded.updated_by,
             updated_at = excluded.updated_at,
             deleted = 0
@@ -902,6 +1147,9 @@ export function createStore(dbPath = DEFAULT_DB_PATH, seedGeoJsonPath = DEFAULT_
           snap.notes || '',
           JSON.stringify(coords),
           lenM,
+          normalizePositiveMeters(snap.width_pre_m),
+          normalizePositiveMeters(snap.width_post_m),
+          normalizePositiveMeters(snap.depth_m),
           actor,
           now
         );
@@ -1045,6 +1293,73 @@ export function createStore(dbPath = DEFAULT_DB_PATH, seedGeoJsonPath = DEFAULT_
         return { log, state: this.getState() };
       }
 
+      if (target.entity_type === 'jorong_boundary') {
+        const curRow = db.prepare('SELECT * FROM jorong_boundaries WHERE id = ?').get(target.entity_id);
+        const currentSnapshot = curRow && !curRow.deleted ? jorongRowToSnapshot(curRow) : null;
+
+        if (!target.before) {
+          db.prepare('UPDATE jorong_boundaries SET deleted = 1, updated_by = ?, updated_at = ? WHERE id = ?').run(
+            actor,
+            now,
+            target.entity_id
+          );
+          const log = appendAudit({
+            createdAt: now,
+            actor,
+            action: 'revert',
+            entityType: 'jorong_boundary',
+            entityId: target.entity_id,
+            entityName: target.entity_name,
+            reason,
+            before: currentSnapshot,
+            after: null,
+            revertedLogId: target.id
+          });
+          return { log, state: this.getState() };
+        }
+
+        const snap = target.before;
+        const ring = normalizePolygonRing(snap.coordinates);
+        const areaHa = computePolygonAreaHa(ring);
+        db.prepare(`
+          INSERT INTO jorong_boundaries (
+            id, name, status, source_note, coordinates_json, area_ha, updated_by, updated_at, deleted
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)
+          ON CONFLICT(id) DO UPDATE SET
+            name = excluded.name,
+            status = excluded.status,
+            source_note = excluded.source_note,
+            coordinates_json = excluded.coordinates_json,
+            area_ha = excluded.area_ha,
+            updated_by = excluded.updated_by,
+            updated_at = excluded.updated_at,
+            deleted = 0
+        `).run(
+          snap.id,
+          snap.name,
+          normalizeJorongStatus(snap.status, 'indicative'),
+          snap.source_note || '',
+          JSON.stringify(ring),
+          areaHa,
+          actor,
+          now
+        );
+        const restoredRow = db.prepare('SELECT * FROM jorong_boundaries WHERE id = ?').get(snap.id);
+        const log = appendAudit({
+          createdAt: now,
+          actor,
+          action: 'revert',
+          entityType: 'jorong_boundary',
+          entityId: snap.id,
+          entityName: snap.name,
+          reason,
+          before: currentSnapshot,
+          after: jorongRowToSnapshot(restoredRow),
+          revertedLogId: target.id
+        });
+        return { log, state: this.getState() };
+      }
+
       throw new Error(`Audit log of type "${target.entity_type}" cannot be reverted.`);
     },
 
@@ -1166,8 +1481,8 @@ export function createStore(dbPath = DEFAULT_DB_PATH, seedGeoJsonPath = DEFAULT_
       const upsertWw = db.prepare(`
         INSERT INTO waterways (
           id, name, kind, status, source, source_ref, notes,
-          coordinates_json, length_m, updated_by, updated_at, deleted
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+          coordinates_json, length_m, width_pre_m, width_post_m, depth_m, updated_by, updated_at, deleted
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
         ON CONFLICT(id) DO UPDATE SET
           name = excluded.name,
           kind = excluded.kind,
@@ -1177,6 +1492,9 @@ export function createStore(dbPath = DEFAULT_DB_PATH, seedGeoJsonPath = DEFAULT_
           notes = excluded.notes,
           coordinates_json = excluded.coordinates_json,
           length_m = excluded.length_m,
+          width_pre_m = COALESCE(excluded.width_pre_m, waterways.width_pre_m),
+          width_post_m = COALESCE(excluded.width_post_m, waterways.width_post_m),
+          depth_m = COALESCE(excluded.depth_m, waterways.depth_m),
           updated_by = excluded.updated_by,
           updated_at = excluded.updated_at,
           deleted = 0
@@ -1231,7 +1549,14 @@ export function createStore(dbPath = DEFAULT_DB_PATH, seedGeoJsonPath = DEFAULT_
           const lengthM = computeLineLengthMeters(coords);
           const updatedBy = String(p.updated_by || actor);
           const updatedAt = String(p.updated_at || now);
-          upsertWw.run(id, name, kind, status, source, sourceRef, notes, JSON.stringify(coords), lengthM, updatedBy, updatedAt);
+          upsertWw.run(
+            id, name, kind, status, source, sourceRef, notes,
+            JSON.stringify(coords), lengthM,
+            normalizePositiveMeters(p.width_pre_m),
+            normalizePositiveMeters(p.width_post_m),
+            normalizePositiveMeters(p.depth_m),
+            updatedBy, updatedAt
+          );
           importedWaterways += 1;
         }
 
@@ -1294,6 +1619,7 @@ export function createStore(dbPath = DEFAULT_DB_PATH, seedGeoJsonPath = DEFAULT_
         exportedAt: new Date().toISOString(),
         verifiedWaterways: state.waterways,
         verifiedStructures: state.structures,
+        jorongBoundaries: state.jorongBoundaries,
         suppressedDem: state.suppressedDem,
         auditLogs,
         suggestionsCount

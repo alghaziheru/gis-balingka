@@ -21,6 +21,9 @@ export function buildCanonicalSeedSnapshots(state) {
         source_ref: f.properties.source_ref ?? null,
         notes: String(f.properties.notes || ''),
         length_m: Number(f.properties.length_m || 0),
+        ...(f.properties.width_pre_m != null ? { width_pre_m: Number(f.properties.width_pre_m) } : {}),
+        ...(f.properties.width_post_m != null ? { width_post_m: Number(f.properties.width_post_m) } : {}),
+        ...(f.properties.depth_m != null ? { depth_m: Number(f.properties.depth_m) } : {}),
         updated_by: String(f.properties.updated_by || 'Editor'),
         updated_at: String(f.properties.updated_at || '')
       },

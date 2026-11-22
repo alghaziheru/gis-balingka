@@ -72,8 +72,13 @@ export function InfoDataModal({
     { name: 'React 19, TypeScript, Vite & Tailwind CSS', role: isEn ? 'Open-source web UI & build tools' : 'Antarmuka web & sistem build terbuka', license: 'MIT' },
     { name: 'MapLibre GL JS & Lucide Icons', role: isEn ? 'Interactive 2D/3D map engine & icons' : 'Mesin peta 2D/3D interaktif & ikon', license: 'BSD-3 / ISC' },
     { name: 'Node.js SQLite & Pure-Node Hydrology', role: isEn ? 'DEM processing, HAND model & audit storage' : 'Pengolahan elevasi, model HAND & riwayat data', license: 'MIT' },
-    { name: 'Copernicus DEM GLO-30 & AWS Terrarium', role: isEn ? '30m terrain elevation & contour source' : 'Sumber elevasi tanah 30m & kontur', license: 'Open Data' },
-    { name: 'OpenStreetMap & OpenTopoMap', role: isEn ? 'Roads, rivers, bridges & topo basemap' : 'Jalan, sungai, jembatan & peta topografi', license: 'ODbL / CC-BY-SA' },
+    { name: 'BIG DEMNAS (~8.3m) & RBI 50K Agam (Dec 2022)', role: isEn ? 'High-resolution DEM, rivers, culverts, bridges & public shelters' : 'Elevasi tanah ~8,3m, sungai, gorong-gorong, jembatan & fasilitas umum resmi BIG', license: 'Public Gov Data (BIG)' },
+    { name: 'BIG Batas Wilayah Desa/Nagari (June 2026)', role: isEn ? 'Official Nagari Balingka polygon (13.06.05.2003)' : 'Poligon resmi batas Nagari Balingka (13.06.05.2003)', license: 'Public Gov Data (BIG)' },
+    { name: 'ESA WorldCover 10m v200', role: isEn ? '10m forest, cropland & built-up land cover' : 'Tutupan lahan hutan, kebun, sawah & terbangun (10m)', license: 'CC-BY-4.0' },
+    { name: 'Copernicus Sentinel-2 L2A (10m)', role: isEn ? 'Pre vs post disaster scour & vegetation loss change' : 'Deteksi koridor gerusan & kehilangan vegetasi pra vs pasca bencana (10m)', license: 'Copernicus Open License' },
+    { name: 'OpenStreetMap & OpenTopoMap', role: isEn ? 'Buildings, roads, rivers, bridges & topo basemap' : 'Bangunan, jalan, sungai, jembatan & peta topografi', license: 'ODbL / CC-BY-SA' },
+    { name: 'Google Open Buildings v3', role: isEn ? 'Rural building footprint supplement (confidence >= 0.75)' : 'Pelengkap tapak bangunan pedesaan (kepercayaan >= 0,75)', license: 'CC-BY-4.0' },
+    { name: 'Pemkab Agam Open GIS (ArcGIS Web Maps)', role: isEn ? 'Official landslide hazard, soil (Andosol), geology, BMKG rainfall & SK 35 forest' : 'Zona rawan longsor, jenis tanah (Andosol), geologi, curah hujan BMKG & hutan SK 35', license: 'Public Gov Data' },
     { name: 'Esri World Imagery', role: isEn ? 'Satellite basemap (replaceable with drone tiles)' : 'Citra satelit (dapat diganti citra drone lokal)', license: 'Free w/ Attribution' }
   ];
 
@@ -245,8 +250,8 @@ export function InfoDataModal({
                 <p className="m-0 text-[13px] text-[#434d49]">
                   <strong className="text-[#161c1a]">1. DEM & Stream Burning:</strong>{' '}
                   {isEn
-                    ? 'Elevation uses Copernicus DEM GLO-30 (replaceable with 8m BIG DEMNAS GeoTIFF). Verified community waterways are gently burned into the elevation copy prior to flow routing.'
-                    : 'Elevasi menggunakan Copernicus DEM GLO-30 (dapat ditingkatkan dengan GeoTIFF BIG DEMNAS 8m). Jalur sungai yang sudah diverifikasi warga ditanamkan ke salinan DEM sebelum perhitungan aliran.'}
+                    ? 'Elevation uses BIG DEMNAS (~8.3m terrain resolution). Verified community waterways are gently burned into the elevation copy prior to flow routing.'
+                    : 'Elevasi menggunakan BIG DEMNAS resolusi ~8,3 meter. Jalur sungai yang sudah diverifikasi warga ditanamkan ke salinan DEM sebelum perhitungan aliran.'}
                 </p>
                 <p className="m-0 text-[13px] text-[#434d49]">
                   <strong className="text-[#161c1a]">2. D8 Flow & HAND Model:</strong>{' '}
@@ -257,8 +262,8 @@ export function InfoDataModal({
                 <p className="m-0 text-[13px] text-[#434d49]">
                   <strong className="text-[#161c1a]">3. {isEn ? 'Known Accuracy Limits:' : 'Batas Akurasi:'}</strong>{' '}
                   {isEn
-                    ? 'Unverified 30m DEM runoff lines (dashed) can drift 15–45m from narrow village irrigation ditches. Use Detailed mode → Waterways to verify or correct them.'
-                    : 'Garis perkiraan dari DEM 30m (garis putus-putus) dapat meleset 15–45 meter dari posisi parit atau bandar asli. Gunakan mode Lengkap → Jalur Sungai untuk koreksi lapangan.'}
+                    ? 'Unverified DEMNAS 8m runoff lines (dashed) can still deviate around narrow roadside drains and culverts. Use Detailed mode → Waterways to verify or correct them.'
+                    : 'Garis perkiraan dari DEMNAS 8m (garis putus-putus) masih dapat meleset pada parit atau gorong-gorong sempit di lapangan. Gunakan mode Lengkap → Jalur Air untuk koreksi lapangan.'}
                 </p>
               </div>
             </div>

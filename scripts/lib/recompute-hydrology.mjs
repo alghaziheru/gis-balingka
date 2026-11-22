@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import {
+  buildPolygonMaskGrid,
   burnStreamsIntoDem,
   computeD8,
   computeHAND,
@@ -10,7 +11,8 @@ import {
   filterOverlappingFlowPaths,
   haversineMeters,
   priorityFloodFill,
-  renderSmoothHandFloodRasters
+  renderSmoothHandFloodRasters,
+  computeCascadeFields
 } from './hydrology.mjs';
 
 function decodeElevBase64(elevBase64, expectedLen) {
@@ -75,15 +77,17 @@ export function recomputeHydrologyFromLocalData({
     hydroConditioned = burnedCellCount > 0;
   }
 
+  const areaScale = (30.9 * 30.9) / Math.max(1, cellSizeX * cellSizeY);
+  const handStreamThreshold = Math.max(10, Math.round(75 * areaScale));
   const filled = priorityFloodFill(hydroElev, width, height);
   const { dir, acc } = computeD8(filled, width, height, cellSizeX, cellSizeY);
   const slope = computeSlopePercent(rawElev, width, height, cellSizeX, cellSizeY);
-  const hand = computeHAND(rawElev, dir, acc, width, height, 75);
+  const hand = computeHAND(rawElev, dir, acc, width, height, handStreamThreshold);
 
   const rawFlowPaths = extractFlowPathsGeoJSON(rawElev, dir, acc, gridMeta, {
-    main: 240,
-    normal: 75,
-    detail: 25
+    main: Math.max(40, Math.round(240 * areaScale)),
+    normal: Math.max(15, Math.round(75 * areaScale)),
+    detail: Math.max(8, Math.round(25 * areaScale))
   });
   const deduped = filterOverlappingFlowPaths(rawFlowPaths, activeVerified, 48, 0.55);
   const flowPaths = {
@@ -122,27 +126,63 @@ export function recomputeHydrologyFromLocalData({
     });
   };
 
+  let existingDraftPts = [];
+  try {
+    const prevDraft = readJsonWithFallback(publicDataDir, distDataDir, 'drainage-draft.geojson');
+    existingDraftPts = prevDraft?.features || [];
+  } catch {}
+  const preservedBigCrossings = existingDraftPts
+    .filter(f => {
+      const id = String(f?.properties?.id || '');
+      return (id.startsWith('big-culv-') || id.startsWith('big-br-') || id.startsWith('big-weir-')) && f?.geometry?.type === 'Point';
+    })
+    .map(f => ({
+      id: String(f.properties.id),
+      coords: f.geometry.coordinates,
+      kind: 'drainage',
+      status: 'unverified',
+      name_id: String(f.properties.name_id || ''),
+      name_en: String(f.properties.name_en || ''),
+      desc_id: String(f.properties.desc_id || ''),
+      desc_en: String(f.properties.desc_en || '')
+    }));
+
   const rawDraftBottlenecks = [
-    ...crossings.map((c, idx) => ({
-      id: `cross-${idx + 1}`,
-      coords: c.coords,
-      kind: 'drainage',
-      status: 'unverified',
-      name_id: c.roadName ? `Perlintasan ${c.roadName}` : `Persilangan Jalan–Alur #${idx + 1}`,
-      name_en: c.roadName ? `Crossing at ${c.roadName}` : `Road–Stream Crossing #${idx + 1}`,
-      desc_id: `Perkiraan persilangan jalan (${c.highway}) & alur air (belum dicek lapangan). Verifikasi lokasi & kapasitas gorong-gorong.`,
-      desc_en: `Estimated road (${c.highway}) & stream crossing (unverified). Field-check culvert presence and capacity.`
-    })),
-    ...bridgeFeatures.map((b, idx) => ({
-      id: `br-${idx + 1}`,
-      coords: b.geometry.coordinates,
-      kind: 'drainage',
-      status: 'unverified',
-      name_id: b.properties.name,
-      name_en: String(b.properties.name || '').replace(/^Jembatan/, 'Bridge'),
-      desc_id: `Jembatan jalan (${b.properties.highway}) dari OpenStreetMap — belum dicek lapangan.`,
-      desc_en: `OpenStreetMap bridge (${b.properties.highway}) — unverified in the field.`
-    }))
+    ...preservedBigCrossings,
+    ...crossings
+      .filter(
+        c =>
+          !preservedBigCrossings.some(
+            bc => haversineMeters(c.coords[0], c.coords[1], bc.coords[0], bc.coords[1]) <= 55
+          )
+      )
+      .map((c, idx) => ({
+        id: `cross-${idx + 1}`,
+        coords: c.coords,
+        kind: 'drainage',
+        status: 'unverified',
+        name_id: c.roadName ? `Perlintasan ${c.roadName}` : `Persilangan Jalan–Alur #${idx + 1}`,
+        name_en: c.roadName ? `Crossing at ${c.roadName}` : `Road–Stream Crossing #${idx + 1}`,
+        desc_id: `Perkiraan persilangan jalan (${c.highway}) & alur air (belum dicek lapangan). Verifikasi lokasi & kapasitas gorong-gorong.`,
+        desc_en: `Estimated road (${c.highway}) & stream crossing (unverified). Field-check culvert presence and capacity.`
+      })),
+    ...bridgeFeatures
+      .filter(
+        b =>
+          !preservedBigCrossings.some(
+            bc => haversineMeters(b.geometry.coordinates[0], b.geometry.coordinates[1], bc.coords[0], bc.coords[1]) <= 35
+          )
+      )
+      .map((b, idx) => ({
+        id: `br-${idx + 1}`,
+        coords: b.geometry.coordinates,
+        kind: 'drainage',
+        status: 'unverified',
+        name_id: b.properties.name,
+        name_en: String(b.properties.name || '').replace(/^Jembatan/, 'Bridge'),
+        desc_id: `Jembatan jalan (${b.properties.highway}) dari OpenStreetMap — belum dicek lapangan.`,
+        desc_en: `OpenStreetMap bridge (${b.properties.highway}) — unverified in the field.`
+      }))
   ];
 
   const draftCrossings = rawDraftBottlenecks.filter(b => !isCoveredByStructure(b.id, b.coords));
@@ -156,7 +196,63 @@ export function recomputeHydrologyFromLocalData({
     }));
   const bottlenecks = [...prioritizedVerifiedBottlenecks, ...draftCrossings];
 
-  const handRasters = renderSmoothHandFloodRasters(hand, slope, bottlenecks, gridMeta, 768);
+  let nagariMask = null;
+  try {
+    const nagariBoundary = readJsonWithFallback(publicDataDir, distDataDir, 'nagari-boundary.geojson');
+    if (nagariBoundary?.features?.length) {
+      nagariMask = buildPolygonMaskGrid(nagariBoundary, gridMeta);
+    }
+  } catch {}
+
+  const handRasters = renderSmoothHandFloodRasters(hand, slope, bottlenecks, gridMeta, 768, nagariMask);
+
+  let lcClasses = null;
+  let soilErodibility = null;
+  let officialLandslide = null;
+  let agamSummary = null;
+  for (const dir of [publicDataDir, distDataDir]) {
+    if (!dir) continue;
+    if (!lcClasses) {
+      const lcPath = path.join(dir, 'landcover-grid.json');
+      if (fs.existsSync(lcPath)) {
+        try {
+          const lcJson = JSON.parse(fs.readFileSync(lcPath, 'utf8'));
+          if (lcJson?.classesBase64) {
+            const buf = Buffer.from(lcJson.classesBase64, 'base64');
+            if (buf.length === width * height) lcClasses = new Uint8Array(buf);
+          }
+        } catch {}
+      }
+    }
+    if (!soilErodibility) {
+      const agamGridPath = path.join(dir, 'agam-grids.json');
+      if (fs.existsSync(agamGridPath)) {
+        try {
+          const agJson = JSON.parse(fs.readFileSync(agamGridPath, 'utf8'));
+          const sBuf = agJson?.soilErodibilityBase64 ? Buffer.from(agJson.soilErodibilityBase64, 'base64') : null;
+          const lBuf = agJson?.officialLandslideBase64 ? Buffer.from(agJson.officialLandslideBase64, 'base64') : null;
+          if (sBuf?.length === width * height) soilErodibility = new Uint8Array(sBuf);
+          if (lBuf?.length === width * height) officialLandslide = new Uint8Array(lBuf);
+          if (agJson?.summary) agamSummary = agJson.summary;
+        } catch {}
+      }
+    }
+  }
+  const simFields = computeCascadeFields({
+    rawElev,
+    filled,
+    dir,
+    acc,
+    slope,
+    hand,
+    landCoverClasses: lcClasses,
+    soilErodibility,
+    officialLandslide,
+    nagariMask,
+    agamSummary,
+    bottlenecks,
+    gridMeta
+  });
 
   const checkDamFeatures = [];
   for (const fp of flowPaths.features) {
@@ -180,7 +276,7 @@ export function recomputeHydrologyFromLocalData({
   }
 
   const landslideSeeds = [];
-  const stepScan = 16;
+  const stepScan = Math.max(16, Math.round(16 * Math.sqrt(areaScale)));
   for (let r = 12; r < height - 12 && landslideSeeds.length < 3; r += stepScan) {
     for (let c = 12; c < width - 12 && landslideSeeds.length < 3; c += stepScan) {
       const sl = slope[r * width + c];
@@ -205,7 +301,23 @@ export function recomputeHydrologyFromLocalData({
     }
   }
 
-  const evacFeatures = [];
+  const preservedBigEvac = existingDraftPts.filter(
+    f => String(f?.properties?.id || '').startsWith('ev-big-') && f?.geometry?.type === 'Point'
+  );
+  const evacFeatures = preservedBigEvac.map(f => {
+    const [lng, lat] = f.geometry.coordinates;
+    const col = Math.max(0, Math.min(width - 1, Math.floor(((lng - bbox.west) / (bbox.east - bbox.west)) * width)));
+    const row = Math.max(0, Math.min(height - 1, Math.floor(((bbox.north - lat) / (bbox.north - bbox.south)) * height)));
+    const hVal = Math.round(hand[row * width + col]);
+    return {
+      ...f,
+      properties: {
+        ...f.properties,
+        desc_id: String(f.properties.desc_id || '').replace(/~\d+m/, `~${hVal}m`),
+        desc_en: String(f.properties.desc_en || '').replace(/~\d+m/, `~${hVal}m`)
+      }
+    };
+  });
   for (const fac of facilityFeatures) {
     if (evacFeatures.length >= 3) break;
     const [lng, lat] = fac.geometry.coordinates;
@@ -304,6 +416,7 @@ export function recomputeHydrologyFromLocalData({
     fs.writeFileSync(path.join(dir, 'flow-paths.geojson'), JSON.stringify(flowPaths));
     fs.writeFileSync(path.join(dir, 'drainage-draft.geojson'), JSON.stringify(drainageDraft));
     fs.writeFileSync(path.join(dir, 'metadata.json'), JSON.stringify(nextMetadata));
+    fs.writeFileSync(path.join(dir, 'sim-fields.json'), JSON.stringify(simFields));
     for (const [k, buf] of Object.entries(handRasters.pngs)) {
       fs.writeFileSync(path.join(dir, `raster-hand-${k}.png`), buf);
     }

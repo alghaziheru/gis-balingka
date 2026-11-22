@@ -8,6 +8,11 @@ export type WaterwaySource = 'osm' | 'dem_promoted' | 'manual';
 export type StructureKind = 'culvert' | 'bridge';
 export type StructureSource = 'manual' | 'crossing_promoted' | 'osm';
 export type FeatureCategory = 'drainage' | 'floodmark' | 'landslide' | 'mitigation' | 'evacuation';
+export type SoilMoisture = 'dry' | 'moist' | 'saturated';
+export type RainPattern = 'uniform' | 'upland';
+export type DrainCondition = 'cleared' | 'clogged' | 'surge';
+export type ForestScenario = 'actual' | 'degraded30' | 'degraded50';
+export type CascadeAlertLevel = 'normal' | 'waspada' | 'siaga' | 'kritis';
 export type ActiveTool =
   | null
   | 'raindrop'
@@ -15,7 +20,8 @@ export type ActiveTool =
   | 'profileB'
   | 'drawWaterway'
   | 'redrawWaterway'
-  | 'placeStructure';
+  | 'placeStructure'
+  | 'drawJorong';
 
 export type GeoProperties = Record<string, string | number | boolean | null | undefined>;
 
@@ -58,6 +64,123 @@ export interface SimAreasHa {
   cleared: { low: number; med: number; high: number };
 }
 
+export interface SimFieldsData {
+  width: number;
+  height: number;
+  bbox: BBox;
+  cellSizeX: number;
+  cellSizeY: number;
+  minElev: number;
+  maxElev: number;
+  p90TravelMin: number;
+  handDmBase64: string;
+  slopePctBase64: string;
+  accNormBase64: string;
+  travelTimeTenthMinBase64: string;
+  cnBaseBase64: string;
+  rootCohesionBase64: string;
+  isForestBase64: string;
+  uplandWeightBase64: string;
+  uplandAccRatioBase64: string;
+  bottleneckProxBase64: string;
+  soilErodibilityBase64?: string;
+  officialLandslideBase64?: string;
+  nagariMaskBase64?: string;
+  agamSummary?: AgamSummaryStats;
+}
+
+export interface CascadeSimParams {
+  rainMmHr: number;
+  durationMin: number;
+  progress: number;
+  soilMoisture: SoilMoisture;
+  rainPattern: RainPattern;
+  drainCondition: DrainCondition;
+  forestScenario: ForestScenario;
+}
+
+export interface CascadeKpis {
+  stage: 0 | 1 | 2 | 3 | 4;
+  alertLevel: CascadeAlertLevel;
+  elapsedMin: number;
+  accumulatedMm: number;
+  effectiveRunoffMm: number;
+  floodAreaHa: number;
+  landslideAreaHa: number;
+  affectedBuildingsFlood: number;
+  affectedBuildingsLandslide: number;
+  chokeCount: number;
+  reductionPct: number;
+  peakTravelMin: number;
+  runoffIndex: number;
+  officialLandslideOverlapPct: number;
+}
+
+export interface LandCoverStats {
+  source: string;
+  forestPct: number;
+  shrubGrassPct: number;
+  croplandPct: number;
+  builtupPct: number;
+  barePct: number;
+  waterPct: number;
+}
+
+export interface ScourStats {
+  source: string;
+  preDate: string;
+  postDate: string;
+  preSceneId: string;
+  postSceneId: string;
+  clearCoveragePct: number;
+  totalScourHa: number;
+  severeScourHa: number;
+  corridorScourHa: number;
+}
+
+export interface SettlementStats {
+  osmBuildings: number;
+  googleOpenBuildingsAdded: number;
+  totalBuildings: number;
+  residentialZones: number;
+  openBuildingsConfidenceMin: number;
+}
+
+export interface AgamSummaryStats {
+  andosolPct: number;
+  officialHighPct: number;
+  officialMedPct: number;
+  officialLowPct: number;
+  hutanLindungPct: number;
+}
+
+export interface AgamStats extends AgamSummaryStats {
+  source: string;
+  rbiRiversCount: number;
+}
+
+export interface AgamContextData {
+  source: string;
+  bbox: BBox;
+  landslideHazard: GeoFeatureCollection;
+  forestStatus: GeoFeatureCollection;
+  soil: GeoFeatureCollection;
+  geology: GeoFeatureCollection;
+  morphology: GeoFeatureCollection;
+  rainfallZone: GeoFeatureCollection;
+}
+
+export interface AgamPointProfile {
+  landslideLevel: string | null;
+  forestStatus: string | null;
+  forestLabel: string | null;
+  soilType: string | null;
+  soilSensitivity: string | null;
+  geology: string | null;
+  morphology: string | null;
+  rainfallAnnualMm: string | null;
+}
+
 export interface DatasetMetadata {
   generatedAt: string;
   center: [number, number];
@@ -72,6 +195,8 @@ export interface DatasetMetadata {
   osmPlaceCount: number;
   osmWaterwayCount: number;
   osmRoadCount: number;
+  buildingCount?: number;
+  residentialZoneCount?: number;
   crossingsDetected: number;
   bridgesDetected: number;
   simAreasHa: SimAreasHa;
@@ -79,6 +204,11 @@ export interface DatasetMetadata {
   hydroConditioned?: boolean;
   hydroRecomputedAt?: string;
   burnedCellCount?: number;
+  landCoverStats?: LandCoverStats;
+  scourStats?: ScourStats;
+  settlementStats?: SettlementStats;
+  agamStats?: AgamStats;
+  nagariBoundarySource?: string;
   licenses: { name: string; license: string }[];
 }
 
@@ -133,6 +263,13 @@ export interface LayerToggles {
   verifiedWaterways: boolean;
   structures: boolean;
   unverifiedCrossings: boolean;
+  settlements: boolean;
+  landCover: boolean;
+  scourChange: boolean;
+  agamLandslide: boolean;
+  agamRbiRivers: boolean;
+  agamForestStatus: boolean;
+  agamSoilGeology: boolean;
   hillshade: boolean;
   das: boolean;
   contours: boolean;
@@ -174,12 +311,34 @@ export interface VerifiedWaterwayFeature {
     source_ref: string | null;
     notes: string;
     length_m: number;
+    width_pre_m?: number | null;
+    width_post_m?: number | null;
+    depth_m?: number | null;
     updated_by: string;
     updated_at: string;
   };
   geometry: {
     type: 'LineString';
     coordinates: [number, number][];
+  };
+}
+
+export type JorongBoundaryStatus = 'indicative' | 'verified';
+
+export interface JorongBoundaryFeature {
+  type: 'Feature';
+  properties: {
+    id: string;
+    name: string;
+    status: JorongBoundaryStatus;
+    source_note: string;
+    area_ha: number;
+    updated_by: string;
+    updated_at: string;
+  };
+  geometry: {
+    type: 'Polygon';
+    coordinates: [number, number][][];
   };
 }
 
@@ -231,6 +390,7 @@ export interface ExportBundle {
   exportedAt: string;
   verifiedWaterways: { type: 'FeatureCollection'; features: VerifiedWaterwayFeature[] };
   verifiedStructures?: { type: 'FeatureCollection'; features: VerifiedStructureFeature[] };
+  jorongBoundaries?: { type: 'FeatureCollection'; features: JorongBoundaryFeature[] };
   suppressedDem: SuppressedDemSegment[];
   auditLogs: AuditLogEntry[];
   suggestionsCount: number;

@@ -1,20 +1,22 @@
-import { History, MapPin, Waves } from 'lucide-react';
+import { History, Map as MapIcon, MapPin, Waves } from 'lucide-react';
 import { I18N } from '../i18n/translations';
 import type { DemClient } from '../lib/demClient';
 import { AuditLogPanel } from './AuditLogPanel';
+import { JorongEditorPanel, type ActiveEditingJorong } from './JorongEditorPanel';
 import { StructureEditorPanel, type ActiveEditingStructure } from './StructureEditorPanel';
 import { WaterwayEditorPanel, type ActiveEditingWaterway } from './WaterwayEditorPanel';
 import type {
   ActiveTool,
   AuditLogEntry,
   HydroStatus,
+  JorongBoundaryFeature,
   Language,
   SuppressedDemSegment,
   VerifiedStructureFeature,
   VerifiedWaterwayFeature
 } from '../types/gis';
 
-export type EditorSubTab = 'waterways' | 'structures' | 'audit';
+export type EditorSubTab = 'waterways' | 'structures' | 'jorong' | 'audit';
 
 interface EditorTabProps {
   lang: Language;
@@ -32,9 +34,11 @@ interface EditorTabProps {
   onLockEditor: () => void;
   verifiedWaterways: VerifiedWaterwayFeature[];
   verifiedStructures: VerifiedStructureFeature[];
+  jorongBoundaries: JorongBoundaryFeature[];
   suppressedDem: SuppressedDemSegment[];
   editingWaterway: ActiveEditingWaterway | null;
   editingStructure: ActiveEditingStructure | null;
+  editingJorong: ActiveEditingJorong | null;
   hydroStatus: HydroStatus;
   recomputingHydro: boolean;
   onStartDrawWaterway: () => void;
@@ -51,6 +55,13 @@ interface EditorTabProps {
   onSaveStructure: (draft: ActiveEditingStructure, reason: string) => Promise<void>;
   onDeleteStructure: (id: string, reason: string) => Promise<void>;
   onFlyToStructure: (feature: VerifiedStructureFeature) => void;
+  onStartDrawJorong: () => void;
+  onImportJorongPolygon: (name: string, ring: [number, number][]) => void;
+  onStartEditJorong: (feature: JorongBoundaryFeature) => void;
+  onCancelJorongEdit: () => void;
+  onSaveJorong: (draft: ActiveEditingJorong, reason: string) => Promise<void>;
+  onDeleteJorong: (id: string, reason: string) => Promise<void>;
+  onFlyToJorong: (feature: JorongBoundaryFeature) => void;
   onRestoreDem: (segId: string) => Promise<void>;
   onRecomputeHydrology: () => Promise<void>;
   onFlyToWaterway: (feature: VerifiedWaterwayFeature) => void;
@@ -75,9 +86,11 @@ export function EditorTab({
   onLockEditor,
   verifiedWaterways,
   verifiedStructures,
+  jorongBoundaries,
   suppressedDem,
   editingWaterway,
   editingStructure,
+  editingJorong,
   hydroStatus,
   recomputingHydro,
   onStartDrawWaterway,
@@ -94,6 +107,13 @@ export function EditorTab({
   onSaveStructure,
   onDeleteStructure,
   onFlyToStructure,
+  onStartDrawJorong,
+  onImportJorongPolygon,
+  onStartEditJorong,
+  onCancelJorongEdit,
+  onSaveJorong,
+  onDeleteJorong,
+  onFlyToJorong,
   onRestoreDem,
   onRecomputeHydrology,
   onFlyToWaterway,
@@ -106,12 +126,13 @@ export function EditorTab({
   const subTabs: [EditorSubTab, string, typeof Waves][] = [
     ['waterways', t.subWaterways, Waves],
     ['structures', t.subStructures, MapPin],
+    ['jorong', t.subJorong, MapIcon],
     ['audit', t.subAudit, History]
   ];
 
   return (
     <div className="flex flex-col gap-3.5">
-      <div className="grid grid-cols-3 gap-1 rounded-xl border border-[#161c1a]/12 bg-[#f2f3ef] p-1">
+      <div className="grid grid-cols-4 gap-1 rounded-xl border border-[#161c1a]/12 bg-[#f2f3ef] p-1">
         {subTabs.map(([id, label, Icon]) => {
           const active = subTab === id;
           return (
@@ -119,12 +140,12 @@ export function EditorTab({
               key={id}
               type="button"
               onClick={() => onChangeSubTab(id)}
-              className={`flex min-h-[40px] items-center justify-center gap-1 rounded-lg px-1.5 py-1.5 text-[11px] font-bold whitespace-nowrap transition ${
+              className={`flex min-h-[46px] flex-col items-center justify-center gap-0.5 rounded-lg px-1 py-1.5 text-center text-[10.5px] leading-tight font-bold transition ${
                 active ? 'bg-white text-[#0369a1] shadow-xs' : 'text-[#434d49] hover:text-[#161c1a]'
               }`}
             >
               <Icon className="h-3.5 w-3.5 shrink-0" />
-              <span className="truncate">{label}</span>
+              <span>{label}</span>
             </button>
           );
         })}
@@ -182,6 +203,30 @@ export function EditorTab({
           onSaveStructure={onSaveStructure}
           onDeleteStructure={onDeleteStructure}
           onFlyToStructure={onFlyToStructure}
+        />
+      )}
+
+      {subTab === 'jorong' && (
+        <JorongEditorPanel
+          lang={lang}
+          apiAvailable={apiAvailable}
+          editorUnlocked={editorUnlocked}
+          requiresPassphrase={requiresPassphrase}
+          actorName={actorName}
+          onChangeActorName={onChangeActorName}
+          onOpenUnlock={onOpenUnlock}
+          onLockEditor={onLockEditor}
+          boundaries={jorongBoundaries}
+          editingJorong={editingJorong}
+          isDrawing={activeTool === 'drawJorong'}
+          onStartDraw={onStartDrawJorong}
+          onImportPolygon={onImportJorongPolygon}
+          onStartEditExisting={onStartEditJorong}
+          onCancelEdit={onCancelJorongEdit}
+          onSaveJorong={onSaveJorong}
+          onDeleteJorong={onDeleteJorong}
+          onFlyToJorong={onFlyToJorong}
+          onNotify={onNotify}
         />
       )}
 

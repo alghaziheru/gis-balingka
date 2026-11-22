@@ -339,7 +339,7 @@ export function extractFlowPathsGeoJSON(rawElev, dir, acc, gridMeta, thresholds 
       for (let j = 0; j < smoothed.length - 1; j++) {
         len += haversineMeters(smoothed[j][0], smoothed[j][1], smoothed[j + 1][0], smoothed[j + 1][1]);
       }
-      if (len < 35) return;
+      if (len < 15) return;
       const drop = Math.max(0, e0 - e1);
       features.push({
         type: 'Feature',
@@ -813,7 +813,14 @@ export function renderSmoothTerrainRasters(rawElev, slopeGrid, gridMeta, outSize
  * Renders 6 smooth anti-aliased HAND flood overlay PNGs (clogged vs cleared across low/med/high)
  * and computes exact matching hectare footprints.
  */
-export function renderSmoothHandFloodRasters(handGrid, slopeGrid, bottlenecks, gridMeta, outSize = 768) {
+export function renderSmoothHandFloodRasters(
+  handGrid,
+  slopeGrid,
+  bottlenecks,
+  gridMeta,
+  outSize = 768,
+  insideMask = null
+) {
   const { width, height, bbox, cellSizeX, cellSizeY } = gridMeta;
   const smoothHand = smoothGrid(handGrid, width, height, 2);
   const smoothSlope = smoothGrid(slopeGrid, width, height, 2);
@@ -845,6 +852,7 @@ export function renderSmoothHandFloodRasters(handGrid, slopeGrid, bottlenecks, g
     let clogCount = 0;
     let clearCount = 0;
     for (let i = 0; i < handGrid.length; i++) {
+      if (insideMask && insideMask[i] === 0) continue;
       if (slopeGrid[i] <= 22 && handGrid[i] <= maxH) {
         clogCount++;
         if (!nearBottleneckCell[i]) clearCount++;
@@ -1084,9 +1092,602 @@ export function filterOverlappingFlowPaths(flowPathsFC, verifiedFeatures, buffer
     }
   }
 
+  const snapped = snapFlowPathsToWaterways({ type: 'FeatureCollection', features: kept }, verifiedFeatures);
+
   return {
     type: 'FeatureCollection',
-    features: kept,
-    filteredCount
+    features: snapped.features,
+    filteredCount,
+    snappedCount: snapped.snappedCount
   };
+}
+
+/**
+ * Snaps disconnected downstream endpoints of DEM runoff segments onto the nearest
+ * verified river/stream (or larger downstream DEM channel) so runoff visually and
+ * topologically merges into the river network instead of stopping mid-slope.
+ */
+export function snapFlowPathsToWaterways(
+  flowPathsFC,
+  verifiedFeatures,
+  snapMaxMeters = 120,
+  demSnapMaxMeters = 55
+) {
+  const verifiedLines = (verifiedFeatures || [])
+    .filter(f => f?.geometry?.type === 'LineString' && Array.isArray(f.geometry.coordinates) && f.geometry.coordinates.length >= 2)
+    .map(f => f.geometry.coordinates);
+
+  const nearestPointOnLines = (pt, lines) => {
+    let distM = Infinity;
+    let closest = null;
+    for (const line of lines) {
+      for (let i = 0; i < line.length - 1; i++) {
+        const hit = pointToSegmentMeters(pt, line[i], line[i + 1]);
+        if (hit.distM < distM) {
+          distM = hit.distM;
+          closest = hit.closest;
+        }
+      }
+    }
+    return { distM, closest };
+  };
+
+  const lineLengthM = coords => {
+    let total = 0;
+    for (let i = 0; i < coords.length - 1; i++) {
+      total += haversineMeters(coords[i][0], coords[i][1], coords[i + 1][0], coords[i + 1][1]);
+    }
+    return total;
+  };
+
+  const snappedFeatures = [];
+  let snappedCount = 0;
+
+  for (const feat of flowPathsFC?.features || []) {
+    const rawCoords = feat?.geometry?.coordinates;
+    if (feat?.geometry?.type !== 'LineString' || !Array.isArray(rawCoords) || rawCoords.length < 2) {
+      continue;
+    }
+
+    let coords = rawCoords.map(c => [c[0], c[1]]);
+    let snappedToVerified = false;
+
+    if (verifiedLines.length > 0) {
+      // Trim overshooting tails once the flow line enters within 12m of a verified channel
+      for (let i = 1; i < coords.length; i++) {
+        const hit = nearestPointOnLines(coords[i], verifiedLines);
+        if (hit.closest && hit.distM <= 12) {
+          coords = coords.slice(0, i + 1);
+          if (hit.distM <= 8) {
+            coords[coords.length - 1] = hit.closest;
+          } else if (hit.distM > 1.5) {
+            coords.push(hit.closest);
+          }
+          snappedToVerified = true;
+          break;
+        }
+      }
+
+      if (!snappedToVerified) {
+        const endPt = coords[coords.length - 1];
+        const hit = nearestPointOnLines(endPt, verifiedLines);
+        if (hit.closest && hit.distM <= snapMaxMeters) {
+          if (hit.distM <= 8) {
+            coords[coords.length - 1] = hit.closest;
+          } else if (hit.distM > 1.5) {
+            coords.push(hit.closest);
+          }
+          snappedToVerified = true;
+        }
+      }
+    }
+
+    snappedFeatures.push({
+      ...feat,
+      properties: {
+        ...feat.properties,
+        length_m: Math.round(lineLengthM(coords)),
+        ...(snappedToVerified ? { snapped_to_verified: true } : {})
+      },
+      geometry: {
+        type: 'LineString',
+        coordinates: coords
+      }
+    });
+  }
+
+  // Second pass: connect remaining dangling DEM tributaries to larger downstream DEM reaches
+  for (let idx = 0; idx < snappedFeatures.length; idx++) {
+    const feat = snappedFeatures[idx];
+    if (feat.properties.snapped_to_verified) {
+      snappedCount++;
+      continue;
+    }
+    const coords = feat.geometry.coordinates;
+    const endPt = coords[coords.length - 1];
+    const selfId = feat.properties.id;
+    const selfCatch = Number(feat.properties.catchment_ha || 0);
+
+    const targetLines = [];
+    for (let j = 0; j < snappedFeatures.length; j++) {
+      if (j === idx) continue;
+      const other = snappedFeatures[j];
+      if (other.properties.id === selfId) continue;
+      if (Number(other.properties.catchment_ha || 0) >= selfCatch) {
+        targetLines.push(other.geometry.coordinates);
+      }
+    }
+    if (targetLines.length === 0) continue;
+
+    const hit = nearestPointOnLines(endPt, targetLines);
+    if (hit.closest && hit.distM > 2 && hit.distM <= demSnapMaxMeters) {
+      if (hit.distM <= 8) {
+        coords[coords.length - 1] = hit.closest;
+      } else {
+        coords.push(hit.closest);
+      }
+      feat.properties.snapped_to_dem = true;
+      feat.properties.length_m = Math.round(lineLengthM(coords));
+      snappedCount++;
+    }
+  }
+
+  return {
+    type: 'FeatureCollection',
+    features: snappedFeatures,
+    snappedCount
+  };
+}
+
+/**
+ * Renders discrete ESA WorldCover 10m land-cover classes into a crisp translucent
+ * RGBA PNG overlay suitable for daylight satellite/topographic basemaps.
+ */
+export function renderLandCoverRaster(lcGrid, lcW, lcH, outSize = 1024) {
+  const palette = {
+    10: [21, 128, 61, 145],   // Tree cover / Forest
+    20: [101, 163, 13, 125],  // Shrubland
+    30: [132, 204, 22, 115],  // Grassland
+    40: [202, 138, 4, 135],   // Cropland
+    50: [185, 28, 28, 145],   // Built-up
+    60: [146, 64, 14, 155],   // Bare / sparse vegetation
+    80: [2, 132, 199, 175],   // Permanent water bodies
+    90: [13, 148, 136, 135]   // Herbaceous wetland
+  };
+
+  const rgba = new Uint8Array(outSize * outSize * 4);
+  for (let y = 0; y < outSize; y++) {
+    const sr = Math.min(lcH - 1, Math.floor((y / outSize) * lcH));
+    for (let x = 0; x < outSize; x++) {
+      const sc = Math.min(lcW - 1, Math.floor((x / outSize) * lcW));
+      const code = lcGrid[sr * lcW + sc];
+      const col = palette[code];
+      if (!col) continue;
+      const pIdx = (y * outSize + x) * 4;
+      rgba[pIdx] = col[0];
+      rgba[pIdx + 1] = col[1];
+      rgba[pIdx + 2] = col[2];
+      rgba[pIdx + 3] = col[3];
+    }
+  }
+  return encodePngRgba(outSize, outSize, rgba);
+}
+
+export function pointInRing(pt, ring) {
+  const [x, y] = pt;
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const xi = ring[i][0];
+    const yi = ring[i][1];
+    const xj = ring[j][0];
+    const yj = ring[j][1];
+    const intersect = yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi + 1e-12) + xi;
+    if (intersect) inside = !inside;
+  }
+  return inside;
+}
+
+export function pointInPolygonRings(pt, coordinates) {
+  if (!Array.isArray(coordinates) || coordinates.length === 0) return false;
+  if (!pointInRing(pt, coordinates[0])) return false;
+  for (let k = 1; k < coordinates.length; k++) {
+    if (pointInRing(pt, coordinates[k])) return false;
+  }
+  return true;
+}
+
+function findPolygonFeatureAt(pt, collection) {
+  const feats = collection?.features || [];
+  for (let i = 0; i < feats.length; i++) {
+    const geom = feats[i]?.geometry;
+    if (!geom) continue;
+    if (geom.type === 'Polygon' && pointInPolygonRings(pt, geom.coordinates)) return feats[i];
+    if (geom.type === 'MultiPolygon') {
+      for (const poly of geom.coordinates) {
+        if (pointInPolygonRings(pt, poly)) return feats[i];
+      }
+    }
+  }
+  return null;
+}
+
+export function isPointInFeatureCollection(pt, fc) {
+  return findPolygonFeatureAt(pt, fc) !== null;
+}
+
+export function buildPolygonMaskGrid(fc, gridMeta) {
+  const { width, height } = gridMeta;
+  const mask = new Uint8Array(width * height);
+  if (!fc?.features?.length) {
+    mask.fill(1);
+    return mask;
+  }
+  for (let r = 0; r < height; r++) {
+    for (let c = 0; c < width; c++) {
+      const pt = cellToLngLat(c, r, gridMeta);
+      mask[r * width + c] = findPolygonFeatureAt(pt, fc) ? 1 : 0;
+    }
+  }
+  return mask;
+}
+
+export function computeFeatureCollectionAreaKm2(fc) {
+  const ringAreaM2 = ring => {
+    if (!ring || ring.length < 3) return 0;
+    let sumLat = 0;
+    for (let i = 0; i < ring.length; i++) sumLat += ring[i][1];
+    const midLat = (sumLat / ring.length) * (Math.PI / 180);
+    const mLat = 111132.95;
+    const mLon = 111319.49 * Math.cos(midLat);
+    let area = 0;
+    for (let i = 0; i < ring.length - 1; i++) {
+      area += ring[i][0] * mLon * (ring[i + 1][1] * mLat) - ring[i + 1][0] * mLon * (ring[i][1] * mLat);
+    }
+    return Math.abs(area) * 0.5;
+  };
+  let totalM2 = 0;
+  for (const feat of fc?.features || []) {
+    const geom = feat?.geometry;
+    if (!geom) continue;
+    const polys = geom.type === 'MultiPolygon' ? geom.coordinates : geom.type === 'Polygon' ? [geom.coordinates] : [];
+    for (const rings of polys) {
+      if (!rings.length) continue;
+      totalM2 += ringAreaM2(rings[0]);
+      for (let k = 1; k < rings.length; k++) totalM2 -= ringAreaM2(rings[k]);
+    }
+  }
+  return Number((totalM2 / 1e6).toFixed(2));
+}
+
+/**
+ * Rasterizes Pemkab Agam official soil erodibility, landslide susceptibility, and SK 35 forest
+ * zone coverage onto the DEM grid (scoped to insideMask if provided).
+ */
+export function rasterizeAgamGrids(agamContext, gridMeta, insideMask = null) {
+  const { width, height } = gridMeta;
+  const n = width * height;
+  const soilErodibility = new Uint8Array(n);
+  const officialLandslide = new Uint8Array(n);
+
+  let insideCount = 0;
+  let andosolCount = 0;
+  let highCount = 0;
+  let medCount = 0;
+  let lowCount = 0;
+  let hlCount = 0;
+
+  for (let r = 0; r < height; r++) {
+    for (let c = 0; c < width; c++) {
+      const i = r * width + c;
+      const pt = cellToLngLat(c, r, gridMeta);
+      const isInside = !insideMask || insideMask[i] === 1;
+      if (isInside) insideCount++;
+
+      const soilFeat = findPolygonFeatureAt(pt, agamContext?.soil);
+      const soilName = String(soilFeat?.properties?.soilType || '').toLowerCase();
+      if (soilName.includes('andosol')) {
+        soilErodibility[i] = 220;
+        if (isInside) andosolCount++;
+      } else if (soilName.includes('kambisol')) {
+        soilErodibility[i] = 165;
+      } else {
+        soilErodibility[i] = 150;
+      }
+
+      const lsFeat = findPolygonFeatureAt(pt, agamContext?.landslideHazard);
+      const lsLevel = String(lsFeat?.properties?.level || '').toLowerCase();
+      if (lsLevel === 'tinggi' || lsLevel === 'high') {
+        officialLandslide[i] = 3;
+        if (isInside) highCount++;
+      } else if (lsLevel === 'sedang' || lsLevel === 'medium') {
+        officialLandslide[i] = 2;
+        if (isInside) medCount++;
+      } else if (lsLevel === 'rendah' || lsLevel === 'low') {
+        officialLandslide[i] = 1;
+        if (isInside) lowCount++;
+      }
+
+      if (isInside) {
+        const forestFeat = findPolygonFeatureAt(pt, agamContext?.forestStatus);
+        const fn = String(forestFeat?.properties?.fungsi || '').toUpperCase();
+        if (fn === 'HL' || fn.includes('KSA')) {
+          hlCount++;
+        }
+      }
+    }
+  }
+
+  const denom = Math.max(1, insideCount);
+  return {
+    soilErodibility,
+    officialLandslide,
+    summary: {
+      andosolPct: Number(((andosolCount / denom) * 100).toFixed(1)),
+      officialHighPct: Number(((highCount / denom) * 100).toFixed(1)),
+      officialMedPct: Number(((medCount / denom) * 100).toFixed(1)),
+      officialLowPct: Number(((lowCount / denom) * 100).toFixed(1)),
+      hutanLindungPct: Number(((hlCount / denom) * 100).toFixed(1))
+    }
+  };
+}
+
+/**
+ * Computes compact, deterministic raster fields for real-time physical galodo
+ * cascade simulation (SCS-CN, D8 travel time, upland catchment ratio, root cohesion,
+ * and road-crossing bottleneck proximity).
+ */
+export function computeCascadeFields({
+  rawElev,
+  filled,
+  dir,
+  acc,
+  slope,
+  hand,
+  landCoverClasses = null,
+  soilErodibility = null,
+  officialLandslide = null,
+  nagariMask = null,
+  agamSummary = null,
+  bottlenecks = [],
+  gridMeta,
+  maxSimDim = 260
+}) {
+  const { width, height, bbox, cellSizeX, cellSizeY } = gridMeta;
+  const n = width * height;
+  const areaScale = (30.9 * 30.9) / Math.max(1, cellSizeX * cellSizeY);
+
+  let minElev = Infinity;
+  let maxElev = -Infinity;
+  for (let i = 0; i < n; i++) {
+    if (rawElev[i] < minElev) minElev = rawElev[i];
+    if (rawElev[i] > maxElev) maxElev = rawElev[i];
+  }
+  const elevSpan = Math.max(1, maxElev - minElev);
+
+  const handDm = new Uint16Array(n);
+  const slopePct = new Uint8Array(n);
+  const accNorm = new Uint8Array(n);
+  const cnBase = new Uint8Array(n);
+  const rootCohesion = new Uint8Array(n);
+  const isForest = new Uint8Array(n);
+  const uplandWeight = new Uint8Array(n);
+  const vel = new Float32Array(n);
+
+  for (let r = 0; r < height; r++) {
+    const southFactor = r / Math.max(1, height - 1); // 1.0 at southern Singgalang slopes
+    for (let c = 0; c < width; c++) {
+      const i = r * width + c;
+      handDm[i] = Math.min(65535, Math.round(Math.max(0, hand[i]) * 10));
+      const sl = Math.max(0, slope[i]);
+      slopePct[i] = Math.min(200, Math.round(sl));
+      const accEquiv = acc[i] / areaScale;
+      accNorm[i] = Math.min(255, Math.round((Math.log10(Math.max(1, accEquiv)) / 4.2) * 255));
+
+      const lc = landCoverClasses ? landCoverClasses[i] : 0;
+      let cn = 74;
+      let root = 150;
+      let forest = 0;
+      if (lc === 10) {
+        cn = 70;
+        root = 220;
+        forest = 1;
+      } else if (lc === 20 || lc === 30) {
+        cn = 77;
+        root = 135;
+      } else if (lc === 40) {
+        cn = 82;
+        root = 95;
+      } else if (lc === 50) {
+        cn = 92;
+        root = 50;
+      } else if (lc === 60) {
+        cn = 89;
+        root = 50;
+      } else if (lc === 80 || lc === 90) {
+        cn = 98;
+        root = 80;
+      }
+      if (soilErodibility && soilErodibility[i] >= 200) {
+        cn = Math.max(60, cn - 2);
+      }
+      cnBase[i] = cn;
+      rootCohesion[i] = root;
+      isForest[i] = forest;
+
+      const elevNorm = (rawElev[i] - minElev) / elevSpan;
+      const uw = Math.max(0, Math.min(1, elevNorm * 0.75 + southFactor * 0.25));
+      uplandWeight[i] = Math.round(uw * 255);
+
+      const sRad = Math.max(0.012, sl / 100);
+      const rough = forest ? 1.35 : 0.95;
+      if (accEquiv >= 25) {
+        vel[i] = Math.max(0.45, Math.min(3.8, (0.65 * Math.sqrt(sRad) * Math.pow(accEquiv, 0.14)) / rough));
+      } else {
+        vel[i] = Math.max(0.12, Math.min(1.35, (0.24 * Math.sqrt(sRad)) / rough));
+      }
+    }
+  }
+
+  // Topological sort from highest filled elevation to lowest for upstream->downstream accumulation
+  const order = new Int32Array(n);
+  for (let i = 0; i < n; i++) order[i] = i;
+  order.sort((a, b) => filled[b] - filled[a]);
+
+  const diag = Math.hypot(cellSizeX, cellSizeY);
+  const stepDist = [cellSizeX, diag, cellSizeY, diag, cellSizeX, diag, cellSizeY, diag];
+
+  const uplandSum = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    uplandSum[i] = uplandWeight[i] >= 128 ? 1 : 0;
+  }
+  const weightedTime = new Float64Array(n);
+  const inWeight = new Float64Array(n);
+  const tcArr = new Float32Array(n);
+
+  for (let p = 0; p < n; p++) {
+    const i = order[p];
+    const tc = inWeight[i] > 0 ? weightedTime[i] / inWeight[i] : 0;
+    tcArr[i] = tc;
+
+    const k = dir[i];
+    if (k < 0) continue;
+    const r = Math.floor(i / width);
+    const c = i - r * width;
+    const ni = (r + DY[k]) * width + (c + DX[k]);
+    if (ni < 0 || ni >= n) continue;
+
+    uplandSum[ni] += uplandSum[i];
+    const dtMin = (stepDist[k] / vel[i]) / 60;
+    const w = Math.max(1, acc[i]);
+    weightedTime[ni] += w * (tc + dtMin);
+    inWeight[ni] += w;
+  }
+
+  const uplandAccRatio = new Uint8Array(n);
+  const travelTimeTenthMin = new Uint16Array(n);
+  const channelTcs = [];
+  for (let i = 0; i < n; i++) {
+    uplandAccRatio[i] = Math.min(255, Math.round((uplandSum[i] / Math.max(1, acc[i])) * 255));
+    travelTimeTenthMin[i] = Math.min(65535, Math.round(tcArr[i] * 10));
+    if (acc[i] / areaScale >= 75) channelTcs.push(tcArr[i]);
+  }
+
+  channelTcs.sort((a, b) => a - b);
+  const p90TravelMin =
+    channelTcs.length > 0
+      ? channelTcs[Math.min(channelTcs.length - 1, Math.floor(channelTcs.length * 0.9))]
+      : 25;
+
+  const needSimDownsample = maxSimDim > 0 && (width > maxSimDim || height > maxSimDim);
+  const simScale = needSimDownsample ? Math.max(width, height) / maxSimDim : 1;
+  const simW = needSimDownsample ? Math.round(width / simScale) : width;
+  const simH = needSimDownsample ? Math.round(height / simScale) : height;
+  const simCellX = (cellSizeX * width) / simW;
+  const simCellY = (cellSizeY * height) / simH;
+  const simMeta = { width: simW, height: simH, bbox, cellSizeX: simCellX, cellSizeY: simCellY };
+
+  const resampleArr = (arr, Ctor) => {
+    if (!arr || !needSimDownsample) return arr;
+    const out = new Ctor(simW * simH);
+    for (let r = 0; r < simH; r++) {
+      const sr = Math.min(height - 1, Math.floor(((r + 0.5) / simH) * height));
+      for (let c = 0; c < simW; c++) {
+        const sc = Math.min(width - 1, Math.floor(((c + 0.5) / simW) * width));
+        out[r * simW + c] = arr[sr * width + sc];
+      }
+    }
+    return out;
+  };
+
+  const bottleneckPts = (bottlenecks || [])
+    .map(b => b?.coords || b?.geometry?.coordinates)
+    .filter(c => Array.isArray(c) && c.length >= 2);
+  const bottleneckProx = new Uint8Array(simW * simH);
+  if (bottleneckPts.length > 0) {
+    for (let r = 0; r < simH; r++) {
+      for (let c = 0; c < simW; c++) {
+        const i = r * simW + c;
+        const [lng, lat] = cellToLngLat(c, r, simMeta);
+        let minD = 9999;
+        for (let b = 0; b < bottleneckPts.length; b++) {
+          if (Math.abs(lng - bottleneckPts[b][0]) > 0.003 || Math.abs(lat - bottleneckPts[b][1]) > 0.003) continue;
+          const d = haversineMeters(lng, lat, bottleneckPts[b][0], bottleneckPts[b][1]);
+          if (d < minD) minD = d;
+        }
+        const prox = 1 - smoothstep(40, 260, minD);
+        bottleneckProx[i] = Math.round(prox * 255);
+      }
+    }
+  }
+
+  const outHandDm = resampleArr(handDm, Uint16Array);
+  const outSlopePct = resampleArr(slopePct, Uint8Array);
+  const outAccNorm = resampleArr(accNorm, Uint8Array);
+  const outTravelTime = resampleArr(travelTimeTenthMin, Uint16Array);
+  const outCnBase = resampleArr(cnBase, Uint8Array);
+  const outRootCohesion = resampleArr(rootCohesion, Uint8Array);
+  const outIsForest = resampleArr(isForest, Uint8Array);
+  const outUplandWeight = resampleArr(uplandWeight, Uint8Array);
+  const outUplandAccRatio = resampleArr(uplandAccRatio, Uint8Array);
+  const outSoil = resampleArr(soilErodibility, Uint8Array);
+  const outLandslide = resampleArr(officialLandslide, Uint8Array);
+  const outNagariMask = resampleArr(nagariMask, Uint8Array);
+
+  const toB64 = arr => Buffer.from(arr.buffer, arr.byteOffset, arr.byteLength).toString('base64');
+
+  return {
+    width: simW,
+    height: simH,
+    bbox,
+    cellSizeX: Number(simCellX.toFixed(2)),
+    cellSizeY: Number(simCellY.toFixed(2)),
+    minElev: Math.round(minElev),
+    maxElev: Math.round(maxElev),
+    p90TravelMin: Number(Math.max(12, p90TravelMin).toFixed(1)),
+    handDmBase64: toB64(outHandDm),
+    slopePctBase64: toB64(outSlopePct),
+    accNormBase64: toB64(outAccNorm),
+    travelTimeTenthMinBase64: toB64(outTravelTime),
+    cnBaseBase64: toB64(outCnBase),
+    rootCohesionBase64: toB64(outRootCohesion),
+    isForestBase64: toB64(outIsForest),
+    uplandWeightBase64: toB64(outUplandWeight),
+    uplandAccRatioBase64: toB64(outUplandAccRatio),
+    bottleneckProxBase64: toB64(bottleneckProx),
+    ...(outSoil ? { soilErodibilityBase64: toB64(outSoil) } : {}),
+    ...(outLandslide ? { officialLandslideBase64: toB64(outLandslide) } : {}),
+    ...(outNagariMask ? { nagariMaskBase64: toB64(outNagariMask) } : {}),
+    ...(agamSummary ? { agamSummary } : {})
+  };
+}
+
+/**
+ * Renders 10m Sentinel-2 pre-vs-post disaster NDVI loss (scour / bare bank corridor)
+ * into a crisp translucent RGBA PNG overlay.
+ */
+export function renderScourChangeRaster(dNdviGrid, w, h, outSize = 1024) {
+  const rgba = new Uint8Array(outSize * outSize * 4);
+  for (let y = 0; y < outSize; y++) {
+    const sr = Math.min(h - 1, Math.floor((y / outSize) * h));
+    for (let x = 0; x < outSize; x++) {
+      const sc = Math.min(w - 1, Math.floor((x / outSize) * w));
+      const v = dNdviGrid[sr * w + sc];
+      if (v > -0.2) continue;
+      const pIdx = (y * outSize + x) * 4;
+      if (v <= -0.32) {
+        // Severe bare-earth / galodo scouring corridor (#991b1b)
+        rgba[pIdx] = 153;
+        rgba[pIdx + 1] = 27;
+        rgba[pIdx + 2] = 27;
+        rgba[pIdx + 3] = 195;
+      } else {
+        // Moderate vegetation/bank disturbance (#d97706)
+        rgba[pIdx] = 217;
+        rgba[pIdx + 1] = 119;
+        rgba[pIdx + 2] = 6;
+        rgba[pIdx + 3] = 155;
+      }
+    }
+  }
+  return encodePngRgba(outSize, outSize, rgba);
 }

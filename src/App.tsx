@@ -19,13 +19,16 @@ import { SimulationTab } from './components/SimulationTab';
 import { TelemetryDock } from './components/TelemetryDock';
 import { TerrainTab } from './components/TerrainTab';
 import { TopHud } from './components/TopHud';
+import type { ActiveEditingJorong } from './components/JorongEditorPanel';
 import type { ActiveEditingStructure } from './components/StructureEditorPanel';
 import type { ActiveEditingWaterway } from './components/WaterwayEditorPanel';
 import { I18N } from './i18n/translations';
 import {
+  createJorongBoundary,
   createStructure,
   createSuggestion,
   createWaterway,
+  deleteJorongBoundary,
   deleteStructure,
   deleteWaterway,
   fetchAuditLogs,
@@ -40,10 +43,12 @@ import {
   saveEditorName,
   saveStoredPassphrase,
   suppressDemSegment,
+  updateJorongBoundary,
   updateStructure,
   updateWaterway,
   verifyEditorPassphrase
 } from './lib/api';
+import { CascadeEngine, extractBuildingCentroids } from './lib/cascadeEngine';
 import { DemClient } from './lib/demClient';
 import { haversineMeters, orientCoordinatesDownhill } from './lib/geometry';
 import { loadChecklistState, saveChecklistState } from './lib/storage';
@@ -51,15 +56,23 @@ import type {
   ActiveTool,
   AuditLogEntry,
   BasemapId,
+  CascadeKpis,
+  CascadeSimParams,
   DatasetMetadata,
   DemGridData,
   DrainageStatus,
+  DrainCondition,
   ElevationProfileResult,
+  ForestScenario,
   HydroStatus,
+  JorongBoundaryFeature,
   Language,
   LayerToggles,
   ProfileSample,
   RaindropTrace,
+  RainPattern,
+  SimFieldsData,
+  SoilMoisture,
   SuppressedDemSegment,
   TabId,
   VerifiedStructureFeature,
@@ -85,6 +98,13 @@ export function App() {
     verifiedWaterways: true,
     structures: true,
     unverifiedCrossings: false,
+    settlements: true,
+    landCover: false,
+    scourChange: false,
+    agamLandslide: false,
+    agamRbiRivers: false,
+    agamForestStatus: false,
+    agamSoilGeology: false,
     hillshade: false,
     das: true,
     contours: false,
@@ -98,6 +118,7 @@ export function App() {
   const [datasets, setDatasets] = useState<LoadedDatasets | null>(null);
   const [metadata, setMetadata] = useState<DatasetMetadata | null>(null);
   const [demClient, setDemClient] = useState<DemClient | null>(null);
+  const [simFields, setSimFields] = useState<SimFieldsData | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
 
   const [activeTool, setActiveTool] = useState<ActiveTool>(null);
@@ -106,12 +127,15 @@ export function App() {
   const [profileResult, setProfileResult] = useState<ElevationProfileResult | null>(null);
   const [profileHover, setProfileHover] = useState<ProfileSample | null>(null);
 
-  // Interactive Rainfall Intensity × Duration Simulator (calm 00:00 dry start)
+  // Interactive Rainfall -> Galodo Cascade Simulator (calm 00:00 dry start)
   const [simPlaying, setSimPlaying] = useState(false);
   const [simRain, setSimRain] = useState(45);
   const [simDurationMin, setSimDurationMin] = useState(120);
   const [simProgress, setSimProgress] = useState(0);
-  const [simScenario, setSimScenario] = useState<'clogged' | 'cleared'>('clogged');
+  const [soilMoisture, setSoilMoisture] = useState<SoilMoisture>('moist');
+  const [rainPattern, setRainPattern] = useState<RainPattern>('uniform');
+  const [drainCondition, setDrainCondition] = useState<DrainCondition>('clogged');
+  const [forestScenario, setForestScenario] = useState<ForestScenario>('actual');
   const [rainAnimEnabled, setRainAnimEnabled] = useState(true);
 
   const [drainFilter, setDrainFilter] = useState<'all' | DrainageStatus>('all');
@@ -126,9 +150,11 @@ export function App() {
   const [actorName, setActorName] = useState(() => loadEditorName());
   const [verifiedWaterways, setVerifiedWaterways] = useState<VerifiedWaterwayFeature[]>([]);
   const [verifiedStructures, setVerifiedStructures] = useState<VerifiedStructureFeature[]>([]);
+  const [jorongBoundaries, setJorongBoundaries] = useState<JorongBoundaryFeature[]>([]);
   const [suppressedDem, setSuppressedDem] = useState<SuppressedDemSegment[]>([]);
   const [editingWaterway, setEditingWaterway] = useState<ActiveEditingWaterway | null>(null);
   const [editingStructure, setEditingStructure] = useState<ActiveEditingStructure | null>(null);
+  const [editingJorong, setEditingJorong] = useState<ActiveEditingJorong | null>(null);
   const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
   const [dataVersion, setDataVersion] = useState(0);
   const [hydroStatus, setHydroStatus] = useState<HydroStatus>({
@@ -168,31 +194,42 @@ export function App() {
     let cancelled = false;
     async function loadAll() {
       try {
-        const [metaRes, demRes, maskRes, wsRes, cntRes, flRes, osmRes, drnRes] = await Promise.all([
+        const [metaRes, demRes, maskRes, wsRes, nbRes, stRes, cntRes, flRes, osmRes, drnRes, sfRes, rbiRes, agamCtxRes] = await Promise.all([
           fetch('/data/metadata.json'),
           fetch('/data/dem-grid.json'),
           fetch('/data/mask.geojson'),
           fetch('/data/watershed.geojson'),
+          fetch('/data/nagari-boundary.geojson'),
+          fetch('/data/settlements.geojson'),
           fetch('/data/contours.geojson'),
           fetch('/data/flow-paths.geojson'),
           fetch('/data/osm-context.geojson'),
-          fetch('/data/drainage-draft.geojson')
+          fetch('/data/drainage-draft.geojson'),
+          fetch('/data/sim-fields.json'),
+          fetch('/data/agam-rbi-rivers.geojson'),
+          fetch('/data/agam-context.json')
         ]);
 
         if (!metaRes.ok || !demRes.ok) {
           throw new Error('Failed to load geospatial datasets from /data/');
         }
 
-        const [meta, demGrid, mask, watershed, contours, flowPaths, osmContext, drainageDraft] =
+        const emptyFc = { type: 'FeatureCollection' as const, features: [] };
+        const [meta, demGrid, mask, watershed, nagariBoundary, settlements, contours, flowPaths, osmContext, drainageDraft, sfData, agamRbiRivers, agamContext] =
           await Promise.all([
             metaRes.json(),
             demRes.json(),
             maskRes.json(),
             wsRes.json(),
+            nbRes.ok ? nbRes.json() : Promise.resolve(emptyFc),
+            stRes.ok ? stRes.json() : Promise.resolve(emptyFc),
             cntRes.json(),
             flRes.json(),
             osmRes.json(),
-            drnRes.json()
+            drnRes.json(),
+            sfRes.ok ? sfRes.json() : Promise.resolve(null),
+            rbiRes.ok ? rbiRes.json() : Promise.resolve(emptyFc),
+            agamCtxRes.ok ? agamCtxRes.json() : Promise.resolve(null)
           ]);
 
         if (cancelled) return;
@@ -200,15 +237,20 @@ export function App() {
         const client = new DemClient(demGrid as DemGridData);
         setMetadata(m);
         setDemClient(client);
+        setSimFields(sfData as SimFieldsData | null);
         setDatasets({
           bbox: m.bbox,
           center: m.center,
           mask,
           watershed,
+          nagariBoundary,
+          settlements,
           contours,
           flowPaths,
           osmContext,
-          drainageDraft
+          drainageDraft,
+          agamRbiRivers,
+          agamContext
         });
         setCursorTelemetry({
           lng: m.center[0],
@@ -236,6 +278,7 @@ export function App() {
           if (!cancelled) {
             setVerifiedWaterways(wwState.waterways);
             setVerifiedStructures(wwState.structures);
+            setJorongBoundaries(wwState.jorongBoundaries);
             setSuppressedDem(wwState.suppressedDem);
             setHydroStatus(wwState.hydroStatus);
             setAuditLogs(logs);
@@ -286,28 +329,53 @@ export function App() {
     return () => window.clearInterval(id);
   }, [simPlaying]);
 
-  const simKpis = useMemo(() => {
+  const buildingCentroids = useMemo(
+    () => extractBuildingCentroids(datasets?.settlements),
+    [datasets?.settlements]
+  );
+
+  const cascadeEngine = useMemo(() => {
+    if (!simFields) return null;
+    const totalCrossings = (metadata?.crossingsDetected || 0) + (metadata?.bridgesDetected || 0) || 34;
+    return new CascadeEngine(simFields, buildingCentroids, totalCrossings);
+  }, [simFields, buildingCentroids, metadata?.crossingsDetected, metadata?.bridgesDetected]);
+
+  const cascadeParams: CascadeSimParams = useMemo(
+    () => ({
+      rainMmHr: simRain,
+      durationMin: simDurationMin,
+      progress: simProgress,
+      soilMoisture,
+      rainPattern,
+      drainCondition,
+      forestScenario
+    }),
+    [simRain, simDurationMin, simProgress, soilMoisture, rainPattern, drainCondition, forestScenario]
+  );
+
+  const cascadeKpis: CascadeKpis = useMemo(() => {
+    if (cascadeEngine) {
+      return cascadeEngine.evaluate(cascadeParams);
+    }
     const elapsedMin = simDurationMin * simProgress;
     const accumulatedMm = simRain * (elapsedMin / 60);
-    const effectiveLoad = simRain * 0.45 + accumulatedMm * 0.55;
-    const level: 'low' | 'med' | 'high' = effectiveLoad < 45 ? 'low' : effectiveLoad < 105 ? 'med' : 'high';
-
-    const cloggedHa = metadata?.simAreasHa?.clogged[level] ?? 0;
-    const clearedHa = metadata?.simAreasHa?.cleared[level] ?? 0;
-    const buildFactor = simProgress <= 0.03 ? 0 : Math.min(1, 0.25 + simProgress * 0.75);
-    const activeAreaHa = (simScenario === 'cleared' ? clearedHa : cloggedHa) * buildFactor;
-    const reductionPct = cloggedHa > 0 ? Math.max(0, Math.round((1 - clearedHa / cloggedHa) * 100)) : 0;
-
-    const totalCrossings = (metadata?.crossingsDetected || 0) + (metadata?.bridgesDetected || 0);
-    const chokeCount =
-      simScenario === 'cleared' || simProgress <= 0.03
-        ? 0
-        : Math.round(totalCrossings * Math.min(1, effectiveLoad / 120) * buildFactor);
-    const runoffIndex =
-      simProgress <= 0.03 ? 0 : Math.min(100, Math.round((effectiveLoad / 145) * 95));
-
-    return { elapsedMin, accumulatedMm, activeAreaHa, reductionPct, chokeCount, runoffIndex };
-  }, [metadata, simRain, simDurationMin, simProgress, simScenario]);
+    return {
+      stage: simProgress <= 0.02 ? 0 : simProgress <= 0.25 ? 1 : simProgress <= 0.55 ? 2 : simProgress <= 0.82 ? 3 : 4,
+      alertLevel: 'normal',
+      elapsedMin,
+      accumulatedMm,
+      effectiveRunoffMm: 0,
+      floodAreaHa: 0,
+      landslideAreaHa: 0,
+      affectedBuildingsFlood: 0,
+      affectedBuildingsLandslide: 0,
+      chokeCount: 0,
+      reductionPct: 0,
+      peakTravelMin: 75,
+      runoffIndex: 0,
+      officialLandslideOverlapPct: 0
+    };
+  }, [cascadeEngine, cascadeParams, simRain, simDurationMin, simProgress]);
 
   const verifiedIssueCount = useMemo(
     () => verifiedStructures.filter(s => ['clogged', 'damaged', 'critical'].includes(s.properties.status)).length,
@@ -359,11 +427,20 @@ export function App() {
       if (tab === 'editor') {
         setTab('terrain');
       }
+      if (forestScenario !== 'actual') {
+        setForestScenario('actual');
+      }
+      if (drainCondition === 'surge') {
+        setDrainCondition('clogged');
+      }
       if (editingWaterway) {
         setEditingWaterway(null);
       }
       if (editingStructure) {
         setEditingStructure(null);
+      }
+      if (editingJorong) {
+        setEditingJorong(null);
       }
       if (activeTool) {
         setActiveTool(null);
@@ -388,7 +465,7 @@ export function App() {
       setProfilePts([ptA, lngLat]);
       setProfileResult(demClient.sampleElevationProfile(ptA, lngLat, 60));
       setActiveTool(null);
-    } else if (activeTool === 'drawWaterway' || activeTool === 'redrawWaterway') {
+    } else if (activeTool === 'drawWaterway' || activeTool === 'redrawWaterway' || activeTool === 'drawJorong') {
       setDrawVertices(prev => [...prev, lngLat]);
     } else if (activeTool === 'placeStructure') {
       setEditingStructure({
@@ -410,6 +487,7 @@ export function App() {
     const [wwState, logs] = await Promise.all([fetchWaterwaysState(), fetchAuditLogs()]);
     setVerifiedWaterways(wwState.waterways);
     setVerifiedStructures(wwState.structures);
+    setJorongBoundaries(wwState.jorongBoundaries);
     setSuppressedDem(wwState.suppressedDem);
     setHydroStatus(wwState.hydroStatus);
     setAuditLogs(logs);
@@ -420,19 +498,22 @@ export function App() {
     try {
       const res = await recomputeHydrology({ actor: actorName, carveDepthM: 3.5 });
       const nextVer = Date.now();
-      const [metaRes, flowRes, draftRes, logs] = await Promise.all([
+      const [metaRes, flowRes, draftRes, sfRes, logs] = await Promise.all([
         fetch(`/data/metadata.json?v=${nextVer}`),
         fetch(`/data/flow-paths.geojson?v=${nextVer}`),
         fetch(`/data/drainage-draft.geojson?v=${nextVer}`),
+        fetch(`/data/sim-fields.json?v=${nextVer}`),
         fetchAuditLogs()
       ]);
       if (metaRes.ok && flowRes.ok && draftRes.ok) {
-        const [nextMeta, nextFlows, nextDraft] = await Promise.all([
+        const [nextMeta, nextFlows, nextDraft, nextSf] = await Promise.all([
           metaRes.json(),
           flowRes.json(),
-          draftRes.json()
+          draftRes.json(),
+          sfRes.ok ? sfRes.json() : Promise.resolve(null)
         ]);
         setMetadata(nextMeta as DatasetMetadata);
+        if (nextSf) setSimFields(nextSf as SimFieldsData);
         setDatasets(prev =>
           prev
             ? {
@@ -464,12 +545,12 @@ export function App() {
   const handleCameraPreset = (preset: string) => {
     setCameraPreset(preset);
     const presets: Record<string, { center: [number, number]; zoom: number; pitch: number; bearing: number }> = {
-      center: { center: [100.324444, -0.335556], zoom: 14.3, pitch: is3D ? 36 : 0, bearing: is3D ? -12 : 0 },
-      hulu: { center: [100.322, -0.346], zoom: 14.4, pitch: 56, bearing: -20 },
+      center: { center: [100.319, -0.345], zoom: 13.6, pitch: is3D ? 36 : 0, bearing: is3D ? -12 : 0 },
+      hulu: { center: [100.314, -0.382], zoom: 13.4, pitch: 56, bearing: -20 },
       pahambatan: { center: [100.319315, -0.339606], zoom: 15.6, pitch: is3D ? 34 : 0, bearing: -10 },
       hilalang: { center: [100.327863, -0.341817], zoom: 15.6, pitch: is3D ? 34 : 0, bearing: -8 },
       subarang: { center: [100.326183, -0.326062], zoom: 15.5, pitch: is3D ? 34 : 0, bearing: -12 },
-      block: { center: [100.324444, -0.335556], zoom: 13.1, pitch: is3D ? 32 : 0, bearing: 0 }
+      block: { center: [100.312, -0.360], zoom: 12.1, pitch: is3D ? 30 : 0, bearing: 0 }
     };
     const p = presets[preset];
     if (p) {
@@ -485,6 +566,7 @@ export function App() {
     if (activeTool === 'drawWaterway') return t.bannerDrawWaterway;
     if (activeTool === 'redrawWaterway') return t.bannerRedrawWaterway;
     if (activeTool === 'placeStructure') return t.bannerPlaceStructure;
+    if (activeTool === 'drawJorong') return t.bannerDrawJorong;
     return '';
   })();
 
@@ -552,13 +634,16 @@ export function App() {
           simRain={simRain}
           simDurationMin={simDurationMin}
           simProgress={simProgress}
-          simScenario={simScenario}
+          simScenario={drainCondition === 'cleared' ? 'cleared' : 'clogged'}
+          cascadeEngine={cascadeEngine}
+          cascadeParams={cascadeParams}
           drainFilter={drainFilter}
           raindrop={raindrop}
           profilePts={profilePts}
           profileHover={profileHover}
           verifiedWaterways={verifiedWaterways}
           verifiedStructures={verifiedStructures}
+          jorongBoundaries={jorongBoundaries}
           suppressedDemIds={suppressedDemIds}
           dataVersion={dataVersion}
           apiAvailable={apiAvailable}
@@ -582,6 +667,9 @@ export function App() {
               source: feat.properties.source,
               sourceRef: feat.properties.source_ref,
               notes: feat.properties.notes,
+              widthPreM: feat.properties.width_pre_m ?? null,
+              widthPostM: feat.properties.width_post_m ?? null,
+              depthM: feat.properties.depth_m ?? null,
               coordinates: feat.geometry.coordinates.map(c => [c[0], c[1]])
             });
           }}
@@ -638,6 +726,24 @@ export function App() {
               coordinates: oriented
             });
           }}
+          onPromoteRbiRiver={(name, kind, coords) => {
+            setViewMode('detail');
+            setTab('editor');
+            setEditorSubTab('waterways');
+            const oriented = demClient
+              ? orientCoordinatesDownhill(coords, (x, y) => demClient.getElevation(x, y)).coordinates
+              : coords;
+            setEditingWaterway({
+              id: null,
+              name,
+              kind,
+              status: 'normal',
+              source: 'manual',
+              sourceRef: null,
+              notes: 'Sumber awal: Pemkab Agam RBI 1:50.000',
+              coordinates: oriented
+            });
+          }}
           onRedrawDemSegment={segId => {
             setViewMode('detail');
             setTab('editor');
@@ -685,7 +791,12 @@ export function App() {
       )}
 
       {/* Falling Rain Animation Overlay during Simulation */}
-      <RainOverlay active={tab === 'sim' && rainAnimEnabled && simProgress > 0.01} intensityMmHr={simRain} />
+      <RainOverlay
+        active={tab === 'sim' && rainAnimEnabled && simProgress > 0.01}
+        intensityMmHr={simRain}
+        rainPattern={rainPattern}
+        lang={lang}
+      />
 
       {sidebarCollapsed && (
         <button
@@ -796,7 +907,11 @@ export function App() {
               flowDensity={flowDensity}
               activeTool={activeTool}
               raindrop={raindrop}
-              studyAreaKm2={metadata?.studyAreaKm2 || 20.9}
+              studyAreaKm2={metadata?.studyAreaKm2 || 29.9}
+              buildingCount={metadata?.buildingCount}
+              landCoverStats={metadata?.landCoverStats}
+              scourStats={metadata?.scourStats}
+              agamStats={metadata?.agamStats}
               cameraPreset={cameraPreset}
               onSelectPreset={handleCameraPreset}
               onToggleLayer={(key, val) => setLayers(prev => ({ ...prev, [key]: val }))}
@@ -818,11 +933,18 @@ export function App() {
               rainMm={simRain}
               durationMin={simDurationMin}
               progress={simProgress}
-              scenario={simScenario}
+              soilMoisture={soilMoisture}
+              rainPattern={rainPattern}
+              drainCondition={drainCondition}
+              forestScenario={forestScenario}
+              forestActualPct={metadata?.landCoverStats?.forestPct ?? 74}
               rainAnimEnabled={rainAnimEnabled}
               layers={layers}
               verifiedIssueCount={verifiedIssueCount}
-              kpis={simKpis}
+              verifiedWaterways={verifiedWaterways}
+              demClient={demClient}
+              agamStats={metadata?.agamStats}
+              kpis={cascadeKpis}
               onTogglePlay={() => {
                 if (simPlaying) {
                   setSimPlaying(false);
@@ -841,7 +963,36 @@ export function App() {
               }}
               onChangeRain={setSimRain}
               onChangeDuration={setSimDurationMin}
-              onChangeScenario={setSimScenario}
+              onChangeSoilMoisture={setSoilMoisture}
+              onChangeRainPattern={setRainPattern}
+              onChangeDrainCondition={setDrainCondition}
+              onChangeForestScenario={setForestScenario}
+              onApplyPreset={preset => {
+                setSimPlaying(false);
+                if (preset === 'normal') {
+                  setSimRain(25);
+                  setSimDurationMin(90);
+                  setSoilMoisture('dry');
+                  setRainPattern('uniform');
+                  setDrainCondition('cleared');
+                  setForestScenario('actual');
+                } else if (preset === 'upland') {
+                  setSimRain(80);
+                  setSimDurationMin(180);
+                  setSoilMoisture('saturated');
+                  setRainPattern('upland');
+                  setDrainCondition('clogged');
+                  setForestScenario('actual');
+                } else {
+                  setSimRain(120);
+                  setSimDurationMin(180);
+                  setSoilMoisture('saturated');
+                  setRainPattern('upland');
+                  setDrainCondition(viewMode === 'detail' ? 'surge' : 'clogged');
+                }
+                setSimProgress(0.05);
+                setSimPlaying(true);
+              }}
               onToggleRainAnim={setRainAnimEnabled}
               onToggleLayer={(key, val) => setLayers(prev => ({ ...prev, [key]: val }))}
             />
@@ -876,7 +1027,7 @@ export function App() {
                 setSimRain(65);
                 setSimDurationMin(120);
                 setSimProgress(0.7);
-                setSimScenario('cleared');
+                setDrainCondition('cleared');
                 setSimPlaying(false);
               }}
               onFocusEvac={() => {
@@ -914,12 +1065,15 @@ export function App() {
                 setEditorUnlocked(false);
                 setEditingWaterway(null);
                 setEditingStructure(null);
+                setEditingJorong(null);
               }}
               verifiedWaterways={verifiedWaterways}
               verifiedStructures={verifiedStructures}
+              jorongBoundaries={jorongBoundaries}
               suppressedDem={suppressedDem}
               editingWaterway={editingWaterway}
               editingStructure={editingStructure}
+              editingJorong={editingJorong}
               hydroStatus={hydroStatus}
               recomputingHydro={recomputingHydro}
               onStartDrawWaterway={() => {
@@ -936,6 +1090,9 @@ export function App() {
                   source: feat.properties.source,
                   sourceRef: feat.properties.source_ref,
                   notes: feat.properties.notes,
+                  widthPreM: feat.properties.width_pre_m ?? null,
+                  widthPostM: feat.properties.width_post_m ?? null,
+                  depthM: feat.properties.depth_m ?? null,
                   coordinates: feat.geometry.coordinates.map(c => [c[0], c[1]])
                 });
                 const mid = feat.geometry.coordinates[Math.floor(feat.geometry.coordinates.length / 2)];
@@ -970,6 +1127,9 @@ export function App() {
                       kind: draft.kind,
                       status: draft.status,
                       notes: draft.notes,
+                      width_pre_m: draft.widthPreM ?? null,
+                      width_post_m: draft.widthPostM ?? null,
+                      depth_m: draft.depthM ?? null,
                       coordinates: draft.coordinates,
                       actor: actorName,
                       reason
@@ -982,6 +1142,9 @@ export function App() {
                       source: draft.source,
                       source_ref: draft.sourceRef || null,
                       notes: draft.notes,
+                      width_pre_m: draft.widthPreM ?? null,
+                      width_post_m: draft.widthPostM ?? null,
+                      depth_m: draft.depthM ?? null,
                       coordinates: draft.coordinates,
                       actor: actorName,
                       reason
@@ -1091,12 +1254,91 @@ export function App() {
               onFlyToStructure={feat => {
                 flyTo(feat.geometry.coordinates, { zoom: 16.0 });
               }}
+              onStartDrawJorong={() => {
+                setEditingJorong(null);
+                setDrawVertices([]);
+                setActiveTool(prev => (prev === 'drawJorong' ? null : 'drawJorong'));
+              }}
+              onImportJorongPolygon={(name, ring) => {
+                setEditingJorong({
+                  id: null,
+                  name,
+                  status: 'indicative',
+                  sourceNote: 'Impor GeoJSON',
+                  coordinates: ring
+                });
+                const mid = ring[Math.floor(ring.length / 2)];
+                if (mid) flyTo(mid, { zoom: 14.8 });
+              }}
+              onStartEditJorong={feat => {
+                const ring = feat.geometry.coordinates[0] || [];
+                setEditingJorong({
+                  id: feat.properties.id,
+                  name: feat.properties.name,
+                  status: feat.properties.status,
+                  sourceNote: feat.properties.source_note,
+                  coordinates: ring.map(c => [c[0], c[1]])
+                });
+                const mid = ring[Math.floor(ring.length / 2)];
+                if (mid) flyTo(mid, { zoom: 14.8 });
+              }}
+              onCancelJorongEdit={() => {
+                setEditingJorong(null);
+                if (activeTool === 'drawJorong') {
+                  setActiveTool(null);
+                  setDrawVertices([]);
+                }
+              }}
+              onSaveJorong={async (draft, reason) => {
+                try {
+                  if (draft.id) {
+                    await updateJorongBoundary(draft.id, {
+                      name: draft.name,
+                      status: draft.status,
+                      source_note: draft.sourceNote,
+                      coordinates: draft.coordinates,
+                      actor: actorName,
+                      reason
+                    });
+                  } else {
+                    await createJorongBoundary({
+                      name: draft.name,
+                      status: draft.status,
+                      source_note: draft.sourceNote,
+                      coordinates: draft.coordinates,
+                      actor: actorName,
+                      reason
+                    });
+                  }
+                  setEditingJorong(null);
+                  await refreshSqliteState();
+                  notify(lang === 'en' ? 'Jorong boundary saved & logged.' : 'Batas Jorong tersimpan & dicatat.');
+                } catch (err) {
+                  notify(err instanceof Error ? err.message : 'Save failed');
+                }
+              }}
+              onDeleteJorong={async (id, reason) => {
+                try {
+                  await deleteJorongBoundary(id, { actor: actorName, reason });
+                  setEditingJorong(null);
+                  await refreshSqliteState();
+                  notify(lang === 'en' ? 'Jorong boundary removed.' : 'Batas Jorong dihapus.');
+                } catch (err) {
+                  notify(err instanceof Error ? err.message : 'Delete failed');
+                }
+              }}
+              onFlyToJorong={feat => {
+                const ring = feat.geometry.coordinates[0] || [];
+                const mid = ring[Math.floor(ring.length / 2)];
+                if (mid) flyTo(mid, { zoom: 14.8 });
+              }}
               auditLogs={auditLogs}
               onRevertAuditLog={async logId => {
                 try {
                   await revertAuditLog(logId, { actor: actorName, reason: `Revert log #${logId}` });
                   setEditingWaterway(null);
                   setEditingStructure(null);
+                  setEditingJorong(null);
                   await refreshSqliteState();
                   notify(lang === 'en' ? `Reverted #${logId}` : `Perubahan #${logId} berhasil dipulihkan`);
                 } catch (err) {
@@ -1150,10 +1392,26 @@ export function App() {
           }`}
         >
           <span>{bannerMessage}</span>
-          {(activeTool === 'drawWaterway' || activeTool === 'redrawWaterway') && (
+          {(activeTool === 'drawWaterway' || activeTool === 'redrawWaterway' || activeTool === 'drawJorong') && (
             <button
               type="button"
               onClick={() => {
+                if (activeTool === 'drawJorong') {
+                  if (drawVertices.length < 3) {
+                    notify(lang === 'en' ? 'At least 3 vertices required for a polygon.' : 'Minimal 3 titik batas diperlukan untuk poligon Jorong.');
+                    return;
+                  }
+                  setEditingJorong({
+                    id: null,
+                    name: '',
+                    status: 'indicative',
+                    sourceNote: '',
+                    coordinates: [...drawVertices]
+                  });
+                  setDrawVertices([]);
+                  setActiveTool(null);
+                  return;
+                }
                 if (drawVertices.length < 2) {
                   notify(t.toastNeed2Pts);
                   return;
