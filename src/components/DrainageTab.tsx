@@ -82,25 +82,14 @@ export function DrainageTab({
 
   return (
     <div className="flex flex-col gap-3.5">
-      {/* Unified Interactive Legend + Crossing Status Filters + Factual Reference Points */}
+      {/* Crossing Status Filters + Factual Reference Points */}
       <section className="rounded-xl border border-[#161c1a]/12 bg-white p-3.5">
         <div className="mb-2.5 flex items-center gap-1.5">
-          <span className="text-[13px] font-bold text-[#161c1a]">{t.drainLegendTitle}</span>
+          <span className="text-[13px] font-bold text-[#161c1a]">{t.drainInventoryTitle}</span>
           <InfoTooltip
             text={isDetail ? t.drainFilterTitle : t.drainSimpleHint}
-            label={t.drainLegendTitle}
+            label={t.drainInventoryTitle}
           />
-        </div>
-
-        <div className="mb-2.5 flex flex-wrap items-center gap-3 border-b border-[#161c1a]/10 pb-2.5 text-[12px] text-[#434d49]">
-          <span className="inline-flex items-center gap-1.5">
-            <LegendIcon kind="bridge" size={16} />
-            <span>{isEn ? 'Verified bridge/culvert' : 'Jembatan / gorong-gorong'}</span>
-          </span>
-          <span className="inline-flex items-center gap-1.5">
-            <LegendIcon kind="crossing" size={16} />
-            <span>{t.fUnverified}</span>
-          </span>
         </div>
 
         <div className="flex flex-wrap gap-1.5 border-b border-[#161c1a]/10 pb-3">

@@ -716,7 +716,7 @@ export function MapView(props: MapViewProps) {
       container: containerRef.current,
       style: initialStyle,
       center,
-      zoom: 13.6,
+      zoom: 15.6,
       minZoom: 11.4,
       maxZoom: 19,
       maxBounds: [
@@ -928,6 +928,31 @@ export function MapView(props: MapViewProps) {
           'line-color': ['case', ['==', ['get', 'major'], true], p.contours.majorColor, p.contours.minorColor],
           'line-width': ['case', ['==', ['get', 'major'], true], 1.65, 1.0],
           'line-opacity': ['case', ['==', ['get', 'major'], true], p.contours.majorOpacity, p.contours.minorOpacity]
+        }
+      });
+
+      map.addSource('src-agam-rbi', { type: 'geojson', data: asGeoInput(ds.agamRbiRivers || EMPTY_FC) });
+      map.addLayer({
+        id: 'agam-rbi-casing',
+        type: 'line',
+        source: 'src-agam-rbi',
+        layout: { visibility: 'none', 'line-cap': 'round', 'line-join': 'round' },
+        paint: {
+          'line-color': p.agamRbi.casingColor,
+          'line-width': ['match', ['get', 'kind'], 'river', 5.2, 3.8],
+          'line-opacity': p.agamRbi.casingOpacity
+        }
+      });
+      map.addLayer({
+        id: 'agam-rbi-line',
+        type: 'line',
+        source: 'src-agam-rbi',
+        layout: { visibility: 'none', 'line-cap': 'round', 'line-join': 'round' },
+        paint: {
+          'line-color': p.agamRbi.lineColor,
+          'line-width': ['match', ['get', 'kind'], 'river', 3.0, 2.1],
+          'line-dasharray': [4, 2.2],
+          'line-opacity': p.agamRbi.lineOpacity
         }
       });
 
@@ -1282,31 +1307,6 @@ export function MapView(props: MapViewProps) {
         paint: {
           'line-color': p.agamSoil.lineColor,
           'line-width': p.agamSoil.lineWidth
-        }
-      });
-
-      map.addSource('src-agam-rbi', { type: 'geojson', data: asGeoInput(ds.agamRbiRivers || EMPTY_FC) });
-      map.addLayer({
-        id: 'agam-rbi-casing',
-        type: 'line',
-        source: 'src-agam-rbi',
-        layout: { visibility: 'none', 'line-cap': 'round', 'line-join': 'round' },
-        paint: {
-          'line-color': p.agamRbi.casingColor,
-          'line-width': ['match', ['get', 'kind'], 'river', 5.2, 3.8],
-          'line-opacity': p.agamRbi.casingOpacity
-        }
-      });
-      map.addLayer({
-        id: 'agam-rbi-line',
-        type: 'line',
-        source: 'src-agam-rbi',
-        layout: { visibility: 'none', 'line-cap': 'round', 'line-join': 'round' },
-        paint: {
-          'line-color': p.agamRbi.lineColor,
-          'line-width': ['match', ['get', 'kind'], 'river', 3.0, 2.1],
-          'line-dasharray': [4, 2.2],
-          'line-opacity': p.agamRbi.lineOpacity
         }
       });
 
@@ -2569,10 +2569,11 @@ export function MapView(props: MapViewProps) {
     map.setPaintProperty('flows-line', 'line-color', pal.flows.lineColor);
     map.setPaintProperty('flows-line', 'line-opacity', pal.flows.lineOpacity);
 
+    const rbiSimScale = props.tab === 'sim' ? { casing: 0.62, line: 0.78 } : { casing: 1, line: 1 };
     map.setPaintProperty('agam-rbi-casing', 'line-color', pal.agamRbi.casingColor);
-    map.setPaintProperty('agam-rbi-casing', 'line-opacity', pal.agamRbi.casingOpacity);
+    map.setPaintProperty('agam-rbi-casing', 'line-opacity', pal.agamRbi.casingOpacity * rbiSimScale.casing);
     map.setPaintProperty('agam-rbi-line', 'line-color', pal.agamRbi.lineColor);
-    map.setPaintProperty('agam-rbi-line', 'line-opacity', pal.agamRbi.lineOpacity);
+    map.setPaintProperty('agam-rbi-line', 'line-opacity', pal.agamRbi.lineOpacity * rbiSimScale.line);
 
     map.setPaintProperty('agam-forest-fill', 'fill-color', [
       'match',
@@ -2630,7 +2631,7 @@ export function MapView(props: MapViewProps) {
       pal.agamLandslide.lowLine
     ]);
     map.setPaintProperty('agam-landslide-line', 'line-width', pal.agamLandslide.lineWidth);
-  }, [mapReady, props.basemap]);
+  }, [mapReady, props.basemap, props.tab]);
 
   useEffect(() => {
     const map = mapRef.current;

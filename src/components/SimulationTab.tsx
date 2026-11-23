@@ -31,6 +31,8 @@ interface SimulationTabProps {
   forestScenario: ForestScenario;
   forestActualPct: number;
   rainAnimEnabled: boolean;
+  showVerifiedWaterways: boolean;
+  showRbiRivers: boolean;
   verifiedIssueCount?: number;
   verifiedWaterways?: VerifiedWaterwayFeature[];
   demClient?: DemClient | null;
@@ -47,6 +49,8 @@ interface SimulationTabProps {
   onChangeForestScenario: (f: ForestScenario) => void;
   onApplyPreset: (preset: 'normal' | 'upland' | 'extreme') => void;
   onToggleRainAnim: (enabled: boolean) => void;
+  onToggleVerifiedWaterways: (enabled: boolean) => void;
+  onToggleRbiRivers: (enabled: boolean) => void;
 }
 
 function formatDurationClock(totalMinutes: number): string {
@@ -84,6 +88,8 @@ export function SimulationTab({
   forestScenario,
   forestActualPct,
   rainAnimEnabled,
+  showVerifiedWaterways,
+  showRbiRivers,
   verifiedIssueCount = 0,
   verifiedWaterways = [],
   demClient = null,
@@ -99,7 +105,9 @@ export function SimulationTab({
   onChangeDrainCondition,
   onChangeForestScenario,
   onApplyPreset,
-  onToggleRainAnim
+  onToggleRainAnim,
+  onToggleVerifiedWaterways,
+  onToggleRbiRivers
 }: SimulationTabProps) {
   const uid = useId();
   const t = I18N[lang];
@@ -477,6 +485,51 @@ export function SimulationTab({
         )}
       </section>
 
+      {/* River & Tributary Layers shown during Simulation */}
+      <section className="rounded-xl border border-[#161c1a]/12 bg-white p-3.5">
+        <div className="mb-1.5 text-[13px] font-bold text-[#161c1a]">{t.simRiversTitle}</div>
+        <div className="divide-y divide-[#161c1a]/10">
+          <div className="flex min-h-[40px] items-center justify-between gap-2.5 py-1">
+            <label
+              htmlFor={`${uid}-sim-ww`}
+              className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 text-[12.5px] font-medium text-[#161c1a]"
+            >
+              <LegendIcon kind="waterway" />
+              <span className="leading-snug">{t.lblVerifiedWaterways}</span>
+            </label>
+            <input
+              id={`${uid}-sim-ww`}
+              data-testid="sim-toggle-verified-waterways"
+              type="checkbox"
+              checked={showVerifiedWaterways}
+              onChange={e => onToggleVerifiedWaterways(e.target.checked)}
+              className="h-4.5 w-4.5 shrink-0 cursor-pointer accent-[#0369a1]"
+            />
+          </div>
+
+          <div className="flex min-h-[40px] items-center justify-between gap-2.5 py-1">
+            <div className="flex min-w-0 flex-1 items-center gap-1.5">
+              <label
+                htmlFor={`${uid}-sim-rbi`}
+                className="flex min-w-0 cursor-pointer items-center gap-2 text-[12.5px] font-medium text-[#161c1a]"
+              >
+                <LegendIcon kind="agamRbi" />
+                <span className="leading-snug">{t.lblAgamRbiRivers}</span>
+              </label>
+              <InfoTooltip text={t.infoSimRbiRivers} label={t.lblAgamRbiRivers} />
+            </div>
+            <input
+              id={`${uid}-sim-rbi`}
+              data-testid="sim-toggle-rbi-rivers"
+              type="checkbox"
+              checked={showRbiRivers}
+              onChange={e => onToggleRbiRivers(e.target.checked)}
+              className="h-4.5 w-4.5 shrink-0 cursor-pointer accent-[#0369a1]"
+            />
+          </div>
+        </div>
+      </section>
+
       {/* Model Output Summary */}
       <section className="rounded-xl border border-[#161c1a]/12 bg-white p-3.5">
         <div className="mb-2.5 flex flex-wrap items-center justify-between gap-1.5">
@@ -680,43 +733,6 @@ export function SimulationTab({
           </section>
         );
       })()}
-
-      {/* Compact Read-Only Computed Output Legend */}
-      <section className="rounded-xl border border-[#161c1a]/12 bg-white p-3.5">
-        <div className="mb-2 text-[13px] font-bold text-[#161c1a]">{t.simLegendTitle}</div>
-        <div className="grid grid-cols-2 gap-x-3 gap-y-2 text-[12px] leading-snug text-[#161c1a]">
-          <div className="flex items-start gap-2">
-            <span className="mt-0.5 shrink-0">
-              <LegendIcon kind="flow" />
-            </span>
-            <span>{isEn ? 'Modeled flow direction' : 'Arah aliran model'}</span>
-          </div>
-          <div className="flex items-start gap-2">
-            <span className="mt-1 h-3 w-3 shrink-0 rounded-[3px] bg-[#0369a1]" />
-            <span className="flex items-center gap-1">
-              <span>{isEn ? 'Deep basin (>1.5m HAND)' : 'Cekungan utama (>1,5m HAND)'}</span>
-              <InfoTooltip
-                text={t.infoLegendDeep}
-                label={isEn ? 'Deep HAND basin' : 'Cekungan utama HAND'}
-              />
-            </span>
-          </div>
-          <div className="flex items-start gap-2">
-            <span className="mt-1 h-3 w-3 shrink-0 rounded-[3px] bg-[#7dd3fc]" />
-            <span>{isEn ? 'Shallow basin (HAND)' : 'Cekungan dangkal (HAND)'}</span>
-          </div>
-          <div className="flex items-start gap-2">
-            <span className="mt-1 h-3 w-3 shrink-0 rounded-[3px] bg-[#ea580c]" />
-            <span className="flex items-center gap-1">
-              <span>{isEn ? 'Steep slope (model)' : 'Lereng curam jenuh (model)'}</span>
-              <InfoTooltip
-                text={t.infoLegendLandslide}
-                label={isEn ? 'Saturated steep slope (model)' : 'Lereng curam terjenuhkan (model)'}
-              />
-            </span>
-          </div>
-        </div>
-      </section>
     </div>
   );
 }

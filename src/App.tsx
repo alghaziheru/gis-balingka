@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ChevronLeft,
+  CloudRain,
   Droplets,
   MapPin,
   Menu,
   Mountain,
   Wrench
 } from 'lucide-react';
+import { ActiveMapLegend } from './components/ActiveMapLegend';
 import { DrainageTab } from './components/DrainageTab';
 import { EditorTab, type EditorSubTab } from './components/EditorTab';
 import { EditorUnlockModal } from './components/EditorUnlockModal';
@@ -79,6 +81,48 @@ import type {
   ViewMode
 } from './types/gis';
 
+const DEFAULT_LAYERS: LayerToggles = {
+  verifiedWaterways: true,
+  structures: true,
+  unverifiedCrossings: false,
+  settlements: true,
+  landCover: false,
+  scourChange: false,
+  agamLandslide: false,
+  agamRbiRivers: false,
+  agamForestStatus: false,
+  agamSoilGeology: false,
+  hillshade: false,
+  das: true,
+  contours: false,
+  slope: false,
+  osmContext: false,
+  landslide: true,
+  evac: true
+};
+
+const DEFAULT_FLOW_DENSITY = 1;
+const DEFAULT_VIEW_CENTER: [number, number] = [100.324686, -0.336166];
+const DEFAULT_VIEW_ZOOM = 15.6;
+
+const MAP_LAYER_KEYS: (keyof LayerToggles)[] = [
+  'verifiedWaterways',
+  'structures',
+  'unverifiedCrossings',
+  'settlements',
+  'landCover',
+  'scourChange',
+  'agamLandslide',
+  'agamRbiRivers',
+  'agamForestStatus',
+  'agamSoilGeology',
+  'hillshade',
+  'das',
+  'contours',
+  'slope',
+  'osmContext'
+];
+
 export function App() {
   const [lang, setLang] = useState<Language>('id');
   const [viewMode, setViewMode] = useState<ViewMode>('simple');
@@ -87,31 +131,13 @@ export function App() {
   const [basemap, setBasemap] = useState<BasemapId>('sat');
   const [cameraPreset, setCameraPreset] = useState('center');
   const [exaggeration, setExaggeration] = useState(1.35);
-  const [flowDensity, setFlowDensity] = useState(0);
+  const [flowDensity, setFlowDensity] = useState(DEFAULT_FLOW_DENSITY);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileSheetMode, setMobileSheetMode] = useState<'peek' | 'half' | 'full'>('peek');
   const [infoModalTab, setInfoModalTab] = useState<InfoModalTab | null>(null);
   const [feedbackOpen, setFeedbackOpen] = useState(false);
 
-  const [layers, setLayers] = useState<LayerToggles>({
-    verifiedWaterways: true,
-    structures: true,
-    unverifiedCrossings: false,
-    settlements: true,
-    landCover: false,
-    scourChange: false,
-    agamLandslide: false,
-    agamRbiRivers: false,
-    agamForestStatus: false,
-    agamSoilGeology: false,
-    hillshade: false,
-    das: true,
-    contours: false,
-    slope: false,
-    osmContext: false,
-    landslide: true,
-    evac: true
-  });
+  const [layers, setLayers] = useState<LayerToggles>(DEFAULT_LAYERS);
 
   const [datasets, setDatasets] = useState<LoadedDatasets | null>(null);
   const [metadata, setMetadata] = useState<DatasetMetadata | null>(null);
@@ -135,6 +161,8 @@ export function App() {
   const [drainCondition, setDrainCondition] = useState<DrainCondition>('clogged');
   const [forestScenario, setForestScenario] = useState<ForestScenario>('actual');
   const [rainAnimEnabled, setRainAnimEnabled] = useState(true);
+  const [simShowVerifiedWaterways, setSimShowVerifiedWaterways] = useState(true);
+  const [simShowRbiRivers, setSimShowRbiRivers] = useState(true);
 
   const [drainFilter, setDrainFilter] = useState<'all' | DrainageStatus>('all');
   const [drawVertices, setDrawVertices] = useState<[number, number][]>([]);
@@ -166,14 +194,14 @@ export function App() {
   const flyCounter = useRef(0);
   const mapControlRef = useRef<MapControlHandle | null>(null);
   const [mapCamera, setMapCamera] = useState<MapCameraState>({
-    zoom: 13.6,
+    zoom: DEFAULT_VIEW_ZOOM,
     bearing: -12,
     pitch: 36,
-    metersPerPixel: 12.6
+    metersPerPixel: 3.15
   });
   const [cursorTelemetry, setCursorTelemetry] = useState({
-    lng: 100.3245,
-    lat: -0.3355,
+    lng: DEFAULT_VIEW_CENTER[0],
+    lat: DEFAULT_VIEW_CENTER[1],
     elev: 1089,
     slope: 8
   });
@@ -239,12 +267,26 @@ export function App() {
         if (cancelled) return;
         const m = meta as DatasetMetadata;
         const client = new DemClient(demGrid as DemGridData);
+        const balingkaPlace = (
+          osmContext as {
+            features?: Array<{
+              geometry?: { type?: string; coordinates?: [number, number] };
+              properties?: { kind?: string; name?: string };
+            }>;
+          }
+        ).features?.find(
+          f =>
+            f.properties?.kind === 'place' &&
+            f.geometry?.type === 'Point' &&
+            f.properties?.name?.trim().toLowerCase() === 'balingka'
+        );
+        const initialCenter: [number, number] = balingkaPlace?.geometry?.coordinates ?? DEFAULT_VIEW_CENTER;
         setMetadata(m);
         setDemClient(client);
         setSimFields(sfData as SimFieldsData | null);
         setDatasets({
           bbox: m.bbox,
-          center: m.center,
+          center: initialCenter,
           mask,
           watershed,
           nagariBoundary,
@@ -257,10 +299,10 @@ export function App() {
           agamContext
         });
         setCursorTelemetry({
-          lng: m.center[0],
-          lat: m.center[1],
-          elev: client.getElevation(m.center[0], m.center[1]),
-          slope: client.getSlopePercent(m.center[0], m.center[1])
+          lng: initialCenter[0],
+          lat: initialCenter[1],
+          elev: client.getElevation(initialCenter[0], initialCenter[1]),
+          slope: client.getSlopePercent(initialCenter[0], initialCenter[1])
         });
 
         const edStatus = await fetchEditorStatus();
@@ -549,7 +591,7 @@ export function App() {
   const handleCameraPreset = (preset: string) => {
     setCameraPreset(preset);
     const presets: Record<string, { center: [number, number]; zoom: number; pitch: number; bearing: number }> = {
-      center: { center: [100.319, -0.345], zoom: 13.6, pitch: is3D ? 36 : 0, bearing: is3D ? -12 : 0 },
+      center: { center: datasets?.center ?? DEFAULT_VIEW_CENTER, zoom: DEFAULT_VIEW_ZOOM, pitch: is3D ? 36 : 0, bearing: is3D ? -12 : 0 },
       subarang: { center: [100.326183, -0.326062], zoom: 15.5, pitch: is3D ? 34 : 0, bearing: is3D ? -12 : 0 },
       hilalang: { center: [100.327863, -0.341817], zoom: 15.6, pitch: is3D ? 34 : 0, bearing: is3D ? -8 : 0 },
       pahambatan: { center: [100.319315, -0.339606], zoom: 15.6, pitch: is3D ? 34 : 0, bearing: is3D ? -10 : 0 }
@@ -586,6 +628,17 @@ export function App() {
         ] as const);
 
   const suppressedDemIds = useMemo(() => suppressedDem.map(s => s.seg_id), [suppressedDem]);
+  const effectiveLayers = useMemo<LayerToggles>(
+    () =>
+      tab === 'sim'
+        ? {
+            ...layers,
+            verifiedWaterways: simShowVerifiedWaterways,
+            agamRbiRivers: simShowRbiRivers
+          }
+        : layers,
+    [tab, layers, simShowVerifiedWaterways, simShowRbiRivers]
+  );
   const mapEditingWaterway = useMemo(
     () =>
       editingWaterway
@@ -629,7 +682,7 @@ export function App() {
           is3D={is3D}
           basemap={basemap}
           exaggeration={exaggeration}
-          layers={layers}
+          layers={effectiveLayers}
           flowDensity={flowDensity}
           activeTool={activeTool}
           simRain={simRain}
@@ -799,7 +852,6 @@ export function App() {
         active={tab === 'sim' && rainAnimEnabled && simProgress > 0.01}
         intensityMmHr={simRain}
         rainPattern={rainPattern}
-        lang={lang}
       />
 
       {sidebarCollapsed && (
@@ -905,7 +957,6 @@ export function App() {
             <TerrainTab
               lang={lang}
               viewMode={viewMode}
-              basemap={basemap}
               layers={layers}
               exaggeration={exaggeration}
               flowDensity={flowDensity}
@@ -913,12 +964,39 @@ export function App() {
               raindrop={raindrop}
               studyAreaKm2={metadata?.studyAreaKm2 || 29.9}
               buildingCount={metadata?.buildingCount}
-              landCoverStats={metadata?.landCoverStats}
-              scourStats={metadata?.scourStats}
               agamStats={metadata?.agamStats}
               cameraPreset={cameraPreset}
               onSelectPreset={handleCameraPreset}
               onToggleLayer={(key, val) => setLayers(prev => ({ ...prev, [key]: val }))}
+              onResetDefaultLayers={() => {
+                setLayers(prev => {
+                  const next = { ...prev };
+                  for (const key of MAP_LAYER_KEYS) {
+                    next[key] = DEFAULT_LAYERS[key];
+                  }
+                  return next;
+                });
+                setFlowDensity(DEFAULT_FLOW_DENSITY);
+              }}
+              onClearAllLayers={() => {
+                setLayers(prev => {
+                  const next = { ...prev };
+                  for (const key of MAP_LAYER_KEYS) {
+                    next[key] = false;
+                  }
+                  return next;
+                });
+                setFlowDensity(0);
+              }}
+              onClearAgamLayers={() => {
+                setLayers(prev => ({
+                  ...prev,
+                  agamLandslide: false,
+                  agamRbiRivers: false,
+                  agamForestStatus: false,
+                  agamSoilGeology: false
+                }));
+              }}
               onChangeExag={setExaggeration}
               onChangeFlowDensity={setFlowDensity}
               onToggleTool={tool => {
@@ -943,6 +1021,8 @@ export function App() {
               forestScenario={forestScenario}
               forestActualPct={metadata?.landCoverStats?.forestPct ?? 74}
               rainAnimEnabled={rainAnimEnabled}
+              showVerifiedWaterways={simShowVerifiedWaterways}
+              showRbiRivers={simShowRbiRivers}
               verifiedIssueCount={verifiedIssueCount}
               verifiedWaterways={verifiedWaterways}
               demClient={demClient}
@@ -998,6 +1078,8 @@ export function App() {
                 setSimPlaying(true);
               }}
               onToggleRainAnim={setRainAnimEnabled}
+              onToggleVerifiedWaterways={setSimShowVerifiedWaterways}
+              onToggleRbiRivers={setSimShowRbiRivers}
             />
           )}
 
@@ -1384,7 +1466,29 @@ export function App() {
         onChangeLang={setLang}
         onOpenFeedback={() => setFeedbackOpen(true)}
         onOpenInfo={() => setInfoModalTab('guide')}
-      />
+      >
+        {tab === 'sim' && rainAnimEnabled && simProgress > 0.01 && rainPattern === 'upland' && (
+          <div
+            data-testid="upland-rain-pill"
+            className="surface-panel pointer-events-none relative z-10 inline-flex items-center gap-2 rounded-full px-3.5 py-1.5 text-[12px] leading-none font-bold text-[#0369a1] max-md:hidden"
+          >
+            <CloudRain className="h-3.5 w-3.5 shrink-0" />
+            <span>{t.uplandRainPill}</span>
+          </div>
+        )}
+
+        <ActiveMapLegend
+          lang={lang}
+          tab={tab}
+          basemap={basemap}
+          layers={effectiveLayers}
+          flowDensity={flowDensity}
+          simProgress={simProgress}
+          drainFilter={drainFilter}
+          landCoverStats={metadata?.landCoverStats}
+          scourStats={metadata?.scourStats}
+        />
+      </TopHud>
 
       {activeTool && (
         <div
@@ -1483,12 +1587,18 @@ export function App() {
         viewMode={viewMode}
         tab={tab}
         basemap={basemap}
-        layers={layers}
+        layers={effectiveLayers}
         flowDensity={flowDensity}
+        simProgress={simProgress}
+        drainFilter={drainFilter}
+        landCoverStats={metadata?.landCoverStats}
+        scourStats={metadata?.scourStats}
         mobileSheetMode={mobileSheetMode}
         cursorTelemetry={cursorTelemetry}
         mapCamera={mapCamera}
         onToggleLayer={(key, val) => setLayers(prev => ({ ...prev, [key]: val }))}
+        onToggleSimVerifiedWaterways={setSimShowVerifiedWaterways}
+        onToggleSimRbiRivers={setSimShowRbiRivers}
         onChangeFlowDensity={setFlowDensity}
         onZoomIn={() => mapControlRef.current?.zoomIn()}
         onZoomOut={() => mapControlRef.current?.zoomOut()}
@@ -1546,7 +1656,13 @@ export function App() {
       />
 
       {toast && (
-        <div className="fixed top-16 right-3.5 z-60 rounded-xl bg-[#161c1a] px-4 py-2.5 text-[13px] font-semibold text-white shadow-xl">
+        <div
+          role="status"
+          aria-live="polite"
+          className={`fixed z-60 max-w-[92vw] -translate-x-1/2 rounded-xl bg-[#161c1a] px-4 py-2.5 text-[13px] font-semibold text-white shadow-xl max-md:top-14 max-md:left-1/2 ${
+            activeTool ? 'top-28' : 'top-16'
+          } ${sidebarCollapsed ? 'left-1/2' : 'left-[calc(50%+188px)]'}`}
+        >
           {toast}
         </div>
       )}

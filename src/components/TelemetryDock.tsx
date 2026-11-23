@@ -1,7 +1,16 @@
 import { useEffect, useRef, useState } from 'react';
 import { Info, Layers, Minus, Plus, X } from 'lucide-react';
 import { I18N } from '../i18n/translations';
-import type { BasemapId, Language, LayerToggles, TabId, ViewMode } from '../types/gis';
+import type {
+  BasemapId,
+  DrainageStatus,
+  LandCoverStats,
+  Language,
+  LayerToggles,
+  ScourStats,
+  TabId,
+  ViewMode
+} from '../types/gis';
 import { LegendIcon, type LegendIconKind } from './LegendIcon';
 import type { MapCameraState } from './MapView';
 
@@ -53,6 +62,10 @@ interface TelemetryDockProps {
   basemap: BasemapId;
   layers: LayerToggles;
   flowDensity: number;
+  simProgress: number;
+  drainFilter?: 'all' | DrainageStatus;
+  landCoverStats?: LandCoverStats;
+  scourStats?: ScourStats;
   mobileSheetMode: 'peek' | 'half' | 'full';
   cursorTelemetry: {
     lng: number;
@@ -62,6 +75,8 @@ interface TelemetryDockProps {
   };
   mapCamera: MapCameraState;
   onToggleLayer: (key: keyof LayerToggles, val: boolean) => void;
+  onToggleSimVerifiedWaterways?: (val: boolean) => void;
+  onToggleSimRbiRivers?: (val: boolean) => void;
   onChangeFlowDensity: (density: number) => void;
   onZoomIn: () => void;
   onZoomOut: () => void;
@@ -76,10 +91,16 @@ export function TelemetryDock({
   basemap,
   layers,
   flowDensity,
+  simProgress,
+  drainFilter = 'all',
+  landCoverStats,
+  scourStats,
   mobileSheetMode,
   cursorTelemetry,
   mapCamera,
   onToggleLayer,
+  onToggleSimVerifiedWaterways,
+  onToggleSimRbiRivers,
   onChangeFlowDensity,
   onZoomIn,
   onZoomOut,
@@ -223,6 +244,21 @@ export function TelemetryDock({
       });
     }
   } else if (tab === 'sim') {
+    mobileToggleItems.push({
+      id: 'sim-ww',
+      label: t.lblVerifiedWaterways,
+      icon: 'waterway',
+      checked: layers.verifiedWaterways,
+      onChange: v =>
+        onToggleSimVerifiedWaterways ? onToggleSimVerifiedWaterways(v) : onToggleLayer('verifiedWaterways', v)
+    });
+    mobileToggleItems.push({
+      id: 'sim-rbi',
+      label: t.lblAgamRbiRivers,
+      icon: 'agamRbi',
+      checked: layers.agamRbiRivers,
+      onChange: v => (onToggleSimRbiRivers ? onToggleSimRbiRivers(v) : onToggleLayer('agamRbiRivers', v))
+    });
     mobileToggleItems.push({
       id: 'set',
       label: t.lblSettlements,
@@ -396,7 +432,7 @@ export function TelemetryDock({
                 </button>
               </div>
 
-              {tab === 'sim' && (
+              {tab === 'sim' && simProgress > 0.03 && (
                 <div className="mb-2 flex flex-col gap-1 border-b border-[#161c1a]/10 pb-2 text-[12px]">
                   <div className="flex items-center gap-2 text-[#161c1a]">
                     <LegendIcon kind="flow" size={16} />
@@ -419,28 +455,37 @@ export function TelemetryDock({
 
               {tab === 'drainage' && (
                 <div className="mb-2 flex flex-wrap gap-x-3 gap-y-1 border-b border-[#161c1a]/10 pb-2 text-[11.5px] text-[#434d49]">
-                  <span className="inline-flex items-center gap-1">
-                    <span className="h-2.5 w-2.5 rounded-full border border-[#475569] bg-[#e2e8f0]" /> {t.fUnverified}
-                  </span>
-                  <span className="inline-flex items-center gap-1">
-                    <span className="h-2.5 w-2.5 rounded-full bg-[#b91c1c]" /> {t.fCritical}
-                  </span>
-                  <span className="inline-flex items-center gap-1">
-                    <span className="h-2.5 w-2.5 rounded-full bg-[#c2410c]" /> {t.fDamaged}
-                  </span>
-                  <span className="inline-flex items-center gap-1">
-                    <span className="h-2.5 w-2.5 rounded-full bg-[#b45309]" /> {t.fClogged}
-                  </span>
-                  <span className="inline-flex items-center gap-1">
-                    <span className="h-2.5 w-2.5 rounded-full bg-[#047857]" /> {t.fNormal}
-                  </span>
+                  {[
+                    { id: 'unverified' as const, label: t.fUnverified, color: '#64748b' },
+                    { id: 'normal' as const, label: t.fNormal, color: '#047857' },
+                    { id: 'clogged' as const, label: t.fClogged, color: '#b45309' },
+                    { id: 'damaged' as const, label: t.fDamaged, color: '#c2410c' },
+                    { id: 'critical' as const, label: t.fCritical, color: '#b91c1c' }
+                  ].map(st => {
+                    const dimmed = drainFilter !== 'all' && drainFilter !== st.id;
+                    const highlighted = drainFilter === st.id;
+                    return (
+                      <span
+                        key={st.id}
+                        className={`inline-flex items-center gap-1 ${
+                          dimmed ? 'opacity-35' : highlighted ? 'font-bold text-[#161c1a]' : ''
+                        }`}
+                      >
+                        <span
+                          className="h-2.5 w-2.5 rounded-full border border-white/80"
+                          style={{ background: st.color }}
+                        />{' '}
+                        {st.label}
+                      </span>
+                    );
+                  })}
                 </div>
               )}
 
-              {(basemap === 'elev' || basemap === 'slope') && tab === 'terrain' && (
+              {(basemap === 'elev' || basemap === 'slope' || layers.slope) && (
                 <div className="mb-2 flex items-center gap-2 rounded-md bg-[#fafaf8] px-2 py-1.5 text-[11.5px] text-[#434d49]">
                   <span
-                    className="h-2.5 w-3.5 shrink-0 rounded-[2px]"
+                    className="h-2.5 w-5 shrink-0 rounded-[2px]"
                     style={{
                       background:
                         basemap === 'elev'
@@ -448,7 +493,104 @@ export function TelemetryDock({
                           : 'linear-gradient(90deg,#f59e0b,#c2410c)'
                     }}
                   />
-                  <span>{basemap === 'elev' ? t.bmElev : t.bmSlope}</span>
+                  <span>
+                    {basemap === 'elev' ? `${t.bmElev} (1.032–2.869m)` : `${t.bmSlope} (>15%)`}
+                  </span>
+                </div>
+              )}
+
+              {layers.landCover && (
+                <div className="mb-2 grid grid-cols-2 gap-x-2 gap-y-1 rounded-md bg-[#fafaf8] px-2 py-1.5 text-[11px] text-[#434d49]">
+                  <span className="flex items-center gap-1">
+                    <span className="h-2.5 w-2.5 shrink-0 rounded-[2px] bg-[#15803d]" />
+                    <span className="truncate">{t.lcForest}</span>
+                    {landCoverStats && <strong className="font-mono-num ml-auto">{landCoverStats.forestPct}%</strong>}
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <span className="h-2.5 w-2.5 shrink-0 rounded-[2px] bg-[#65a30d]" />
+                    <span className="truncate">{t.lcShrubGrass}</span>
+                    {landCoverStats && <strong className="font-mono-num ml-auto">{landCoverStats.shrubGrassPct}%</strong>}
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <span className="h-2.5 w-2.5 shrink-0 rounded-[2px] bg-[#ca8a04]" />
+                    <span className="truncate">{t.lcCropland}</span>
+                    {landCoverStats && <strong className="font-mono-num ml-auto">{landCoverStats.croplandPct}%</strong>}
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <span className="h-2.5 w-2.5 shrink-0 rounded-[2px] bg-[#b91c1c]" />
+                    <span className="truncate">{t.lcBuiltup}</span>
+                    {landCoverStats && <strong className="font-mono-num ml-auto">{landCoverStats.builtupPct}%</strong>}
+                  </span>
+                </div>
+              )}
+
+              {layers.scourChange && (
+                <div className="mb-2 flex flex-col gap-1 rounded-md bg-[#fafaf8] px-2 py-1.5 text-[11px] text-[#434d49]">
+                  <div className="flex flex-wrap items-center justify-between gap-x-1.5 font-semibold text-[#161c1a]">
+                    <span>{isEn ? 'Sentinel-2 Veg. Change' : 'Perubahan Vegetasi Sentinel-2'}</span>
+                    {scourStats && (
+                      <span className="font-mono-num text-[10px] font-medium text-[#636f6a]">
+                        {scourStats.preDate} → {scourStats.postDate}
+                      </span>
+                    )}
+                  </div>
+                  {scourStats && (
+                    <div className="font-mono-num text-[10.5px] font-semibold text-[#991b1b]">
+                      {scourStats.totalScourHa} ha ({scourStats.corridorScourHa} ha {isEn ? 'valley' : 'lembah'})
+                    </div>
+                  )}
+                  <div className="flex flex-col gap-0.5">
+                    <span className="inline-flex items-center gap-1">
+                      <span className="h-2.5 w-2.5 rounded-[2px] bg-[#991b1b]" />{' '}
+                      {isEn ? 'Strong vegetation decrease' : 'Penurunan vegetasi tinggi'}
+                    </span>
+                    <span className="inline-flex items-center gap-1">
+                      <span className="h-2.5 w-2.5 rounded-[2px] bg-[#d97706]" />{' '}
+                      {isEn ? 'Moderate vegetation decrease' : 'Penurunan vegetasi sedang'}
+                    </span>
+                  </div>
+                </div>
+              )}
+
+              {layers.agamLandslide && (
+                <div className="mb-2 flex flex-wrap items-center gap-x-2.5 gap-y-1 rounded-md bg-[#fafaf8] px-2 py-1.5 text-[11px] text-[#434d49]">
+                  <span className="font-semibold text-[#161c1a]">{isEn ? 'Ground Movement:' : 'Gerakan Tanah:'}</span>
+                  <span className="inline-flex items-center gap-1">
+                    <span className="h-2.5 w-2.5 rounded-[2px] bg-[#dc2626]" /> {isEn ? 'High' : 'Tinggi'}
+                  </span>
+                  <span className="inline-flex items-center gap-1">
+                    <span className="h-2.5 w-2.5 rounded-[2px] bg-[#d97706]" /> {isEn ? 'Med' : 'Sedang'}
+                  </span>
+                  <span className="inline-flex items-center gap-1">
+                    <span className="h-2.5 w-2.5 rounded-[2px] bg-[#65a30d]" /> {isEn ? 'Low' : 'Rendah'}
+                  </span>
+                </div>
+              )}
+
+              {layers.agamForestStatus && (
+                <div className="mb-2 flex flex-wrap items-center gap-x-2.5 gap-y-1 rounded-md bg-[#fafaf8] px-2 py-1.5 text-[11px] text-[#434d49]">
+                  <span className="font-semibold text-[#161c1a]">{isEn ? 'Forest (SK 35):' : 'Hutan (SK 35):'}</span>
+                  <span className="inline-flex items-center gap-1">
+                    <span className="h-2.5 w-2.5 rounded-[2px] bg-[#22c55e]" /> HL
+                  </span>
+                  <span className="inline-flex items-center gap-1">
+                    <span className="h-2.5 w-2.5 rounded-[2px] bg-[#14b8a6]" /> KSA/KPA
+                  </span>
+                  <span className="inline-flex items-center gap-1">
+                    <span className="h-2.5 w-2.5 rounded-[2px] bg-[#cbd5e1]" /> APL
+                  </span>
+                </div>
+              )}
+
+              {layers.agamSoilGeology && (
+                <div className="mb-2 flex flex-wrap items-center gap-x-2.5 gap-y-1 rounded-md bg-[#fafaf8] px-2 py-1.5 text-[11px] text-[#434d49]">
+                  <span className="font-semibold text-[#161c1a]">{isEn ? 'Soil:' : 'Tanah:'}</span>
+                  <span className="inline-flex items-center gap-1">
+                    <span className="h-2.5 w-2.5 rounded-[2px] bg-[#f59e0b]" /> Andosol
+                  </span>
+                  <span className="inline-flex items-center gap-1">
+                    <span className="h-2.5 w-2.5 rounded-[2px] bg-[#94a3b8]" /> Kambisol
+                  </span>
                 </div>
               )}
 

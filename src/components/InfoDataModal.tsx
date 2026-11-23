@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
-import { BookOpen, Code2, Database, Download, ExternalLink, ShieldAlert, X } from 'lucide-react';
+import { BookOpen, BookText, Code2, Database, Download, ExternalLink, PlayCircle, Search, ShieldAlert, X } from 'lucide-react';
+import { GLOSSARY_ENTRIES } from '../data/glossary';
 import { I18N } from '../i18n/translations';
 import { fetchExportBundle } from '../lib/api';
 import type { DatasetMetadata, Language } from '../types/gis';
 
-export type InfoModalTab = 'guide' | 'method' | 'api';
+export type InfoModalTab = 'guide' | 'method' | 'glossary' | 'api';
 
 interface InfoDataModalProps {
   open: boolean;
@@ -17,7 +18,12 @@ interface InfoDataModalProps {
   onClose: () => void;
 }
 
-export function InfoDataModal({
+export function InfoDataModal(props: InfoDataModalProps) {
+  if (!props.open) return null;
+  return <InfoDataModalContent key={props.initialTab ?? 'guide'} {...props} />;
+}
+
+function InfoDataModalContent({
   open,
   initialTab = 'guide',
   lang,
@@ -29,12 +35,11 @@ export function InfoDataModal({
 }: InfoDataModalProps) {
   const [activeTab, setActiveTab] = useState<InfoModalTab>(initialTab);
   const [downloading, setDownloading] = useState(false);
+  const [glossaryQuery, setGlossaryQuery] = useState('');
 
   useEffect(() => {
-    if (open) {
-      setActiveTab(initialTab);
-    }
-  }, [open, initialTab]);
+    setActiveTab(initialTab);
+  }, [initialTab]);
 
   useEffect(() => {
     if (!open) return;
@@ -45,7 +50,6 @@ export function InfoDataModal({
     return () => window.removeEventListener('keydown', onKey);
   }, [open, onClose]);
 
-  if (!open) return null;
   const t = I18N[lang];
   const isEn = lang === 'en';
 
@@ -73,8 +77,25 @@ export function InfoDataModal({
   const tabs: { id: InfoModalTab; label: string; Icon: typeof BookOpen }[] = [
     { id: 'guide', label: t.infoTabGuide, Icon: BookOpen },
     { id: 'method', label: t.infoTabMethod, Icon: Database },
+    { id: 'glossary', label: t.infoTabGlossary, Icon: BookText },
     { id: 'api', label: t.infoTabApi, Icon: Code2 }
   ];
+
+  const normalizedQuery = glossaryQuery.trim().toLowerCase();
+  const filteredGlossary = GLOSSARY_ENTRIES.filter(entry => {
+    if (!normalizedQuery) return true;
+    const haystack = [
+      entry.termId,
+      entry.termEn,
+      entry.shortId ?? '',
+      entry.shortEn ?? '',
+      entry.descId,
+      entry.descEn
+    ]
+      .join(' ')
+      .toLowerCase();
+    return haystack.includes(normalizedQuery);
+  });
 
   const softwareRows = [
     { name: 'React 19, TypeScript, Vite & Tailwind CSS', role: isEn ? 'Open-source web UI & build tools' : 'Antarmuka web & sistem build terbuka', license: 'MIT' },
@@ -108,7 +129,7 @@ export function InfoDataModal({
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="flex max-h-[88vh] w-full max-w-[660px] flex-col overflow-hidden rounded-2xl border border-[#161c1a]/15 bg-[#ffffff] shadow-2xl">
+      <div className="flex max-h-[88vh] w-full max-w-[720px] flex-col overflow-hidden rounded-2xl border border-[#161c1a]/15 bg-[#ffffff] shadow-2xl">
         <div className="flex items-center justify-between border-b border-[#161c1a]/12 bg-[#fafaf8] px-5 py-4">
           <div>
             <h2 id="info-modal-title" className="m-0 text-[16px] font-extrabold text-[#161c1a]">
@@ -130,18 +151,19 @@ export function InfoDataModal({
           </button>
         </div>
 
-        <div className="grid grid-cols-3 gap-1 border-b border-[#161c1a]/12 bg-[#f2f3ef] px-5 py-2">
+        <div className="grid grid-cols-2 gap-1 border-b border-[#161c1a]/12 bg-[#f2f3ef] px-5 py-2 sm:grid-cols-4">
           {tabs.map(({ id, label, Icon }) => {
             const active = activeTab === id;
             return (
               <button
                 key={id}
                 type="button"
+                data-testid={`info-tab-${id}`}
                 onClick={() => setActiveTab(id)}
-                className={`inline-flex min-h-[38px] items-center justify-center gap-1.5 rounded-lg px-2 py-1.5 text-[13px] font-bold transition ${
+                className={`inline-flex min-h-[38px] items-center justify-center gap-1.5 rounded-lg border px-2 py-1.5 text-[12.5px] font-bold ${
                   active
-                    ? 'border border-[#161c1a]/12 bg-white text-[#0369a1] shadow-xs'
-                    : 'text-[#434d49] hover:bg-white/60 hover:text-[#161c1a]'
+                    ? 'border-[#161c1a]/12 bg-white text-[#0369a1] shadow-xs'
+                    : 'border-transparent text-[#434d49] hover:bg-white/60 hover:text-[#161c1a]'
                 }`}
               >
                 <Icon className="h-3.5 w-3.5 shrink-0" />
@@ -274,6 +296,93 @@ export function InfoDataModal({
                     : 'Garis komputasi dari DEMNAS 8m (garis putus-putus) dapat berbeda dari parit atau gorong-gorong sempit di lapangan. Gunakan mode Lengkap → Jalur Air untuk verifikasi data lapangan.'}
                 </p>
               </div>
+            </div>
+          )}
+
+          {activeTab === 'glossary' && (
+            <div className="flex flex-col gap-3.5" data-testid="glossary-panel">
+              <div className="relative">
+                <Search className="pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-[#636f6a]" />
+                <input
+                  type="text"
+                  data-testid="glossary-search"
+                  value={glossaryQuery}
+                  onChange={e => setGlossaryQuery(e.target.value)}
+                  placeholder={t.glossarySearchPlaceholder}
+                  aria-label={t.glossarySearchPlaceholder}
+                  className="min-h-[40px] w-full rounded-xl border border-[#161c1a]/18 bg-[#fafaf8] pr-9 pl-9 text-[13px] font-medium text-[#161c1a] placeholder:text-[#636f6a] focus:border-[#0369a1] focus:bg-white focus:outline-none"
+                />
+                {glossaryQuery && (
+                  <button
+                    type="button"
+                    onClick={() => setGlossaryQuery('')}
+                    aria-label={t.clear}
+                    className="absolute top-1/2 right-2 grid h-7 w-7 -translate-y-1/2 place-items-center rounded-md text-[#636f6a] hover:bg-[#161c1a]/8 hover:text-[#161c1a]"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                )}
+              </div>
+
+              {filteredGlossary.length === 0 ? (
+                <div className="flex flex-col items-center gap-2 rounded-xl border border-[#161c1a]/12 bg-[#fafaf8] px-4 py-6 text-center">
+                  <p className="m-0 text-[13px] font-medium text-[#434d49]">{t.glossaryEmpty}</p>
+                  <button
+                    type="button"
+                    onClick={() => setGlossaryQuery('')}
+                    className="min-h-[34px] rounded-lg border border-[#161c1a]/15 bg-white px-3 py-1 text-[12.5px] font-bold text-[#0369a1] hover:bg-[#f2f3ef]"
+                  >
+                    {t.glossaryResetSearch}
+                  </button>
+                </div>
+              ) : (
+                <div className="flex flex-col gap-2.5">
+                  {filteredGlossary.map(entry => {
+                    const term = isEn ? entry.termEn : entry.termId;
+                    const short = isEn ? entry.shortEn : entry.shortId;
+                    const desc = isEn ? entry.descEn : entry.descId;
+                    return (
+                      <article
+                        key={entry.id}
+                        data-testid={`glossary-entry-${entry.id}`}
+                        className="rounded-xl border border-[#161c1a]/12 bg-[#fafaf8] p-3.5"
+                      >
+                        <div className="min-w-0">
+                          <h3 className="m-0 text-[14px] font-bold text-[#161c1a]">{term}</h3>
+                          {short && (
+                            <div className="text-[11.5px] font-semibold text-[#0369a1]">{short}</div>
+                          )}
+                        </div>
+                        <p className="mt-2 mb-0 text-[13px] leading-relaxed text-[#434d49]">{desc}</p>
+                        {entry.links.length > 0 && (
+                          <div className="mt-2.5 flex flex-wrap gap-1.5">
+                            {entry.links.map(link => {
+                              const label = isEn ? link.labelEn : link.labelId;
+                              const isVideo = link.kind === 'video';
+                              return (
+                                <a
+                                  key={link.href}
+                                  href={link.href}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="inline-flex min-h-[28px] items-center gap-1.5 rounded-lg border border-[#161c1a]/15 bg-white px-2.5 py-1 text-[11.5px] font-semibold text-[#0369a1] transition hover:border-[#0369a1]/40 hover:bg-[#f2f3ef]"
+                                >
+                                  {isVideo ? (
+                                    <PlayCircle className="h-3.5 w-3.5 shrink-0" />
+                                  ) : (
+                                    <ExternalLink className="h-3 w-3 shrink-0" />
+                                  )}
+                                  <span>{label}</span>
+                                </a>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </article>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           )}
 

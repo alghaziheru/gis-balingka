@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Info, MessageSquare, Settings } from 'lucide-react';
 import { I18N } from '../i18n/translations';
 import type { BasemapId, Language, ViewMode } from '../types/gis';
@@ -14,6 +14,7 @@ interface TopHudProps {
   onChangeLang: (lang: Language) => void;
   onOpenFeedback: () => void;
   onOpenInfo: () => void;
+  children?: ReactNode;
 }
 
 export function TopHud({
@@ -26,7 +27,8 @@ export function TopHud({
   onChangeBasemap,
   onChangeLang,
   onOpenFeedback,
-  onOpenInfo
+  onOpenInfo,
+  children
 }: TopHudProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
@@ -66,8 +68,9 @@ export function TopHud({
       ];
 
   return (
-    <div className="pointer-events-auto absolute top-3 right-3 z-25 flex max-w-[calc(100vw-408px)] flex-wrap items-center justify-end gap-1.5 max-md:top-2 max-md:right-2 max-md:left-2 max-md:max-w-none max-md:flex-nowrap max-md:justify-end max-md:gap-1.5">
-      {isDetail && (
+    <div className="pointer-events-none absolute top-3 right-3 z-25 flex max-w-[calc(100vw-408px)] flex-col items-end gap-2.5 max-md:top-2 max-md:right-2 max-md:left-2 max-md:max-w-none">
+      <div className="pointer-events-auto relative z-30 flex flex-wrap items-center justify-end gap-1.5 max-md:w-full max-md:flex-nowrap max-md:justify-end max-md:gap-1.5">
+        {isDetail && (
         <div className="surface-panel inline-flex shrink-0 items-center gap-0.5 rounded-[10px] p-[3px] max-md:hidden">
           <button
             type="button"
@@ -211,6 +214,7 @@ export function TopHud({
               <button
                 type="button"
                 role="menuitem"
+                data-testid="hud-info-btn"
                 onClick={() => {
                   setMenuOpen(false);
                   onOpenInfo();
@@ -224,6 +228,8 @@ export function TopHud({
           </div>
         )}
       </div>
+      </div>
+      {children}
     </div>
   );
 }

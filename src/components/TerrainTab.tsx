@@ -1,15 +1,12 @@
 import { useId } from 'react';
-import { Droplets, MapPin, SlidersHorizontal, TrendingUp } from 'lucide-react';
+import { Droplets, MapPin, RotateCcw, SlidersHorizontal, TrendingUp, X } from 'lucide-react';
 import { I18N } from '../i18n/translations';
 import type {
   ActiveTool,
   AgamStats,
-  BasemapId,
-  LandCoverStats,
   Language,
   LayerToggles,
   RaindropTrace,
-  ScourStats,
   ViewMode
 } from '../types/gis';
 import { InfoTooltip } from './InfoTooltip';
@@ -18,7 +15,6 @@ import { LegendIcon, type LegendIconKind } from './LegendIcon';
 interface TerrainTabProps {
   lang: Language;
   viewMode: ViewMode;
-  basemap: BasemapId;
   layers: LayerToggles;
   exaggeration: number;
   flowDensity: number;
@@ -26,12 +22,13 @@ interface TerrainTabProps {
   raindrop: RaindropTrace | null;
   studyAreaKm2: number;
   buildingCount?: number;
-  landCoverStats?: LandCoverStats;
-  scourStats?: ScourStats;
   agamStats?: AgamStats;
   cameraPreset: string;
   onSelectPreset: (preset: string) => void;
   onToggleLayer: (key: keyof LayerToggles, val: boolean) => void;
+  onResetDefaultLayers: () => void;
+  onClearAllLayers: () => void;
+  onClearAgamLayers: () => void;
   onChangeExag: (val: number) => void;
   onChangeFlowDensity: (density: number) => void;
   onToggleTool: (tool: 'raindrop' | 'profileA') => void;
@@ -42,7 +39,6 @@ interface TerrainTabProps {
 export function TerrainTab({
   lang,
   viewMode,
-  basemap,
   layers,
   exaggeration,
   flowDensity,
@@ -50,12 +46,13 @@ export function TerrainTab({
   raindrop,
   studyAreaKm2,
   buildingCount,
-  landCoverStats,
-  scourStats,
   agamStats,
   cameraPreset,
   onSelectPreset,
   onToggleLayer,
+  onResetDefaultLayers,
+  onClearAllLayers,
+  onClearAgamLayers,
   onChangeExag,
   onChangeFlowDensity,
   onToggleTool,
@@ -66,6 +63,75 @@ export function TerrainTab({
   const t = I18N[lang];
   const isEn = lang === 'en';
   const isDetail = viewMode === 'detail';
+
+  const mapLayerKeys: (keyof LayerToggles)[] = [
+    'verifiedWaterways',
+    'structures',
+    'unverifiedCrossings',
+    'settlements',
+    'landCover',
+    'scourChange',
+    'agamLandslide',
+    'agamRbiRivers',
+    'agamForestStatus',
+    'agamSoilGeology',
+    'hillshade',
+    'das',
+    'contours',
+    'slope',
+    'osmContext'
+  ];
+  const defaultTrueKeys = new Set<keyof LayerToggles>([
+    'verifiedWaterways',
+    'structures',
+    'settlements',
+    'das'
+  ]);
+  const agamLayerKeys: (keyof LayerToggles)[] = [
+    'agamLandslide',
+    'agamRbiRivers',
+    'agamForestStatus',
+    'agamSoilGeology'
+  ];
+
+  const activeMapLayerCount =
+    mapLayerKeys.filter(k => layers[k]).length + (flowDensity > 0 ? 1 : 0);
+  const isAtDefaultLayers =
+    flowDensity === 1 && mapLayerKeys.every(k => layers[k] === defaultTrueKeys.has(k));
+  const activeAgamCount = agamLayerKeys.filter(k => layers[k]).length;
+
+  const layerQuickActions = (
+    <div className="mb-2 flex items-center justify-between gap-2 border-b border-[#161c1a]/10 pb-2">
+      <span
+        data-testid="layers-active-count"
+        className="font-mono-num text-[11.5px] font-semibold text-[#434d49]"
+      >
+        {activeMapLayerCount} {t.layersActiveCount}
+      </span>
+      <div className="flex items-center gap-1.5">
+        <button
+          type="button"
+          data-testid="layers-reset-default"
+          disabled={isAtDefaultLayers}
+          onClick={onResetDefaultLayers}
+          className="inline-flex min-h-[28px] items-center gap-1 rounded-md border border-[#161c1a]/15 bg-[#fafaf8] px-2 py-0.5 text-[11.5px] font-semibold text-[#0369a1] transition hover:bg-[#0369a1]/8 disabled:cursor-not-allowed disabled:border-[#161c1a]/10 disabled:bg-[#f2f3ef] disabled:text-[#636f6a]/55"
+        >
+          <RotateCcw className="h-3 w-3 shrink-0" />
+          <span>{t.layersResetDefault}</span>
+        </button>
+        <button
+          type="button"
+          data-testid="layers-clear-all"
+          disabled={activeMapLayerCount === 0}
+          onClick={onClearAllLayers}
+          className="inline-flex min-h-[28px] items-center gap-1 rounded-md border border-[#161c1a]/15 bg-[#fafaf8] px-2 py-0.5 text-[11.5px] font-semibold text-[#434d49] transition hover:border-[#b91c1c]/30 hover:bg-[#b91c1c]/8 hover:text-[#b91c1c] disabled:cursor-not-allowed disabled:border-[#161c1a]/10 disabled:bg-[#f2f3ef] disabled:text-[#636f6a]/55"
+        >
+          <X className="h-3 w-3 shrink-0" />
+          <span>{t.layersClearAll}</span>
+        </button>
+      </div>
+    </div>
+  );
 
   const jorongPresets = [
     { id: 'center', label: t.camCenter },
@@ -98,82 +164,6 @@ export function TerrainTab({
     { key: 'slope', label: t.lblSlope, glyph: 'slope' },
     { key: 'osmContext', label: t.lblOsmContext, glyph: 'osm' }
   ];
-
-  const landCoverKey = layers.landCover && (
-    <div className="grid grid-cols-2 gap-x-3 gap-y-1.5 rounded-lg bg-[#fafaf8] px-2.5 py-2 text-[11.5px] text-[#434d49]">
-      <span className="flex items-center gap-1.5">
-        <span className="h-2.5 w-2.5 shrink-0 rounded-[2px] bg-[#15803d]" />
-        <span className="truncate">{t.lcForest}</span>
-        {landCoverStats && <strong className="font-mono-num ml-auto text-[#161c1a]">{landCoverStats.forestPct}%</strong>}
-      </span>
-      <span className="flex items-center gap-1.5">
-        <span className="h-2.5 w-2.5 shrink-0 rounded-[2px] bg-[#65a30d]" />
-        <span className="truncate">{t.lcShrubGrass}</span>
-        {landCoverStats && <strong className="font-mono-num ml-auto text-[#161c1a]">{landCoverStats.shrubGrassPct}%</strong>}
-      </span>
-      <span className="flex items-center gap-1.5">
-        <span className="h-2.5 w-2.5 shrink-0 rounded-[2px] bg-[#ca8a04]" />
-        <span className="truncate">{t.lcCropland}</span>
-        {landCoverStats && <strong className="font-mono-num ml-auto text-[#161c1a]">{landCoverStats.croplandPct}%</strong>}
-      </span>
-      <span className="flex items-center gap-1.5">
-        <span className="h-2.5 w-2.5 shrink-0 rounded-[2px] bg-[#b91c1c]" />
-        <span className="truncate">{t.lcBuiltup}</span>
-        {landCoverStats && <strong className="font-mono-num ml-auto text-[#161c1a]">{landCoverStats.builtupPct}%</strong>}
-      </span>
-    </div>
-  );
-
-  const scourKey = layers.scourChange && (
-    <div className="rounded-lg bg-[#fafaf8] px-2.5 py-2 text-[11.5px] leading-snug text-[#434d49]">
-      <div className="mb-1.5 flex flex-wrap items-center justify-between gap-x-2 gap-y-0.5 font-semibold text-[#161c1a]">
-        <span className="whitespace-nowrap">
-          {scourStats ? `${scourStats.preDate} → ${scourStats.postDate}` : '2022-12-24 → 2024-07-11'}
-        </span>
-        {scourStats && (
-          <span className="font-mono-num whitespace-nowrap text-[#991b1b]">
-            {scourStats.totalScourHa} ha ({scourStats.corridorScourHa} ha {isEn ? 'valley' : 'lembah'})
-          </span>
-        )}
-      </div>
-      <div className="flex items-center gap-3">
-        <span className="inline-flex items-center gap-1">
-          <span className="h-2.5 w-2.5 rounded-[2px] bg-[#991b1b]" />{' '}
-          {isEn ? 'Strong vegetation decrease' : 'Penurunan vegetasi tinggi'}
-        </span>
-        <span className="inline-flex items-center gap-1">
-          <span className="h-2.5 w-2.5 rounded-[2px] bg-[#d97706]" />{' '}
-          {isEn ? 'Moderate vegetation decrease' : 'Penurunan vegetasi sedang'}
-        </span>
-      </div>
-    </div>
-  );
-
-  const agamLandslideKey = layers.agamLandslide && (
-    <div className="rounded-lg bg-[#fafaf8] px-2.5 py-2 text-[11.5px] leading-snug text-[#434d49]">
-      <div className="mb-1 font-semibold text-[#161c1a]">
-        {isEn
-          ? 'Ground Movement Classes — Source: Pemkab Agam / BPBD'
-          : 'Kelas Peta Gerakan Tanah — Sumber: Pemkab Agam / BPBD'}
-      </div>
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-        <span className="inline-flex items-center gap-1">
-          <span className="h-2.5 w-2.5 rounded-[2px] bg-[#dc2626]" /> {isEn ? 'High' : 'Tinggi'}
-        </span>
-        <span className="inline-flex items-center gap-1">
-          <span className="h-2.5 w-2.5 rounded-[2px] bg-[#d97706]" /> {isEn ? 'Medium' : 'Sedang'}
-        </span>
-        <span className="inline-flex items-center gap-1">
-          <span className="h-2.5 w-2.5 rounded-[2px] bg-[#65a30d]" /> {isEn ? 'Low' : 'Rendah'}
-        </span>
-      </div>
-      <div className="mt-1 text-[10.5px] text-[#636f6a]">
-        {isEn
-          ? 'Tap map to view open-map polygon attributes (reference layer, not a per-house survey).'
-          : 'Klik peta untuk melihat atribut poligon data terbuka (lapisan referensi, bukan pengukuran per-rumah).'}
-      </div>
-    </div>
-  );
 
   const jorongCard = (
     <section className="rounded-xl border border-[#161c1a]/12 bg-white px-3.5 py-2.5">
@@ -210,13 +200,15 @@ export function TerrainTab({
         <section className="rounded-xl border border-[#161c1a]/12 bg-white p-3.5">
           <div className="mb-2 flex items-center justify-between gap-2">
             <span className="flex min-w-0 items-center gap-1.5">
-              <span className="text-[13px] font-bold text-[#161c1a]">{t.terrainLayersTitle}</span>
-              <InfoTooltip text={t.mapSimpleIntro} label={t.terrainLayersTitle} />
+              <span className="text-[13px] font-bold text-[#161c1a]">{t.mapLayersTitle}</span>
+              <InfoTooltip text={t.mapSimpleIntro} label={t.mapLayersTitle} />
             </span>
             <span className="font-mono-num shrink-0 text-[12px] font-semibold text-[#636f6a]">
               {studyAreaKm2.toFixed(1)} km²
             </span>
           </div>
+
+          {layerQuickActions}
 
           <div className="divide-y divide-[#161c1a]/10">
             <label className="flex min-h-[44px] cursor-pointer items-center justify-between gap-3 py-1.5">
@@ -231,11 +223,6 @@ export function TerrainTab({
                 className="h-4.5 w-4.5 cursor-pointer accent-[#0369a1]"
               />
             </label>
-
-            <div className="flex items-center gap-2.5 py-2 pl-0.5 text-[12.5px] text-[#434d49]">
-              <LegendIcon kind="canal" />
-              <span>{t.lblVerifiedCanals}</span>
-            </div>
 
             <label className="flex min-h-[44px] cursor-pointer items-center justify-between gap-3 py-1.5">
               <span className="flex items-center gap-2.5 text-[13.5px] font-medium text-[#161c1a]">
@@ -268,60 +255,51 @@ export function TerrainTab({
               />
             </label>
 
-            <div className="py-1.5">
-              <label className="flex min-h-[40px] cursor-pointer items-center justify-between gap-3">
-                <span className="flex items-center gap-2.5 text-[13.5px] font-medium text-[#161c1a]">
-                  <LegendIcon kind="landCover" />
-                  <span>{t.lblLandCover}</span>
-                </span>
-                <input
-                  type="checkbox"
-                  checked={layers.landCover}
-                  onChange={e => onToggleLayer('landCover', e.target.checked)}
-                  className="h-4.5 w-4.5 cursor-pointer accent-[#0369a1]"
-                />
-              </label>
-              {landCoverKey && <div className="mt-1.5">{landCoverKey}</div>}
-            </div>
+            <label className="flex min-h-[44px] cursor-pointer items-center justify-between gap-3 py-1.5">
+              <span className="flex items-center gap-2.5 text-[13.5px] font-medium text-[#161c1a]">
+                <LegendIcon kind="landCover" />
+                <span>{t.lblLandCover}</span>
+              </span>
+              <input
+                type="checkbox"
+                checked={layers.landCover}
+                onChange={e => onToggleLayer('landCover', e.target.checked)}
+                className="h-4.5 w-4.5 cursor-pointer accent-[#0369a1]"
+              />
+            </label>
 
-            <div className="py-1.5">
-              <div className="flex min-h-[40px] items-center justify-between gap-3">
-                <div className="flex min-w-0 flex-1 items-center gap-1.5">
-                  <label
-                    htmlFor={`${uid}-simple-scour`}
-                    className="flex min-w-0 cursor-pointer items-center gap-2.5 text-[13.5px] font-medium text-[#161c1a]"
-                  >
-                    <LegendIcon kind="scourChange" />
-                    <span>{t.lblScourChange}</span>
-                  </label>
-                  <InfoTooltip text={t.infoScourChange} label={t.lblScourChange} />
-                </div>
-                <input
-                  id={`${uid}-simple-scour`}
-                  type="checkbox"
-                  checked={layers.scourChange}
-                  onChange={e => onToggleLayer('scourChange', e.target.checked)}
-                  className="h-4.5 w-4.5 shrink-0 cursor-pointer accent-[#0369a1]"
-                />
+            <div className="flex min-h-[44px] items-center justify-between gap-3 py-1.5">
+              <div className="flex min-w-0 flex-1 items-center gap-1.5">
+                <label
+                  htmlFor={`${uid}-simple-scour`}
+                  className="flex min-w-0 cursor-pointer items-center gap-2.5 text-[13.5px] font-medium text-[#161c1a]"
+                >
+                  <LegendIcon kind="scourChange" />
+                  <span>{t.lblScourChange}</span>
+                </label>
+                <InfoTooltip text={t.infoScourChange} label={t.lblScourChange} />
               </div>
-              {scourKey && <div className="mt-1.5">{scourKey}</div>}
+              <input
+                id={`${uid}-simple-scour`}
+                type="checkbox"
+                checked={layers.scourChange}
+                onChange={e => onToggleLayer('scourChange', e.target.checked)}
+                className="h-4.5 w-4.5 shrink-0 cursor-pointer accent-[#0369a1]"
+              />
             </div>
 
-            <div className="py-1.5">
-              <label className="flex min-h-[40px] cursor-pointer items-center justify-between gap-3">
-                <span className="flex items-center gap-2.5 text-[13.5px] font-medium text-[#161c1a]">
-                  <LegendIcon kind="agamLandslide" />
-                  <span>{t.lblAgamLandslide}</span>
-                </span>
-                <input
-                  type="checkbox"
-                  checked={layers.agamLandslide}
-                  onChange={e => onToggleLayer('agamLandslide', e.target.checked)}
-                  className="h-4.5 w-4.5 cursor-pointer accent-[#0369a1]"
-                />
-              </label>
-              {agamLandslideKey && <div className="mt-1.5">{agamLandslideKey}</div>}
-            </div>
+            <label className="flex min-h-[44px] cursor-pointer items-center justify-between gap-3 py-1.5">
+              <span className="flex items-center gap-2.5 text-[13.5px] font-medium text-[#161c1a]">
+                <LegendIcon kind="agamLandslide" />
+                <span>{t.lblAgamLandslide}</span>
+              </span>
+              <input
+                type="checkbox"
+                checked={layers.agamLandslide}
+                onChange={e => onToggleLayer('agamLandslide', e.target.checked)}
+                className="h-4.5 w-4.5 cursor-pointer accent-[#0369a1]"
+              />
+            </label>
 
             <div className="flex min-h-[44px] items-center justify-between gap-3 py-1.5">
               <div className="flex min-w-0 flex-1 items-center gap-1.5">
@@ -388,64 +366,39 @@ export function TerrainTab({
 
       <section className="rounded-xl border border-[#161c1a]/12 bg-white p-3.5">
         <div className="mb-2 flex items-center justify-between">
-          <span className="text-[13px] font-bold text-[#161c1a]">{t.terrainLayersTitle}</span>
+          <span className="text-[13px] font-bold text-[#161c1a]">{t.mapLayersTitle}</span>
           <span className="font-mono-num text-[12px] font-semibold text-[#636f6a]">
             {studyAreaKm2.toFixed(1)} km²
           </span>
         </div>
 
-        {(basemap === 'elev' || basemap === 'slope') && (
-          <div className="mb-2 flex items-center gap-2.5 rounded-lg bg-[#fafaf8] px-2.5 py-2 text-[12.5px] font-medium text-[#161c1a]">
-            <span
-              className="inline-block h-3 w-5 shrink-0 rounded-[3px] border border-black/15"
-              style={{
-                background:
-                  basemap === 'elev'
-                    ? 'linear-gradient(90deg,#84b860,#eab308,#92400e)'
-                    : 'linear-gradient(90deg,#f59e0b,#c2410c)'
-              }}
-            />
-            <span>
-              {basemap === 'elev'
-                ? isEn
-                  ? 'Active surface: Valley → Highland elevation'
-                  : 'Permukaan aktif: Elevasi lembah → lereng tinggi'
-                : isEn
-                ? 'Active surface: Slope steepness (>15%)'
-                : 'Permukaan aktif: Kemiringan lereng (>15%)'}
-            </span>
-          </div>
-        )}
+        {layerQuickActions}
 
         <div className="divide-y divide-[#161c1a]/10">
           {detailLayerItems.map(item => (
-            <div key={item.key} className="py-1.5">
-              <div className="flex min-h-[38px] items-center justify-between gap-2.5">
-                <div className="flex min-w-0 flex-1 items-center gap-1.5">
-                  <label
-                    htmlFor={`${uid}-detail-${item.key}`}
-                    className="flex min-w-0 cursor-pointer items-center gap-2.5 text-[13px] font-medium text-[#161c1a]"
-                  >
-                    <LegendIcon kind={item.glyph} />
-                    <span>{item.label}</span>
-                    {item.badge ? (
-                      <span className="font-mono-num rounded bg-[#f2f3ef] px-1.5 py-0.5 text-[11px] font-semibold text-[#434d49]">
-                        {item.badge}
-                      </span>
-                    ) : null}
-                  </label>
-                  {item.info && <InfoTooltip text={item.info} label={item.label} />}
-                </div>
-                <input
-                  id={`${uid}-detail-${item.key}`}
-                  type="checkbox"
-                  checked={layers[item.key]}
-                  onChange={e => onToggleLayer(item.key, e.target.checked)}
-                  className="h-4.5 w-4.5 shrink-0 cursor-pointer accent-[#0369a1]"
-                />
+            <div key={item.key} className="flex min-h-[40px] items-center justify-between gap-2.5 py-1">
+              <div className="flex min-w-0 flex-1 items-center gap-1.5">
+                <label
+                  htmlFor={`${uid}-detail-${item.key}`}
+                  className="flex min-w-0 cursor-pointer items-center gap-2.5 text-[13px] font-medium text-[#161c1a]"
+                >
+                  <LegendIcon kind={item.glyph} />
+                  <span>{item.label}</span>
+                  {item.badge ? (
+                    <span className="font-mono-num rounded bg-[#f2f3ef] px-1.5 py-0.5 text-[11px] font-semibold text-[#434d49]">
+                      {item.badge}
+                    </span>
+                  ) : null}
+                </label>
+                {item.info && <InfoTooltip text={item.info} label={item.label} />}
               </div>
-              {item.key === 'landCover' && landCoverKey && <div className="mt-1.5">{landCoverKey}</div>}
-              {item.key === 'scourChange' && scourKey && <div className="mt-1.5">{scourKey}</div>}
+              <input
+                id={`${uid}-detail-${item.key}`}
+                type="checkbox"
+                checked={layers[item.key]}
+                onChange={e => onToggleLayer(item.key, e.target.checked)}
+                className="h-4.5 w-4.5 shrink-0 cursor-pointer accent-[#0369a1]"
+              />
             </div>
           ))}
         </div>
@@ -479,28 +432,38 @@ export function TerrainTab({
             <span className="text-[13px] font-bold text-[#161c1a]">{t.agamRefTitle}</span>
             <InfoTooltip text={t.agamClickHint} label={t.agamRefTitle} />
           </span>
-          {agamStats?.rbiRiversCount ? (
-            <span className="font-mono-num shrink-0 text-[11px] font-semibold text-[#636f6a]">
-              RBI {agamStats.rbiRiversCount} {isEn ? 'reaches' : 'ruas'}
-            </span>
-          ) : null}
+          <div className="flex shrink-0 items-center gap-2">
+            {activeAgamCount > 0 && (
+              <button
+                type="button"
+                data-testid="agam-layers-clear"
+                onClick={onClearAgamLayers}
+                className="inline-flex min-h-[24px] items-center gap-0.5 rounded-md border border-[#161c1a]/15 bg-[#fafaf8] px-1.5 py-0.5 text-[11px] font-semibold text-[#434d49] transition hover:border-[#b91c1c]/30 hover:bg-[#b91c1c]/8 hover:text-[#b91c1c]"
+              >
+                <X className="h-3 w-3 shrink-0" />
+                <span>{t.layersClearSection}</span>
+              </button>
+            )}
+            {agamStats?.rbiRiversCount ? (
+              <span className="font-mono-num text-[11px] font-semibold text-[#636f6a]">
+                RBI {agamStats.rbiRiversCount} {isEn ? 'reaches' : 'ruas'}
+              </span>
+            ) : null}
+          </div>
         </div>
         <div className="divide-y divide-[#161c1a]/10">
-          <div className="py-1.5">
-            <label className="flex min-h-[38px] cursor-pointer items-center justify-between gap-2.5">
-              <span className="flex items-center gap-2.5 text-[13px] font-medium text-[#161c1a]">
-                <LegendIcon kind="agamLandslide" />
-                <span>{t.lblAgamLandslide}</span>
-              </span>
-              <input
-                type="checkbox"
-                checked={layers.agamLandslide}
-                onChange={e => onToggleLayer('agamLandslide', e.target.checked)}
-                className="h-4.5 w-4.5 cursor-pointer accent-[#0369a1]"
-              />
-            </label>
-            {agamLandslideKey && <div className="mt-1.5">{agamLandslideKey}</div>}
-          </div>
+          <label className="flex min-h-[38px] cursor-pointer items-center justify-between gap-2.5 py-1.5">
+            <span className="flex items-center gap-2.5 text-[13px] font-medium text-[#161c1a]">
+              <LegendIcon kind="agamLandslide" />
+              <span>{t.lblAgamLandslide}</span>
+            </span>
+            <input
+              type="checkbox"
+              checked={layers.agamLandslide}
+              onChange={e => onToggleLayer('agamLandslide', e.target.checked)}
+              className="h-4.5 w-4.5 cursor-pointer accent-[#0369a1]"
+            />
+          </label>
 
           <label className="flex min-h-[38px] cursor-pointer items-center justify-between gap-2.5 py-1.5">
             <span className="flex items-center gap-2.5 text-[13px] font-medium text-[#161c1a]">

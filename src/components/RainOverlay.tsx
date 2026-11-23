@@ -1,12 +1,10 @@
 import { useEffect, useRef } from 'react';
-import { CloudRain } from 'lucide-react';
-import type { Language, RainPattern } from '../types/gis';
+import type { RainPattern } from '../types/gis';
 
 interface RainOverlayProps {
   active: boolean;
   intensityMmHr: number;
   rainPattern?: RainPattern;
-  lang?: Language;
 }
 
 interface Drop {
@@ -22,8 +20,7 @@ interface Drop {
 export function RainOverlay({
   active,
   intensityMmHr,
-  rainPattern = 'uniform',
-  lang = 'id'
+  rainPattern = 'uniform'
 }: RainOverlayProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
@@ -128,22 +125,10 @@ export function RainOverlay({
   if (!active || intensityMmHr <= 0) return null;
 
   return (
-    <>
-      <canvas
-        ref={canvasRef}
-        aria-hidden="true"
-        className="pointer-events-none absolute inset-0 z-11 h-full w-full"
-      />
-      {rainPattern === 'upland' && (
-        <div className="surface-panel pointer-events-none fixed top-15 right-3.5 z-15 inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[12px] font-bold text-[#0369a1] max-md:hidden">
-          <CloudRain className="h-3.5 w-3.5 shrink-0" />
-          <span>
-            {lang === 'en'
-              ? 'Rain focused on upper Singgalang slopes'
-              : 'Hujan terkonsentrasi di hulu Gunung Singgalang'}
-          </span>
-        </div>
-      )}
-    </>
+    <canvas
+      ref={canvasRef}
+      aria-hidden="true"
+      className="pointer-events-none absolute inset-0 z-11 h-full w-full"
+    />
   );
 }
