@@ -44,7 +44,7 @@ export function ElevationProfileModal({
 
   return (
     <div
-      className={`surface-panel absolute right-72 bottom-12 z-17 flex max-w-[680px] flex-col gap-2 rounded-2xl px-4 py-3 transition-all max-md:right-2 max-md:bottom-[154px] max-md:left-2 ${
+      className={`surface-panel absolute right-16 bottom-14 z-17 flex max-w-[680px] flex-col gap-2 rounded-2xl px-4 py-3 transition-all max-md:right-2 max-md:bottom-[154px] max-md:left-2 ${
         sidebarCollapsed ? 'left-4' : 'left-[404px]'
       }`}
     >

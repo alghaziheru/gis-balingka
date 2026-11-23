@@ -8,6 +8,7 @@ export type InfoModalTab = 'guide' | 'method' | 'api';
 
 interface InfoDataModalProps {
   open: boolean;
+  initialTab?: InfoModalTab;
   lang: Language;
   metadata: DatasetMetadata | null;
   apiAvailable: boolean;
@@ -18,6 +19,7 @@ interface InfoDataModalProps {
 
 export function InfoDataModal({
   open,
+  initialTab = 'guide',
   lang,
   metadata,
   apiAvailable,
@@ -25,8 +27,14 @@ export function InfoDataModal({
   onNotify,
   onClose
 }: InfoDataModalProps) {
-  const [activeTab, setActiveTab] = useState<InfoModalTab>('guide');
+  const [activeTab, setActiveTab] = useState<InfoModalTab>(initialTab);
   const [downloading, setDownloading] = useState(false);
+
+  useEffect(() => {
+    if (open) {
+      setActiveTab(initialTab);
+    }
+  }, [open, initialTab]);
 
   useEffect(() => {
     if (!open) return;

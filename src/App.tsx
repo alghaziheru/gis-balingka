@@ -12,8 +12,8 @@ import { EditorTab, type EditorSubTab } from './components/EditorTab';
 import { EditorUnlockModal } from './components/EditorUnlockModal';
 import { ElevationProfileModal } from './components/ElevationProfileModal';
 import { FeedbackModal } from './components/FeedbackModal';
-import { InfoDataModal } from './components/InfoDataModal';
-import { MapView, type FlyRequest, type LoadedDatasets } from './components/MapView';
+import { InfoDataModal, type InfoModalTab } from './components/InfoDataModal';
+import { MapView, type FlyRequest, type LoadedDatasets, type MapCameraState, type MapControlHandle } from './components/MapView';
 import { RainOverlay } from './components/RainOverlay';
 import { SimulationTab } from './components/SimulationTab';
 import { TelemetryDock } from './components/TelemetryDock';
@@ -91,7 +91,7 @@ export function App() {
   const [flowDensity, setFlowDensity] = useState(0);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileSheetMode, setMobileSheetMode] = useState<'peek' | 'half' | 'full'>('peek');
-  const [infoOpen, setInfoOpen] = useState(false);
+  const [infoModalTab, setInfoModalTab] = useState<InfoModalTab | null>(null);
   const [feedbackOpen, setFeedbackOpen] = useState(false);
 
   const [layers, setLayers] = useState<LayerToggles>({
@@ -167,6 +167,13 @@ export function App() {
 
   const [flyRequest, setFlyRequest] = useState<FlyRequest | null>(null);
   const flyCounter = useRef(0);
+  const mapControlRef = useRef<MapControlHandle | null>(null);
+  const [mapCamera, setMapCamera] = useState<MapCameraState>({
+    zoom: 13.6,
+    bearing: -12,
+    pitch: 36,
+    metersPerPixel: 12.6
+  });
   const [cursorTelemetry, setCursorTelemetry] = useState({
     lng: 100.3245,
     lat: -0.3355,
@@ -546,15 +553,12 @@ export function App() {
     setCameraPreset(preset);
     const presets: Record<string, { center: [number, number]; zoom: number; pitch: number; bearing: number }> = {
       center: { center: [100.319, -0.345], zoom: 13.6, pitch: is3D ? 36 : 0, bearing: is3D ? -12 : 0 },
-      hulu: { center: [100.314, -0.382], zoom: 13.4, pitch: 56, bearing: -20 },
-      pahambatan: { center: [100.319315, -0.339606], zoom: 15.6, pitch: is3D ? 34 : 0, bearing: -10 },
-      hilalang: { center: [100.327863, -0.341817], zoom: 15.6, pitch: is3D ? 34 : 0, bearing: -8 },
-      subarang: { center: [100.326183, -0.326062], zoom: 15.5, pitch: is3D ? 34 : 0, bearing: -12 },
-      block: { center: [100.312, -0.360], zoom: 12.1, pitch: is3D ? 30 : 0, bearing: 0 }
+      subarang: { center: [100.326183, -0.326062], zoom: 15.5, pitch: is3D ? 34 : 0, bearing: is3D ? -12 : 0 },
+      hilalang: { center: [100.327863, -0.341817], zoom: 15.6, pitch: is3D ? 34 : 0, bearing: is3D ? -8 : 0 },
+      pahambatan: { center: [100.319315, -0.339606], zoom: 15.6, pitch: is3D ? 34 : 0, bearing: is3D ? -10 : 0 }
     };
     const p = presets[preset];
     if (p) {
-      if (preset === 'hulu' && !is3D) setIs3D(true);
       flyTo(p.center, { zoom: p.zoom, pitch: p.pitch, bearing: p.bearing });
     }
   };
@@ -653,6 +657,9 @@ export function App() {
           editingStructure={mapEditingStructure}
           drawVertices={drawVertices}
           flyRequest={flyRequest}
+          controlRef={mapControlRef}
+          onCameraChange={setMapCamera}
+          onSelectJorongPill={setCameraPreset}
           onMapClick={handleMapClick}
           onOpenUnlock={() => setUnlockModalOpen(true)}
           onSelectWaterway={feat => {
@@ -1379,7 +1386,7 @@ export function App() {
         onChangeBasemap={setBasemap}
         onChangeLang={setLang}
         onOpenFeedback={() => setFeedbackOpen(true)}
-        onOpenInfo={() => setInfoOpen(true)}
+        onOpenInfo={() => setInfoModalTab('guide')}
       />
 
       {activeTool && (
@@ -1483,8 +1490,13 @@ export function App() {
         flowDensity={flowDensity}
         mobileSheetMode={mobileSheetMode}
         cursorTelemetry={cursorTelemetry}
+        mapCamera={mapCamera}
         onToggleLayer={(key, val) => setLayers(prev => ({ ...prev, [key]: val }))}
         onChangeFlowDensity={setFlowDensity}
+        onZoomIn={() => mapControlRef.current?.zoomIn()}
+        onZoomOut={() => mapControlRef.current?.zoomOut()}
+        onResetNorth={() => mapControlRef.current?.resetNorth()}
+        onOpenSources={() => setInfoModalTab('api')}
       />
 
       <FeedbackModal
@@ -1511,13 +1523,14 @@ export function App() {
       />
 
       <InfoDataModal
-        open={infoOpen}
+        open={infoModalTab !== null}
+        initialTab={infoModalTab ?? 'guide'}
         lang={lang}
         metadata={metadata}
         apiAvailable={apiAvailable}
         verifiedCount={verifiedWaterways.length}
         onNotify={notify}
-        onClose={() => setInfoOpen(false)}
+        onClose={() => setInfoModalTab(null)}
       />
 
       <EditorUnlockModal

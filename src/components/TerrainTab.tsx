@@ -69,10 +69,9 @@ export function TerrainTab({
 
   const jorongPresets = [
     { id: 'center', label: t.camCenter },
-    { id: 'pahambatan', label: t.camPahambatan },
-    { id: 'hilalang', label: t.camHilalang },
     { id: 'subarang', label: t.camSubarang },
-    { id: 'hulu', label: t.camHulu }
+    { id: 'hilalang', label: t.camHilalang },
+    { id: 'pahambatan', label: t.camPahambatan }
   ];
 
   const detailLayerItems: {
@@ -168,29 +167,28 @@ export function TerrainTab({
   );
 
   const jorongCard = (
-    <section className="rounded-xl border border-[#161c1a]/12 bg-white p-3.5">
-      <div className="mb-2.5 flex items-center gap-1.5 text-[13px] font-bold text-[#161c1a]">
-        <MapPin className="h-3.5 w-3.5 text-[#0369a1]" />
-        <span>{t.jorongQuickTitle}</span>
-      </div>
-      <div className="flex flex-wrap gap-1.5">
-        {jorongPresets.map(p => {
-          const active = cameraPreset === p.id;
-          return (
-            <button
-              key={p.id}
-              type="button"
-              onClick={() => onSelectPreset(p.id)}
-              className={`min-h-[38px] rounded-lg border px-3 py-1.5 text-[13px] font-semibold transition active:scale-[0.98] ${
-                active
-                  ? 'border-[#0369a1] bg-[#0369a1] text-white'
-                  : 'border-[#161c1a]/15 bg-[#fafaf8] text-[#161c1a] hover:bg-[#f2f3ef]'
-              }`}
-            >
+    <section className="rounded-xl border border-[#161c1a]/12 bg-white px-3.5 py-2.5">
+      <div className="flex items-center justify-between gap-2.5">
+        <label
+          htmlFor={`${uid}-jorong`}
+          className="flex min-w-0 flex-1 items-center gap-1.5 text-[13px] font-bold text-[#161c1a]"
+        >
+          <MapPin className="h-3.5 w-3.5 shrink-0 text-[#0369a1]" />
+          <span className="truncate">{t.jorongQuickTitle}</span>
+        </label>
+        <select
+          id={`${uid}-jorong`}
+          data-testid="jorong-select"
+          value={cameraPreset}
+          onChange={e => onSelectPreset(e.target.value)}
+          className="min-h-[34px] w-[158px] shrink-0 cursor-pointer rounded-lg border border-[#161c1a]/20 bg-[#fafaf8] px-2.5 py-1 text-[12.5px] font-semibold text-[#161c1a] transition hover:border-[#161c1a]/30"
+        >
+          {jorongPresets.map(p => (
+            <option key={p.id} value={p.id}>
               {p.label}
-            </button>
-          );
-        })}
+            </option>
+          ))}
+        </select>
       </div>
     </section>
   );

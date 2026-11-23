@@ -1,12 +1,10 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type MutableRefObject } from 'react';
 import {
   GeoJSONSource,
   ImageSource,
   Map as MapLibreMap,
   Marker,
-  NavigationControl,
   Popup,
-  ScaleControl,
   setWorkerUrl,
   type ExpressionSpecification,
   type FilterSpecification,
@@ -51,6 +49,19 @@ export interface FlyRequest {
   pitch?: number;
   bearing?: number;
   nonce: number;
+}
+
+export interface MapCameraState {
+  zoom: number;
+  bearing: number;
+  pitch: number;
+  metersPerPixel: number;
+}
+
+export interface MapControlHandle {
+  zoomIn: () => void;
+  zoomOut: () => void;
+  resetNorth: () => void;
 }
 
 export interface LoadedDatasets {
@@ -102,6 +113,9 @@ interface MapViewProps {
   editingStructure: { id: string | null; coordinates: [number, number]; sourceRef?: string | null } | null;
   drawVertices: [number, number][];
   flyRequest: FlyRequest | null;
+  controlRef?: MutableRefObject<MapControlHandle | null>;
+  onCameraChange?: (cam: MapCameraState) => void;
+  onSelectJorongPill?: (preset: string) => void;
   onMapClick: (lngLat: [number, number]) => void;
   onOpenUnlock: () => void;
   onSelectWaterway: (feature: VerifiedWaterwayFeature) => void;
@@ -404,6 +418,12 @@ export function MapView(props: MapViewProps) {
   onMapClickRef.current = props.onMapClick;
   const onCursorRef = useRef(props.onCursorTelemetry);
   onCursorRef.current = props.onCursorTelemetry;
+  const onCameraChangeRef = useRef(props.onCameraChange);
+  onCameraChangeRef.current = props.onCameraChange;
+  const onSelectJorongPillRef = useRef(props.onSelectJorongPill);
+  onSelectJorongPillRef.current = props.onSelectJorongPill;
+  const controlRefProp = useRef(props.controlRef);
+  controlRefProp.current = props.controlRef;
   const tabRef = useRef(props.tab);
   tabRef.current = props.tab;
   const flowDensityRef = useRef(props.flowDensity);
@@ -693,12 +713,69 @@ export function MapView(props: MapViewProps) {
       ],
       pitch: 36,
       bearing: -12,
-      maxPitch: 66
+      maxPitch: 66,
+      attributionControl: false
     });
     mapRef.current = map;
 
-    map.addControl(new NavigationControl({ visualizePitch: true }), 'bottom-left');
-    map.addControl(new ScaleControl({ maxWidth: 100, unit: 'metric' }), 'bottom-left');
+    if (props.controlRef) {
+      props.controlRef.current = {
+        zoomIn: () => mapRef.current?.zoomIn({ duration: 250 }),
+        zoomOut: () => mapRef.current?.zoomOut({ duration: 250 }),
+        resetNorth: () => mapRef.current?.easeTo({ bearing: 0, pitch: 0, duration: 400 })
+      };
+    }
+
+    const computeMetersPerPixel = (): number => {
+      const el = containerRef.current;
+      const w = el?.clientWidth ?? 0;
+      const h = el?.clientHeight ?? 0;
+      if (w >= 120 && h >= 120) {
+        const cx = w / 2;
+        const cy = h / 2;
+        const samplePx = 100;
+        const left = map.unproject([cx - samplePx / 2, cy]);
+        const right = map.unproject([cx + samplePx / 2, cy]);
+        const mpp = haversineMeters(left.lng, left.lat, right.lng, right.lat) / samplePx;
+        if (Number.isFinite(mpp) && mpp > 0.01) return mpp;
+      }
+      const lat = map.getCenter().lat;
+      return (156543.03392 * Math.cos((lat * Math.PI) / 180)) / Math.pow(2, map.getZoom());
+    };
+
+    let lastCam: MapCameraState | null = null;
+    let camRafId = 0;
+    const emitCamera = (force = false) => {
+      const zoom = map.getZoom();
+      const bearing = map.getBearing();
+      const pitch = map.getPitch();
+      const metersPerPixel = computeMetersPerPixel();
+      if (
+        !force &&
+        lastCam &&
+        Math.abs(bearing - lastCam.bearing) < 0.3 &&
+        Math.abs(pitch - lastCam.pitch) < 0.5 &&
+        Math.abs(zoom - lastCam.zoom) < 0.05 &&
+        Math.abs(metersPerPixel - lastCam.metersPerPixel) / Math.max(0.01, lastCam.metersPerPixel) < 0.02
+      ) {
+        return;
+      }
+      const nextCam: MapCameraState = { zoom, bearing, pitch, metersPerPixel };
+      lastCam = nextCam;
+      onCameraChangeRef.current?.(nextCam);
+    };
+
+    const scheduleCameraEmit = () => {
+      if (camRafId) return;
+      camRafId = requestAnimationFrame(() => {
+        camRafId = 0;
+        emitCamera(false);
+      });
+    };
+
+    map.on('move', scheduleCameraEmit);
+    map.on('moveend', () => emitCamera(true));
+    map.on('resize', () => emitCamera(true));
 
     let animTimerId = 0;
     let particlePhase = 0;
@@ -1484,13 +1561,28 @@ export function MapView(props: MapViewProps) {
         const tooClose = placedLabels.some(p => Math.hypot(p[0] - coords[0], p[1] - coords[1]) < 0.003);
         if (tooClose) continue;
         placedLabels.push(coords);
+        const placeName = String(f.properties?.name || '');
         const el = document.createElement('button');
         el.type = 'button';
         el.className = 'jorong-pill';
-        el.textContent = String(f.properties?.name || '');
+        el.textContent = placeName;
         el.addEventListener('click', ev => {
           ev.stopPropagation();
           if (activeToolRef.current) return;
+          const norm = placeName.trim().toLowerCase();
+          const matchedPreset =
+            norm === 'balingka'
+              ? 'center'
+              : norm === 'subarang'
+              ? 'subarang'
+              : norm === 'koto hilalang'
+              ? 'hilalang'
+              : norm === 'pahambatan'
+              ? 'pahambatan'
+              : null;
+          if (matchedPreset) {
+            onSelectJorongPillRef.current?.(matchedPreset);
+          }
           map.flyTo({ center: coords, zoom: 15.6, duration: 750 });
         });
         new Marker({ element: el, anchor: 'center' }).setLngLat(coords).addTo(map);
@@ -1899,6 +1991,7 @@ export function MapView(props: MapViewProps) {
 
       mapLoadedRef.current = true;
       setMapReady(true);
+      emitCamera(true);
     });
 
     map.on('click', (e: MapMouseEvent) => {
@@ -2022,8 +2115,10 @@ export function MapView(props: MapViewProps) {
     });
 
     return () => {
+      if (camRafId) cancelAnimationFrame(camRafId);
       cancelAnimationFrame(animTimerId);
       if (raindropAnimRef.current) cancelAnimationFrame(raindropAnimRef.current);
+      if (controlRefProp.current) controlRefProp.current.current = null;
       mapLoadedRef.current = false;
       setMapReady(false);
       map.remove();

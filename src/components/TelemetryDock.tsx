@@ -1,8 +1,50 @@
-import { useState } from 'react';
-import { Layers, X } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { Info, Layers, Minus, Plus, X } from 'lucide-react';
 import { I18N } from '../i18n/translations';
 import type { BasemapId, Language, LayerToggles, TabId, ViewMode } from '../types/gis';
 import { LegendIcon, type LegendIconKind } from './LegendIcon';
+import type { MapCameraState } from './MapView';
+
+function computeMetricScale(metersPerPixel: number, maxWidthPx = 76): { widthPx: number; label: string } {
+  const safeMpp = Number.isFinite(metersPerPixel) && metersPerPixel > 0.01 ? metersPerPixel : 10;
+  const rawMeters = safeMpp * maxWidthPx;
+  const pow10 = Math.pow(10, Math.floor(Math.log10(rawMeters)));
+  const d = rawMeters / pow10;
+  const nice = d >= 5 ? 5 * pow10 : d >= 2 ? 2 * pow10 : pow10;
+  const widthPx = Math.max(28, Math.min(maxWidthPx, Math.round(nice / safeMpp)));
+  const label = nice >= 1000 ? `${nice / 1000} km` : `${nice} m`;
+  return { widthPx, label };
+}
+
+function getBasemapAttribution(basemap: BasemapId, isEn: boolean): string {
+  if (basemap === 'sat') {
+    return import.meta.env.VITE_CUSTOM_IMAGERY_URL
+      ? isEn
+        ? 'Custom Satellite / Drone Imagery'
+        : 'Citra Satelit / Drone Kustom'
+      : 'Esri, Maxar, Earthstar Geographics';
+  }
+  if (basemap === 'osm') return '© OpenStreetMap contributors (ODbL)';
+  if (basemap === 'topo') return 'OpenTopoMap (CC-BY-SA) · © OSM contributors';
+  return 'BIG DEMNAS (~8.3m) · AWS Terrarium DEM';
+}
+
+function CompassNeedle({ bearing, pitch }: { bearing: number; pitch: number }) {
+  return (
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 18 18"
+      aria-hidden="true"
+      className="block transition-transform duration-150"
+      style={{ transform: `rotateX(${Math.min(55, Math.max(0, pitch))}deg) rotateZ(${-bearing}deg)` }}
+    >
+      <polygon points="9,2.2 12,9 9,8.1 6,9" fill="#b91c1c" />
+      <polygon points="9,15.8 12,9 9,9.9 6,9" fill="#636f6a" />
+      <circle cx="9" cy="9" r="1.2" fill="#fafaf8" stroke="#161c1a" strokeWidth="0.9" />
+    </svg>
+  );
+}
 
 interface TelemetryDockProps {
   lang: Language;
@@ -18,8 +60,13 @@ interface TelemetryDockProps {
     elev: number;
     slope: number;
   };
+  mapCamera: MapCameraState;
   onToggleLayer: (key: keyof LayerToggles, val: boolean) => void;
   onChangeFlowDensity: (density: number) => void;
+  onZoomIn: () => void;
+  onZoomOut: () => void;
+  onResetNorth: () => void;
+  onOpenSources: () => void;
 }
 
 export function TelemetryDock({
@@ -31,13 +78,40 @@ export function TelemetryDock({
   flowDensity,
   mobileSheetMode,
   cursorTelemetry,
+  mapCamera,
   onToggleLayer,
-  onChangeFlowDensity
+  onChangeFlowDensity,
+  onZoomIn,
+  onZoomOut,
+  onResetNorth,
+  onOpenSources
 }: TelemetryDockProps) {
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [attribOpen, setAttribOpen] = useState(false);
+  const attribRef = useRef<HTMLDivElement | null>(null);
   const t = I18N[lang];
   const isEn = lang === 'en';
   const isDetail = viewMode === 'detail';
+  const scale = computeMetricScale(mapCamera.metersPerPixel);
+  const basemapCredit = getBasemapAttribution(basemap, isEn);
+
+  useEffect(() => {
+    if (!attribOpen) return;
+    const onPointerDown = (e: PointerEvent) => {
+      if (attribRef.current && !attribRef.current.contains(e.target as Node)) {
+        setAttribOpen(false);
+      }
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setAttribOpen(false);
+    };
+    document.addEventListener('pointerdown', onPointerDown);
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown);
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, [attribOpen]);
 
   const mobileToggleItems: {
     id: string;
@@ -200,39 +274,132 @@ export function TelemetryDock({
 
   return (
     <>
-      {/* Desktop: clean single elevation/telemetry pill only (no duplicate Legend box) */}
-      <div className="pointer-events-none absolute right-3 bottom-9 z-16 flex flex-col items-end max-md:hidden">
+      {/* Desktop: unified bottom-right nav pill (+/-/Compass) + status bar (scale | telemetry | (i)) */}
+      <div className="pointer-events-none absolute right-3 bottom-3 z-16 flex flex-col items-end gap-1.5 max-md:hidden">
         <div
-          data-testid="telemetry-pill"
-          className="surface-panel font-mono-num pointer-events-auto flex items-center gap-2 rounded-[10px] px-3 py-1.5 text-[12px] font-semibold whitespace-nowrap text-[#161c1a]"
+          data-testid="map-nav-controls"
+          className="surface-panel pointer-events-auto flex flex-col divide-y divide-[#161c1a]/10 overflow-hidden rounded-[10px]"
         >
+          <button
+            type="button"
+            data-testid="map-zoom-in"
+            onClick={onZoomIn}
+            aria-label={t.zoomIn}
+            title={t.zoomIn}
+            className="grid h-[34px] w-[34px] place-items-center text-[#161c1a] transition hover:bg-[#f2f3ef] active:scale-[0.97]"
+          >
+            <Plus className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            data-testid="map-zoom-out"
+            onClick={onZoomOut}
+            aria-label={t.zoomOut}
+            title={t.zoomOut}
+            className="grid h-[34px] w-[34px] place-items-center text-[#161c1a] transition hover:bg-[#f2f3ef] active:scale-[0.97]"
+          >
+            <Minus className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            data-testid="map-compass"
+            onClick={onResetNorth}
+            aria-label={t.resetNorth}
+            title={t.resetNorth}
+            className="grid h-[34px] w-[34px] place-items-center text-[#161c1a] transition hover:bg-[#f2f3ef] active:scale-[0.97]"
+          >
+            <CompassNeedle bearing={mapCamera.bearing} pitch={mapCamera.pitch} />
+          </button>
+        </div>
+
+        <div
+          ref={attribRef}
+          data-testid="telemetry-pill"
+          className="surface-panel font-mono-num pointer-events-auto relative flex min-h-[34px] items-center gap-2 rounded-[10px] px-2.5 py-1 text-[11.5px] font-semibold whitespace-nowrap text-[#161c1a]"
+        >
+          <div data-testid="map-scale-bar" className="flex flex-col items-center justify-center" title={scale.label}>
+            <span className="text-[10px] leading-none font-semibold text-[#434d49]">{scale.label}</span>
+            <span
+              className="mt-1 block h-[4px] border-x border-b border-[#161c1a]/55"
+              style={{ width: `${scale.widthPx}px` }}
+            />
+          </div>
+
+          <span className="h-3.5 w-px shrink-0 bg-[#161c1a]/12" aria-hidden="true" />
+
           {isDetail ? (
-            <>
-              <span>
-                {cursorTelemetry.lat.toFixed(4)}, {cursorTelemetry.lng.toFixed(4)}
-              </span>
-              <span className="text-[#636f6a]">·</span>
-              <span>{Math.round(cursorTelemetry.elev)} mdpl</span>
-              <span className="text-[#636f6a]">·</span>
-              <span>
-                {t.slopeWord} {cursorTelemetry.slope}%
-              </span>
-            </>
-          ) : (
             <span>
-              {isEn ? 'Elevation' : 'Ketinggian'}: {Math.round(cursorTelemetry.elev)} m dpl
+              {cursorTelemetry.lat.toFixed(4)}, {cursorTelemetry.lng.toFixed(4)} · {Math.round(cursorTelemetry.elev)} mdpl ·{' '}
+              {t.slopeWord} {cursorTelemetry.slope}%
             </span>
+          ) : (
+            <span>{Math.round(cursorTelemetry.elev)} mdpl</span>
+          )}
+
+          <span className="h-3.5 w-px shrink-0 bg-[#161c1a]/12" aria-hidden="true" />
+
+          <button
+            type="button"
+            data-testid="map-attrib-btn"
+            onClick={() => setAttribOpen(o => !o)}
+            aria-label={t.btnAttribution}
+            aria-expanded={attribOpen}
+            title={t.btnAttribution}
+            className={`grid h-[24px] w-[24px] shrink-0 place-items-center rounded-md transition ${
+              attribOpen ? 'bg-[#161c1a] text-white' : 'text-[#434d49] hover:bg-[#f2f3ef] hover:text-[#161c1a]'
+            }`}
+          >
+            <Info className="h-3.5 w-3.5" />
+          </button>
+
+          {attribOpen && (
+            <div
+              data-testid="map-attrib-popover"
+              className="surface-panel font-sans absolute right-0 bottom-[calc(100%+8px)] z-30 w-[272px] rounded-xl p-3 text-left whitespace-normal"
+            >
+              <div className="mb-1 text-[11px] font-bold tracking-wide text-[#636f6a] uppercase">
+                {t.btnAttribution}
+              </div>
+              <div className="text-[12px] font-bold text-[#161c1a]">{basemapCredit}</div>
+              <div className="mt-1 text-[11.5px] leading-snug text-[#434d49]">
+                BIG DEMNAS &amp; RBI 50K · Batas Nagari BIG (2026) · ESA WorldCover · Pemkab Agam · MapLibre GL
+              </div>
+              <div className="my-2 border-t border-[#161c1a]/10" />
+              <button
+                type="button"
+                data-testid="map-attrib-open-sources"
+                onClick={() => {
+                  setAttribOpen(false);
+                  onOpenSources();
+                }}
+                className="w-full rounded-lg px-2 py-1.5 text-left text-[12px] font-bold text-[#0369a1] transition hover:bg-[#f2f3ef]"
+              >
+                {t.openSourcesBtn}
+              </button>
+            </div>
           )}
         </div>
       </div>
 
-      {/* Mobile: interactive Legend + Layer Checklist popover */}
+      {/* Mobile: optional floating compass (only when rotated) + interactive Legend popover */}
       {mobileSheetMode !== 'full' && (
         <div
           className={`pointer-events-none fixed right-2.5 z-19 hidden max-md:flex max-md:flex-col max-md:items-end max-md:gap-2 ${
             mobileSheetMode === 'peek' ? 'bottom-[140px]' : 'bottom-[calc(52vh+12px)]'
           }`}
         >
+          {Math.abs(mapCamera.bearing) > 2 && (
+            <button
+              type="button"
+              data-testid="mobile-compass-btn"
+              onClick={onResetNorth}
+              aria-label={t.resetNorth}
+              title={t.resetNorth}
+              className="surface-panel pointer-events-auto grid h-10 w-10 place-items-center rounded-full shadow-md transition active:scale-[0.96]"
+            >
+              <CompassNeedle bearing={mapCamera.bearing} pitch={0} />
+            </button>
+          )}
           {mobileOpen && (
             <div className="surface-panel pointer-events-auto w-[264px] rounded-xl p-3 shadow-lg">
               <div className="mb-2 flex items-center justify-between border-b border-[#161c1a]/10 pb-1.5">
