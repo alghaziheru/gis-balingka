@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type MutableRefObject } from 'react';
+import { useEffect, useMemo, useRef, useState, type MutableRefObject } from 'react';
 import {
   GeoJSONSource,
   ImageSource,
@@ -16,8 +16,11 @@ import maplibreWorkerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url';
 import { isPointInNagari, lookupAgamAtPoint } from '../lib/agamLookup';
 import type { CascadeEngine } from '../lib/cascadeEngine';
 import type { DemClient } from '../lib/demClient';
+import { buildFlowCorridors } from '../lib/flowRibbons';
+import { extractAffectedBuildings, extractFloodPoolPolygons } from '../lib/poolContours';
 import { computeRunoffMergeNetwork, haversineMeters, snapPointToWaterways, type MergedWaterwayReach } from '../lib/geometry';
 import { getOverlayContrastPalette } from '../lib/mapPalette';
+import { FlowFilamentOverlay } from './FlowFilamentOverlay';
 import type {
   ActiveTool,
   AgamContextData,
@@ -62,6 +65,8 @@ export interface MapControlHandle {
   zoomIn: () => void;
   zoomOut: () => void;
   resetNorth: () => void;
+  projectLngLat?: (lng: number, lat: number) => { x: number; y: number } | null;
+  getCameraAngles?: () => { pitch: number; bearing: number };
 }
 
 export interface LoadedDatasets {
@@ -95,6 +100,7 @@ interface MapViewProps {
   simDurationMin: number;
   simProgress: number;
   simScenario: 'clogged' | 'cleared';
+  rainAnimEnabled: boolean;
   cascadeEngine: CascadeEngine | null;
   cascadeParams: CascadeSimParams;
   drainFilter: 'all' | DrainageStatus;
@@ -151,6 +157,16 @@ const HAND_LAYERS = [
   'hand-cleared-med',
   'hand-cleared-high'
 ] as const;
+
+function lerpHex(hexA: string, hexB: string, t: number): string {
+  const f = Math.max(0, Math.min(1, t));
+  const a = parseInt(hexA.slice(1), 16);
+  const b = parseInt(hexB.slice(1), 16);
+  const r = Math.round(((a >> 16) & 255) * (1 - f) + ((b >> 16) & 255) * f);
+  const g = Math.round(((a >> 8) & 255) * (1 - f) + ((b >> 8) & 255) * f);
+  const bl = Math.round((a & 255) * (1 - f) + (b & 255) * f);
+  return `#${((1 << 24) | (r << 16) | (g << 8) | bl).toString(16).slice(1)}`;
+}
 
 function escapeHtml(str: unknown): string {
   return String(str ?? '')
@@ -418,10 +434,39 @@ export function MapView(props: MapViewProps) {
   simRainRef.current = props.simRain;
   const simProgressRef = useRef(props.simProgress);
   simProgressRef.current = props.simProgress;
-  const floodCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const cascadeEngineRef = useRef(props.cascadeEngine);
+  cascadeEngineRef.current = props.cascadeEngine;
+  const cascadeParamsRef = useRef(props.cascadeParams);
+  cascadeParamsRef.current = props.cascadeParams;
+  const [poolGlintPoints, setPoolGlintPoints] = useState<[number, number][]>([]);
+  const lastSkyKeyRef = useRef('');
   const landslideCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const lastCascadeTsRef = useRef(0);
   const lastCascadeKeyRef = useRef('');
+
+  const corridors = useMemo(
+    () =>
+      buildFlowCorridors(
+        props.verifiedWaterways,
+        props.datasets.flowPaths,
+        props.suppressedDemIds,
+        (lng, lat) => props.demClient.getElevation(lng, lat),
+        props.datasets.agamRbiRivers,
+        {
+          includeVerified: props.layers.verifiedWaterways,
+          includeRbi: props.layers.agamRbiRivers
+        }
+      ),
+    [
+      props.verifiedWaterways,
+      props.datasets.flowPaths,
+      props.datasets.agamRbiRivers,
+      props.suppressedDemIds,
+      props.demClient,
+      props.layers.verifiedWaterways,
+      props.layers.agamRbiRivers
+    ]
+  );
   const editorUnlockedRef = useRef(props.editorUnlocked);
   editorUnlockedRef.current = props.editorUnlocked;
   const verifiedWaterwaysRef = useRef(props.verifiedWaterways);
@@ -639,7 +684,6 @@ export function MapView(props: MapViewProps) {
         'img-slope': { type: 'image', url: '/data/raster-slope.png', coordinates: imgCoords },
         'img-landcover': { type: 'image', url: '/data/raster-landcover.png', coordinates: imgCoords },
         'img-scour-change': { type: 'image', url: '/data/raster-scour-change.png', coordinates: imgCoords },
-        'img-cascade-flood': { type: 'image', url: TRANSPARENT_1PX_PNG, coordinates: imgCoords },
         'img-cascade-landslide': { type: 'image', url: TRANSPARENT_1PX_PNG, coordinates: imgCoords },
         'img-hand-clogged-low': { type: 'image', url: '/data/raster-hand-clogged-low.png', coordinates: imgCoords },
         'img-hand-clogged-med': { type: 'image', url: '/data/raster-hand-clogged-med.png', coordinates: imgCoords },
@@ -734,7 +778,18 @@ export function MapView(props: MapViewProps) {
       props.controlRef.current = {
         zoomIn: () => mapRef.current?.zoomIn({ duration: 250 }),
         zoomOut: () => mapRef.current?.zoomOut({ duration: 250 }),
-        resetNorth: () => mapRef.current?.easeTo({ bearing: 0, pitch: 0, duration: 400 })
+        resetNorth: () => mapRef.current?.easeTo({ bearing: 0, pitch: 0, duration: 400 }),
+        projectLngLat: (lng: number, lat: number) => {
+          const m = mapRef.current;
+          if (!m) return null;
+          const pt = m.project([lng, lat]);
+          return { x: pt.x, y: pt.y };
+        },
+        getCameraAngles: () => {
+          const m = mapRef.current;
+          if (!m) return { pitch: 0, bearing: 0 };
+          return { pitch: m.getPitch(), bearing: m.getBearing() };
+        }
       };
     }
 
@@ -836,7 +891,7 @@ export function MapView(props: MapViewProps) {
         });
       }
 
-      // Dynamic physical cascade overlays (flood wave + steep-slope landslide risk)
+      // Dynamic physical cascade overlays (vector-sharp blue pools + steep-slope landslide risk)
       map.addLayer({
         id: 'cascade-landslide-overlay',
         type: 'raster',
@@ -844,12 +899,33 @@ export function MapView(props: MapViewProps) {
         layout: { visibility: 'none' },
         paint: { 'raster-opacity': 0.82, 'raster-fade-duration': 0 }
       });
+
+      map.addSource('src-sim-pools-shallow', { type: 'geojson', data: asGeoInput(EMPTY_FC) });
       map.addLayer({
-        id: 'cascade-flood-overlay',
-        type: 'raster',
-        source: 'img-cascade-flood',
+        id: 'sim-pools-shallow-fill',
+        type: 'fill',
+        source: 'src-sim-pools-shallow',
         layout: { visibility: 'none' },
-        paint: { 'raster-opacity': 0.88, 'raster-fade-duration': 0 }
+        paint: { 'fill-color': '#38bdf8', 'fill-opacity': 0.34, 'fill-antialias': true }
+      });
+
+      map.addSource('src-sim-pools-deep', { type: 'geojson', data: asGeoInput(EMPTY_FC) });
+      map.addLayer({
+        id: 'sim-pools-deep-fill',
+        type: 'fill',
+        source: 'src-sim-pools-deep',
+        layout: { visibility: 'none' },
+        paint: { 'fill-color': '#0284c7', 'fill-opacity': 0.34, 'fill-antialias': true }
+      });
+
+      map.addSource('src-sim-affected-buildings', { type: 'geojson', data: asGeoInput(EMPTY_FC) });
+      map.addLayer({
+        id: 'sim-affected-buildings-line',
+        type: 'line',
+        source: 'src-sim-affected-buildings',
+        minzoom: 13.5,
+        layout: { visibility: 'none' },
+        paint: { 'line-color': '#f59e0b', 'line-width': 1.25, 'line-opacity': 0.78 }
       });
 
       map.addSource('src-settlements', { type: 'geojson', data: asGeoInput(ds.settlements) });
@@ -1904,7 +1980,6 @@ export function MapView(props: MapViewProps) {
         if (ts - lastTs > 50) {
           const dt = Math.min(0.1, (ts - lastTs) / 1000 || 0.05);
           lastTs = ts;
-          const isRaining = tabRef.current === 'sim' && simProgressRef.current > 0.03;
           const animActive = flowAnimActiveRef.current;
           const src = map.getSource('src-flow-particles') as GeoJSONSource | undefined;
 
@@ -1915,10 +1990,7 @@ export function MapView(props: MapViewProps) {
             }
           } else {
             particlesClearedRef.current = false;
-            const prog = simProgressRef.current;
-            const speed = isRaining
-              ? 0.14 + (simRainRef.current / 150) * (0.12 + prog * 0.24)
-              : 0.16;
+            const speed = 0.16;
             particlePhase = (particlePhase + dt * speed) % 1;
 
             if (src) {
@@ -1953,14 +2025,7 @@ export function MapView(props: MapViewProps) {
                   const coords = reach.coordinates;
                   if (!coords || coords.length < 2) continue;
                   const count = Math.max(2, Math.min(12, Math.round(reach.lengthM / 220)));
-                  const radius =
-                    reach.kind === 'river'
-                      ? isRaining && prog > 0.6
-                        ? 4.3
-                        : 3.7
-                      : isRaining && prog > 0.5
-                        ? 3.5
-                        : 3.2;
+                  const radius = reach.kind === 'river' ? 3.7 : 3.2;
                   for (let k = 0; k < count; k++) {
                     const frac = (particlePhase + k / count + i * 0.11) % 1;
                     features.push({
@@ -1975,7 +2040,6 @@ export function MapView(props: MapViewProps) {
                   const ww = verifiedWaterwaysRef.current[i];
                   if (mergedWwIds.has(ww.properties.id)) continue;
                   const isRiver = ww.properties.kind === 'river';
-                  if (isRaining && (isRiver ? prog <= 0.35 : prog <= 0.15)) continue;
                   const coords = ww.geometry.coordinates;
                   if (!coords || coords.length < 2) continue;
                   const count = Math.max(1, Math.min(8, Math.round((ww.properties.length_m || 400) / 320)));
@@ -2020,6 +2084,84 @@ export function MapView(props: MapViewProps) {
         ].filter(lid => Boolean(map.getLayer(lid)));
         const hits = hitLayers.length > 0 ? map.queryRenderedFeatures(e.point, { layers: hitLayers }) : [];
         if (hits.length > 0) return;
+
+        // Click-to-explain corridor water zone during active simulation
+        if (tabRef.current === 'sim' && simProgressRef.current > 0.02 && cascadeEngineRef.current) {
+          const poolLayers = ['sim-pools-shallow-fill', 'sim-pools-deep-fill'].filter(lid =>
+            Boolean(map.getLayer(lid))
+          );
+          const poolHits = poolLayers.length > 0 ? map.queryRenderedFeatures(e.point, { layers: poolLayers }) : [];
+          if (poolHits.length > 0) {
+            if (popupRef.current) popupRef.current.remove();
+            const isEn = langRef.current === 'en';
+            const elev = Math.round(demRef.current.getElevation(pt[0], pt[1]));
+            const sample = cascadeEngineRef.current.sampleAtLngLat(pt[0], pt[1]);
+            const cp = cascadeParamsRef.current;
+            const drainLabel =
+              cp.drainCondition === 'cleared'
+                ? isEn
+                  ? 'Cleared'
+                  : 'Lancar'
+                : cp.drainCondition === 'surge'
+                  ? isEn
+                    ? 'Clogged + Surge'
+                    : 'Tersumbat + Gelombang'
+                  : isEn
+                    ? 'Clogged'
+                    : 'Tersumbat';
+            const soilLabel =
+              cp.soilMoisture === 'dry'
+                ? isEn
+                  ? 'Dry'
+                  : 'Kering'
+                : cp.soilMoisture === 'moist'
+                  ? isEn
+                    ? 'Moist'
+                    : 'Lembab'
+                  : isEn
+                    ? 'Saturated'
+                    : 'Jenuh';
+            const html = `
+              <div style="min-width:235px;max-width:290px;">
+                <div style="font-size:11px;font-weight:700;color:#0369a1;margin-bottom:4px;padding-right:18px;line-height:1.35;">
+                  ${
+                    isEn
+                      ? 'Low-Lying River Corridor Zone (~40 m Model)'
+                      : 'Zona Elevasi Rendah Koridor Sungai (Model ~40 m)'
+                  }
+                </div>
+                <div style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#434d49;margin-bottom:6px;">
+                  ${elev} mdpl · HAND ~${sample.handM.toFixed(1)} m
+                </div>
+                <div style="display:flex;justify-content:space-between;gap:8px;padding:3px 0;border-bottom:1px solid rgba(22,28,26,0.08);font-size:11.5px;">
+                  <span style="color:#636f6a;">${isEn ? 'Scenario' : 'Skenario'}</span>
+                  <strong style="color:#161c1a;text-align:right;">${cp.rainMmHr} mm/${isEn ? 'hr' : 'jam'} · ${drainLabel} · ${soilLabel}</strong>
+                </div>
+                <div style="display:flex;justify-content:space-between;gap:8px;padding:3px 0;border-bottom:1px solid rgba(22,28,26,0.08);font-size:11.5px;">
+                  <span style="color:#636f6a;">${isEn ? 'Effective runoff' : 'Limpasan efektif'}</span>
+                  <strong style="color:#161c1a;">~${Math.round(sample.runoffMm)} mm</strong>
+                </div>
+                <div style="display:flex;justify-content:space-between;gap:8px;padding:3px 0;border-bottom:1px solid rgba(22,28,26,0.08);font-size:11.5px;">
+                  <span style="color:#636f6a;">${isEn ? 'Indicative depth' : 'Kedalaman indikatif'}</span>
+                  <strong style="color:#0369a1;">~${sample.depthM.toFixed(1)} m</strong>
+                </div>
+                <div style="margin-top:6px;font-size:10.5px;line-height:1.4;color:#434d49;">
+                  ${
+                    isEn
+                      ? 'This shaded zone marks low-lying valley/river-corridor cells (~40 m grid) relative to the nearest drainage channel. When culverts clog during heavy rain, runoff can spread around this corridor. It is NOT a house-level flood survey or an official BNPB/BPBD/BMKG warning.'
+                      : 'Area biru ini menandakan koridor lembah/sungai yang elevasinya rendah terhadap alur air terdekat pada skala grid ~40 m. Bila gorong-gorong/saluran tersumbat saat hujan deras, limpasan berpotensi meluas ke sekitar area ini. Ini BUKAN pengukuran banjir per rumah dan bukan peringatan resmi BNPB/BPBD/BMKG.'
+                  }
+                </div>
+              </div>
+            `;
+            const pop = new Popup({ offset: 12, maxWidth: '320px' })
+              .setLngLat([e.lngLat.lng, e.lngLat.lat])
+              .setHTML(html)
+              .addTo(map);
+            popupRef.current = pop;
+            return;
+          }
+        }
 
         if (!isPointInNagari(datasetsRef.current.nagariBoundary, pt[0], pt[1])) return;
         const agamCtx = datasetsRef.current.agamContext;
@@ -2169,14 +2311,16 @@ export function MapView(props: MapViewProps) {
       lastTerrainExagRef.current = nextExag;
     }
 
+    const isRaining = props.tab === 'sim' && props.simProgress > 0.02;
+
     map.setLayoutProperty('nagari-boundary-casing', 'visibility', vis(props.layers.das));
     map.setLayoutProperty('nagari-boundary-line', 'visibility', vis(props.layers.das));
     map.setLayoutProperty('jorong-fill', 'visibility', vis(props.layers.das));
     map.setLayoutProperty('jorong-casing', 'visibility', vis(props.layers.das));
     map.setLayoutProperty('jorong-line', 'visibility', vis(props.layers.das));
-    map.setLayoutProperty('settlements-residential-fill', 'visibility', vis(props.layers.settlements));
-    map.setLayoutProperty('settlements-buildings-fill', 'visibility', vis(props.layers.settlements));
-    map.setLayoutProperty('settlements-buildings-line', 'visibility', vis(props.layers.settlements));
+    map.setLayoutProperty('settlements-residential-fill', 'visibility', vis(props.layers.settlements && !isRaining));
+    map.setLayoutProperty('settlements-buildings-fill', 'visibility', vis(props.layers.settlements && !isRaining));
+    map.setLayoutProperty('settlements-buildings-line', 'visibility', vis(props.layers.settlements && !isRaining));
     map.setLayoutProperty('landcover-overlay', 'visibility', vis(props.layers.landCover));
     map.setLayoutProperty('scour-change-overlay', 'visibility', vis(props.layers.scourChange));
     map.setLayoutProperty('agam-landslide-fill', 'visibility', vis(props.layers.agamLandslide));
@@ -2211,7 +2355,30 @@ export function MapView(props: MapViewProps) {
     map.setLayoutProperty('verified-waterways-casing', 'visibility', vis(props.layers.verifiedWaterways));
     map.setLayoutProperty('verified-waterways-line', 'visibility', vis(props.layers.verifiedWaterways));
     map.setLayoutProperty('verified-culverts-line', 'visibility', vis(props.layers.verifiedWaterways));
-    map.setLayoutProperty('verified-waterways-arrows', 'visibility', vis(props.layers.verifiedWaterways));
+    map.setLayoutProperty('verified-waterways-arrows', 'visibility', vis(props.layers.verifiedWaterways && !isRaining));
+    map.setPaintProperty('verified-waterways-casing', 'line-color', [
+      'case',
+      ['==', ['get', 'kind'], 'culvert'],
+      '#334155',
+      isRaining ? '#0c334a' : '#ffffff'
+    ]);
+    map.setPaintProperty(
+      'verified-waterways-casing',
+      'line-width',
+      isRaining
+        ? ['match', ['get', 'kind'], 'river', 7.8, 'stream', 6.0, 'culvert', 5.0, 4.8]
+        : ['match', ['get', 'kind'], 'river', 6.4, 'stream', 5.2, 'culvert', 5.0, 4.2]
+    );
+    map.setPaintProperty('verified-waterways-casing', 'line-opacity', isRaining ? 0.78 : 0.9);
+    map.setPaintProperty(
+      'verified-waterways-line',
+      'line-width',
+      isRaining
+        ? ['match', ['get', 'kind'], 'river', 4.8, 'stream', 3.5, 2.8]
+        : ['match', ['get', 'kind'], 'river', 3.8, 'stream', 2.8, 2.3]
+    );
+    map.setPaintProperty('verified-waterways-line', 'line-opacity', isRaining ? 0.92 : 0.96);
+    map.setPaintProperty('verified-culverts-line', 'line-opacity', 0.98);
 
     const wwSrc = map.getSource('src-verified-waterways') as GeoJSONSource | undefined;
     if (wwSrc) {
@@ -2240,31 +2407,21 @@ export function MapView(props: MapViewProps) {
       props.tab === 'drainage' || props.tab === 'editor' ? true : props.layers.structures;
     map.setLayoutProperty('verified-structures-symbol', 'visibility', vis(showStructures));
 
-    const isRaining = props.tab === 'sim' && props.simProgress > 0.03;
     const showStressRings =
+      !isRaining &&
       showStructures &&
-      ((isRaining && props.simScenario === 'clogged') ||
-        props.verifiedStructures.some(s => ['clogged', 'damaged', 'critical'].includes(s.properties.status)));
+      props.verifiedStructures.some(s => ['clogged', 'damaged', 'critical'].includes(s.properties.status));
     map.setLayoutProperty('verified-structures-stress-ring', 'visibility', vis(showStressRings));
     if (showStressRings) {
       map.setFilter(
         'verified-structures-stress-ring',
-        isRaining && props.simScenario === 'clogged'
-          ? ['has', 'id']
-          : ['in', ['get', 'status'], ['literal', ['clogged', 'damaged', 'critical']]]
+        ['in', ['get', 'status'], ['literal', ['clogged', 'damaged', 'critical']]]
       );
     }
 
-    const maxTier =
-      props.tab === 'sim'
-        ? isRaining
-          ? props.simProgress >= 0.35 || props.simRain >= 60
-            ? 2
-            : 1
-          : 0
-        : props.flowDensity;
-    const flowVis = maxTier > 0;
-    const flowAnimActive = isRaining || (props.tab !== 'sim' && props.flowDensity > 0);
+    const maxTier = props.tab === 'sim' ? 0 : props.flowDensity;
+    const flowVis = props.tab !== 'sim' && maxTier > 0;
+    const flowAnimActive = props.tab !== 'sim' && props.flowDensity > 0;
     flowAnimActiveRef.current = flowAnimActive;
 
     map.setLayoutProperty('flows-glow', 'visibility', vis(flowVis));
@@ -2380,26 +2537,49 @@ export function MapView(props: MapViewProps) {
     }
 
     const showCascadeLayers = showFlood && useDynamicCascade;
-    map.setLayoutProperty('cascade-flood-overlay', 'visibility', vis(showCascadeLayers));
+    map.setLayoutProperty('sim-pools-shallow-fill', 'visibility', vis(showCascadeLayers));
+    map.setLayoutProperty('sim-pools-deep-fill', 'visibility', vis(showCascadeLayers));
+    map.setLayoutProperty(
+      'sim-affected-buildings-line',
+      'visibility',
+      vis(showCascadeLayers && props.layers.settlements)
+    );
     map.setLayoutProperty('cascade-landslide-overlay', 'visibility', vis(showCascadeLayers));
     let cascadeTimer: number | null = null;
-    if (showCascadeLayers && props.cascadeEngine) {
+    if (!showCascadeLayers) {
+      lastCascadeKeyRef.current = '';
+      const shallowSrc = map.getSource('src-sim-pools-shallow') as GeoJSONSource | undefined;
+      const deepSrc = map.getSource('src-sim-pools-deep') as GeoJSONSource | undefined;
+      const bldSrc = map.getSource('src-sim-affected-buildings') as GeoJSONSource | undefined;
+      if (shallowSrc) shallowSrc.setData(asGeoInput(EMPTY_FC));
+      if (deepSrc) deepSrc.setData(asGeoInput(EMPTY_FC));
+      if (bldSrc) bldSrc.setData(asGeoInput(EMPTY_FC));
+      setPoolGlintPoints(prev => (prev.length > 0 ? [] : prev));
+    } else if (props.cascadeEngine) {
       const cp = props.cascadeParams;
       const engine = props.cascadeEngine;
-      const cacheKey = `${cp.rainMmHr}|${cp.durationMin}|${cp.progress.toFixed(3)}|${cp.soilMoisture}|${cp.rainPattern}|${cp.drainCondition}|${cp.forestScenario}`;
+      const cacheKey = `${cp.rainMmHr}|${cp.durationMin}|${cp.progress.toFixed(3)}|${cp.soilMoisture}|${cp.rainPattern}|${cp.drainCondition}|${cp.forestScenario}|${props.verifiedWaterways.length}`;
       const renderCascade = () => {
         lastCascadeKeyRef.current = cacheKey;
         lastCascadeTsRef.current = performance.now();
         engine.evaluate(cp);
-        const outSize = 256;
-        const { floodRgba, landslideRgba } = engine.renderRgba(outSize);
 
-        if (!floodCanvasRef.current) {
-          const c = document.createElement('canvas');
-          c.width = outSize;
-          c.height = outSize;
-          floodCanvasRef.current = c;
+        const pools = extractFloodPoolPolygons(engine, props.verifiedWaterways);
+        const shallowSrc = map.getSource('src-sim-pools-shallow') as GeoJSONSource | undefined;
+        const deepSrc = map.getSource('src-sim-pools-deep') as GeoJSONSource | undefined;
+        const bldSrc = map.getSource('src-sim-affected-buildings') as GeoJSONSource | undefined;
+        if (shallowSrc) shallowSrc.setData(asGeoInput(pools.shallow));
+        if (deepSrc) deepSrc.setData(asGeoInput(pools.deep));
+        if (bldSrc) {
+          bldSrc.setData(
+            asGeoInput(extractAffectedBuildings(props.datasets.settlements, pools.filteredDepth, engine.fields))
+          );
         }
+        setPoolGlintPoints(pools.glintPoints);
+
+        const outSize = 256;
+        const { landslideRgba } = engine.renderRgba(outSize);
+
         if (!landslideCanvasRef.current) {
           const c = document.createElement('canvas');
           c.width = outSize;
@@ -2415,15 +2595,7 @@ export function MapView(props: MapViewProps) {
           [bbox.west, bbox.south]
         ];
 
-        const fCtx = floodCanvasRef.current.getContext('2d');
         const lCtx = landslideCanvasRef.current.getContext('2d');
-        if (fCtx) {
-          fCtx.putImageData(new ImageData(new Uint8ClampedArray(floodRgba), outSize, outSize), 0, 0);
-          const srcFlood = map.getSource('img-cascade-flood') as ImageSource | undefined;
-          if (srcFlood && typeof srcFlood.updateImage === 'function') {
-            srcFlood.updateImage({ url: floodCanvasRef.current.toDataURL('image/png'), coordinates: imgCoords });
-          }
-        }
         if (lCtx) {
           lCtx.putImageData(new ImageData(new Uint8ClampedArray(landslideRgba), outSize, outSize), 0, 0);
           const srcLs = map.getSource('img-cascade-landslide') as ImageSource | undefined;
@@ -2475,10 +2647,10 @@ export function MapView(props: MapViewProps) {
     }
 
     const showDraftPts =
-      props.tab === 'drainage' ||
-      isRaining ||
-      (props.tab === 'editor' && props.layers.unverifiedCrossings) ||
-      (props.tab === 'terrain' && props.layers.unverifiedCrossings);
+      !isRaining &&
+      (props.tab === 'drainage' ||
+        (props.tab === 'editor' && props.layers.unverifiedCrossings) ||
+        (props.tab === 'terrain' && props.layers.unverifiedCrossings));
     map.setLayoutProperty('draft-points', 'visibility', vis(showDraftPts));
     if (showDraftPts) {
       const anyClauses: ExpressionSpecification[] = [];
@@ -2513,6 +2685,8 @@ export function MapView(props: MapViewProps) {
     props.simDurationMin,
     props.simProgress,
     props.simScenario,
+    props.lang,
+    props.rainAnimEnabled,
     props.cascadeEngine,
     props.cascadeParams,
     props.drainFilter,
@@ -2523,6 +2697,42 @@ export function MapView(props: MapViewProps) {
     props.datasets.flowPaths,
     props.suppressedDemIds
   ]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapLoadedRef.current) return;
+    const isStorm = props.tab === 'sim' && props.rainAnimEnabled && props.simProgress > 0.02;
+    const stormFactor = isStorm
+      ? Math.min(1, props.simRain / 130) * Math.min(1, props.simProgress * 2.5)
+      : 0;
+    const key = stormFactor.toFixed(2);
+    if (key === lastSkyKeyRef.current) return;
+    lastSkyKeyRef.current = key;
+
+    try {
+      if (stormFactor <= 0.01) {
+        map.setSky({
+          'sky-color': '#c9dce8',
+          'horizon-color': '#e5ebe8',
+          'fog-color': '#e5ebe8',
+          'sky-horizon-blend': 0.5,
+          'horizon-fog-blend': 0.7,
+          'fog-ground-blend': 0.5
+        });
+      } else {
+        map.setSky({
+          'sky-color': lerpHex('#c9dce8', '#9eb4c6', stormFactor),
+          'horizon-color': lerpHex('#e5ebe8', '#c8d4dc', stormFactor),
+          'fog-color': lerpHex('#e5ebe8', '#c2cfd8', stormFactor),
+          'sky-horizon-blend': Number((0.5 + stormFactor * 0.08).toFixed(2)),
+          'horizon-fog-blend': Number((0.7 + stormFactor * 0.08).toFixed(2)),
+          'fog-ground-blend': Number((0.5 + stormFactor * 0.08).toFixed(2))
+        });
+      }
+    } catch {
+      // Ignore if map style is not ready for sky updates
+    }
+  }, [mapReady, props.tab, props.rainAnimEnabled, props.simProgress, props.simRain]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -2569,7 +2779,12 @@ export function MapView(props: MapViewProps) {
     map.setPaintProperty('flows-line', 'line-color', pal.flows.lineColor);
     map.setPaintProperty('flows-line', 'line-opacity', pal.flows.lineOpacity);
 
-    const rbiSimScale = props.tab === 'sim' ? { casing: 0.62, line: 0.78 } : { casing: 1, line: 1 };
+    const rbiSimScale =
+      props.tab === 'sim' && props.simProgress > 0.02
+        ? { casing: 0.45, line: 0.65 }
+        : props.tab === 'sim'
+          ? { casing: 0.62, line: 0.78 }
+          : { casing: 1, line: 1 };
     map.setPaintProperty('agam-rbi-casing', 'line-color', pal.agamRbi.casingColor);
     map.setPaintProperty('agam-rbi-casing', 'line-opacity', pal.agamRbi.casingOpacity * rbiSimScale.casing);
     map.setPaintProperty('agam-rbi-line', 'line-color', pal.agamRbi.lineColor);
@@ -2631,7 +2846,7 @@ export function MapView(props: MapViewProps) {
       pal.agamLandslide.lowLine
     ]);
     map.setPaintProperty('agam-landslide-line', 'line-width', pal.agamLandslide.lineWidth);
-  }, [mapReady, props.basemap, props.tab]);
+  }, [mapReady, props.basemap, props.tab, props.simProgress]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -3021,5 +3236,22 @@ export function MapView(props: MapViewProps) {
     };
   }, [mapReady, editingStructId, editingStructCoords, props.editorUnlocked]);
 
-  return <div ref={containerRef} className="absolute inset-0 h-full w-full" aria-label="Balingka GIS Map" />;
+  return (
+    <div className="relative h-full w-full">
+      <div ref={containerRef} className="absolute inset-0 h-full w-full" aria-label="Balingka GIS Map" />
+      <FlowFilamentOverlay
+        active={props.tab === 'sim' && props.simProgress > 0.02 && Boolean(props.cascadeEngine)}
+        mapRef={mapRef}
+        corridors={corridors}
+        glintPoints={poolGlintPoints}
+        rainMmHr={props.simRain}
+        durationMin={props.simDurationMin}
+        progress={props.simProgress}
+        drainCondition={props.cascadeParams.drainCondition}
+        rainPattern={props.cascadeParams.rainPattern}
+        soilMoisture={props.cascadeParams.soilMoisture}
+        cascadeEngine={props.cascadeEngine}
+      />
+    </div>
+  );
 }

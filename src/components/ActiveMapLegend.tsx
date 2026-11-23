@@ -49,7 +49,7 @@ export function ActiveMapLegend({
   const [collapsed, setCollapsed] = useState(false);
   const t = I18N[lang];
   const isEn = lang === 'en';
-  const isRaining = tab === 'sim' && simProgress > 0.03;
+  const isRaining = tab === 'sim' && simProgress > 0.02;
 
   const modelRows: LegendRow[] = [];
   if (isRaining) {
@@ -58,8 +58,17 @@ export function ActiveMapLegend({
         key: 'model-flow',
         node: (
           <div className="flex items-center gap-2 text-[#161c1a]">
-            <LegendIcon kind="flow" />
-            <span>{isEn ? 'Modeled flow direction' : 'Arah aliran simulasi'}</span>
+            <span
+              className="inline-flex h-3.5 w-6 shrink-0 items-center justify-center rounded-[3px] bg-[#1e293b]"
+              aria-hidden="true"
+            >
+              <svg viewBox="0 0 24 12" className="h-3 w-5">
+                <path d="M2 3.5 C8 2.5, 16 4.5, 22 3.5" stroke="#ffffff" strokeWidth="1.2" fill="none" strokeLinecap="round" />
+                <path d="M2 6.5 C8 5.5, 16 7.5, 22 6.5" stroke="#e0f2fe" strokeWidth="1.1" fill="none" strokeLinecap="round" />
+                <path d="M2 9.5 C8 8.5, 16 10.5, 22 9.5" stroke="#ffffff" strokeWidth="1.0" fill="none" strokeLinecap="round" />
+              </svg>
+            </span>
+            <span>{isEn ? 'Simulated runoff flow' : 'Aliran limpasan simulasi'}</span>
           </div>
         )
       },
@@ -67,12 +76,12 @@ export function ActiveMapLegend({
         key: 'model-hand-deep',
         node: (
           <div className="flex items-center gap-2 text-[#161c1a]">
-            <span className="h-3 w-3 shrink-0 rounded-[3px] bg-[#0369a1]" />
+            <span className="h-3 w-3 shrink-0 rounded-[3px] bg-[#0284c7]/75" />
             <span className="flex min-w-0 items-center gap-1">
-              <span>{isEn ? 'Deep basin (>1.5m HAND)' : 'Cekungan utama (>1,5 m HAND)'}</span>
+              <span>{isEn ? 'River-corridor swelling (deep)' : 'Genangan koridor sungai (utama)'}</span>
               <InfoTooltip
                 text={t.infoLegendDeep}
-                label={isEn ? 'Deep HAND basin' : 'Cekungan utama HAND'}
+                label={isEn ? 'Deep HAND corridor' : 'Genangan koridor sungai utama'}
               />
             </span>
           </div>
@@ -82,8 +91,8 @@ export function ActiveMapLegend({
         key: 'model-hand-shallow',
         node: (
           <div className="flex items-center gap-2 text-[#161c1a]">
-            <span className="h-3 w-3 shrink-0 rounded-[3px] bg-[#7dd3fc]" />
-            <span>{isEn ? 'Shallow basin (HAND)' : 'Cekungan dangkal (HAND)'}</span>
+            <span className="h-3 w-3 shrink-0 rounded-[3px] bg-[#38bdf8]/55" />
+            <span>{isEn ? 'River-corridor swelling (shallow)' : 'Genangan koridor sungai (dangkal)'}</span>
           </div>
         )
       },
@@ -353,7 +362,7 @@ export function ActiveMapLegend({
   }
 
   const showDraftCrossings =
-    tab === 'drainage' || isRaining || layers.unverifiedCrossings;
+    tab === 'drainage' || (!isRaining && layers.unverifiedCrossings);
   if (showDraftCrossings) {
     mapRows.push({
       key: 'map-crossings',
@@ -401,7 +410,7 @@ export function ActiveMapLegend({
     });
   }
 
-  if ((tab === 'drainage' || isRaining) && layers.evac) {
+  if (tab === 'drainage' && layers.evac) {
     mapRows.push({
       key: 'map-evac',
       node: (
@@ -425,7 +434,22 @@ export function ActiveMapLegend({
     });
   }
 
-  if (layers.settlements) {
+  if (isRaining && layers.settlements) {
+    mapRows.push({
+      key: 'map-sim-buildings',
+      node: (
+        <div className="flex items-center gap-2 text-[#161c1a]">
+          <span
+            className="h-3 w-3 shrink-0 rounded-[2px] border-[1.5px] border-[#f59e0b] bg-transparent"
+            aria-hidden="true"
+          />
+          <span>{isEn ? 'Buildings in modeled corridor' : 'Bangunan di zona koridor model'}</span>
+        </div>
+      )
+    });
+  }
+
+  if (layers.settlements && !isRaining) {
     mapRows.push({
       key: 'map-settlements',
       node: (

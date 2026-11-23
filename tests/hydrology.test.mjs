@@ -29,6 +29,13 @@ import {
 import { runResetRegion } from '../scripts/reset-region.mjs';
 import { CascadeEngine, extractBuildingCentroids } from '../src/lib/cascadeEngine.ts';
 import { estimateChannelThresholds } from '../src/lib/channelHydraulics.ts';
+import { buildFlowField, sampleFlowVelocity } from '../src/lib/flowField.ts';
+import { buildFlowCorridors, sampleCorridorAtDistance } from '../src/lib/flowRibbons.ts';
+import {
+  extractAffectedBuildings,
+  extractFloodPoolPolygons,
+  marchingSquaresPolygons
+} from '../src/lib/poolContours.ts';
 import { computeRunoffMergeNetwork } from '../src/lib/geometry.ts';
 import { getOverlayContrastPalette, isDarkBasemap } from '../src/lib/mapPalette.ts';
 import { lookupAgamAtPoint } from '../src/lib/agamLookup.ts';
@@ -765,4 +772,316 @@ test('reset-region blocks accidental wipe on nagari-balingka and cleans stale ar
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test('buildFlowField computes downhill vectors, verified-waterway channelMask, and bounded uplandBbox', () => {
+  const simFields = JSON.parse(fs.readFileSync(path.join(DATA_DIR, 'sim-fields.json'), 'utf8'));
+  const w = 12;
+  const h = 14;
+  const n = w * h;
+  const slopePct = new Uint8Array(n).fill(22);
+  const accNorm = new Uint8Array(n).fill(20);
+  const uplandWeight = new Uint8Array(n);
+  const nagariMask = new Uint8Array(n).fill(1);
+  for (let r = 0; r < h; r++) {
+    for (let c = 0; c < w; c++) {
+      uplandWeight[r * w + c] = r <= 4 ? 200 : 40;
+    }
+  }
+  const toB64 = arr => Buffer.from(arr.buffer, arr.byteOffset, arr.byteLength).toString('base64');
+
+  const synthFields = {
+    ...simFields,
+    width: w,
+    height: h,
+    bbox: { west: 100.3, south: -0.36, east: 100.32, north: -0.34 },
+    cellSizeX: 15,
+    cellSizeY: 15,
+    slopePctBase64: toB64(slopePct),
+    accNormBase64: toB64(accNorm),
+    uplandWeightBase64: toB64(uplandWeight),
+    nagariMaskBase64: toB64(nagariMask)
+  };
+
+  // Synthetic terrain sloping smoothly from north-west (high) to south-east (low)
+  const getElev = (lng, lat) => {
+    const u = (lng - synthFields.bbox.west) / (synthFields.bbox.east - synthFields.bbox.west);
+    const v = (synthFields.bbox.north - lat) / (synthFields.bbox.north - synthFields.bbox.south);
+    return 1800 - u * 120 - v * 260;
+  };
+
+  const waterways = [
+    {
+      type: 'Feature',
+      properties: {
+        id: 'ww-synth-1',
+        name: 'Saluran Uji',
+        kind: 'stream',
+        status: 'normal',
+        source: 'manual',
+        source_ref: null,
+        notes: '',
+        length_m: 300,
+        updated_by: 'test',
+        updated_at: '2026-01-01T00:00:00Z'
+      },
+      geometry: {
+        type: 'LineString',
+        coordinates: [
+          [100.31, -0.342],
+          [100.31, -0.358]
+        ]
+      }
+    }
+  ];
+
+  const field = buildFlowField(synthFields, getElev, waterways);
+  assert.equal(field.vx.length, n);
+  assert.equal(field.vy.length, n);
+
+  // Downhill vector in interior points eastward (+vx) and southward (+vy)
+  const centerIdx = 7 * w + 3;
+  assert.ok(field.vx[centerIdx] > 0.2, `Expected positive +x downhill component, got ${field.vx[centerIdx]}`);
+  assert.ok(field.vy[centerIdx] > 0.6, `Expected positive +y downhill component, got ${field.vy[centerIdx]}`);
+  const mag = Math.hypot(field.vx[centerIdx], field.vy[centerIdx]);
+  assert.ok(Math.abs(mag - 1) < 0.02, `Expected normalized flow vector, got magnitude ${mag}`);
+
+  // Verified waterway boosts channelMask near lng=100.31 (col ~ 6)
+  const midChannelIdx = 7 * w + 6;
+  assert.ok(field.channelMask[midChannelIdx] >= 140, `Expected boosted channelMask along waterway, got ${field.channelMask[midChannelIdx]}`);
+
+  // uplandBbox stays inside synthFields.bbox and covers northern rows
+  assert.ok(field.uplandBbox.west >= synthFields.bbox.west && field.uplandBbox.east <= synthFields.bbox.east);
+  assert.ok(field.uplandBbox.north <= synthFields.bbox.north && field.uplandBbox.south >= synthFields.bbox.south);
+  assert.ok(field.uplandBbox.south > -0.35, `Expected uplandBbox in northern rows, got south=${field.uplandBbox.south}`);
+
+  // sampleFlowVelocity stays finite at interior and corners
+  for (const [u, v] of [[0, 0], [0.5, 0.5], [1, 1], [-0.2, 1.4]]) {
+    const s = sampleFlowVelocity(field, u, v);
+    assert.ok(Number.isFinite(s.vx) && Number.isFinite(s.vy) && Number.isFinite(s.speed) && Number.isFinite(s.channel));
+    assert.ok(s.speed >= 0.15 && s.speed <= 1.0);
+  }
+});
+
+test('marchingSquaresPolygons and extractFloodPoolPolygons filter isolated pockets and keep river-corridor pools', () => {
+  // 1. Synthetic closed pond on a 10x10 grid
+  const w = 10;
+  const h = 10;
+  const grid = new Float32Array(w * h);
+  for (let r = 3; r <= 6; r++) {
+    for (let c = 3; c <= 6; c++) {
+      grid[r * w + c] = r >= 4 && r <= 5 && c >= 4 && c <= 5 ? 0.75 : 0.3;
+    }
+  }
+  const bbox = { west: 100.3, south: -0.36, east: 100.32, north: -0.34 };
+  const fc = marchingSquaresPolygons(grid, w, h, bbox, 0.2, null, 2);
+  assert.ok(fc.features.length === 1, `Expected 1 closed pool polygon, got ${fc.features.length}`);
+  const ring = fc.features[0].geometry.type === 'Polygon' ? fc.features[0].geometry.coordinates[0] : [];
+  assert.ok(ring.length >= 8, `Expected smoothed polygon ring, got ${ring.length} vertices`);
+  assert.deepEqual(ring[0], ring[ring.length - 1], 'Ring must be closed');
+
+  // 2. Connectivity filter rejects isolated 2-cell upland pocket and keeps corridor-connected flooding
+  const fw = 16;
+  const fh = 16;
+  const fn = fw * fh;
+  const fakeDepth = new Float32Array(fn);
+  const fakeAcc = new Uint8Array(fn).fill(15);
+  // Isolated 2-cell upland pocket (no channel seed, < 4 cells)
+  fakeDepth[2 * fw + 2] = 0.55;
+  fakeDepth[2 * fw + 3] = 0.55;
+  // Connected 6-cell valley corridor touching channel seed
+  for (let c = 6; c <= 11; c++) {
+    fakeDepth[10 * fw + c] = 0.45;
+    fakeAcc[10 * fw + c] = 140;
+  }
+  const mockEngine = {
+    fields: {
+      width: fw,
+      height: fh,
+      bbox,
+      cellSizeX: 40,
+      cellSizeY: 40
+    },
+    getFloodDepthGrid: () => fakeDepth,
+    getAccNorm: () => fakeAcc,
+    getNagariMask: () => null
+  };
+  const filtered = extractFloodPoolPolygons(mockEngine, []);
+  assert.equal(filtered.shallow.features.length, 1, 'Expected only the corridor-connected pool, not the isolated pocket');
+
+  // 3. Real Balingka sim-fields river-corridor pool extraction
+  const simFields = JSON.parse(fs.readFileSync(path.join(DATA_DIR, 'sim-fields.json'), 'utf8'));
+  const settlements = JSON.parse(fs.readFileSync(path.join(DATA_DIR, 'settlements.geojson'), 'utf8'));
+  const verifiedWaterways = JSON.parse(fs.readFileSync(path.join(DATA_DIR, 'verified-waterways.geojson'), 'utf8'));
+  const wwFeatures = verifiedWaterways.features || verifiedWaterways;
+  const engine = new CascadeEngine(simFields, extractBuildingCentroids(settlements), 37);
+
+  const params = {
+    rainMmHr: 120,
+    durationMin: 180,
+    progress: 0.75,
+    soilMoisture: 'saturated',
+    rainPattern: 'upland',
+    drainCondition: 'clogged',
+    forestScenario: 'actual'
+  };
+  engine.evaluate(params);
+
+  const t0 = performance.now();
+  const pools = extractFloodPoolPolygons(engine, wwFeatures);
+  const elapsedMs = performance.now() - t0;
+  assert.ok(elapsedMs < 90, `Expected fast marching-squares extraction (<90 ms), took ${elapsedMs.toFixed(1)} ms`);
+  assert.ok(pools.shallow.features.length > 0, 'Expected corridor-connected shallow polygons in extreme rain');
+  assert.ok(pools.deep.features.length > 0, 'Expected corridor-connected deep polygons in extreme rain');
+  assert.ok(pools.glintPoints.length > 0, 'Expected glint coordinates inside corridor-connected water');
+});
+
+test('buildFlowCorridors orients downhill with multi-point sampling, includes BIG RBI tributaries, and interpolates smoothly', () => {
+  const flowPaths = JSON.parse(fs.readFileSync(path.join(DATA_DIR, 'flow-paths.geojson'), 'utf8'));
+  const verifiedWaterways = JSON.parse(fs.readFileSync(path.join(DATA_DIR, 'verified-waterways.geojson'), 'utf8'));
+  const agamRbi = JSON.parse(fs.readFileSync(path.join(DATA_DIR, 'agam-rbi-rivers.geojson'), 'utf8'));
+  const wwList = verifiedWaterways.features || verifiedWaterways;
+  const getElev = (lng, lat) => 1600 - (lng - 100.28) * 1500 - (lat + 0.35) * 4000;
+
+  const corridors = buildFlowCorridors(wwList, flowPaths, [], getElev, agamRbi, {
+    includeVerified: true,
+    includeRbi: true
+  });
+  assert.ok(corridors.length > 5, `Expected multiple flow corridors, got ${corridors.length}`);
+  assert.ok(corridors.some(c => c.kind === 'rbi_tributary'), 'Expected rbi_tributary corridors when includeRbi=true');
+  assert.ok(corridors.some(c => c.kind === 'verified_river' || c.kind === 'verified_channel'));
+
+  const noRbi = buildFlowCorridors(wwList, flowPaths, [], getElev, agamRbi, {
+    includeVerified: true,
+    includeRbi: false
+  });
+  assert.equal(noRbi.some(c => c.kind === 'rbi_tributary'), false, 'Expected no rbi_tributary when includeRbi=false');
+
+  const noVerified = buildFlowCorridors(wwList, flowPaths, [], getElev, agamRbi, {
+    includeVerified: false,
+    includeRbi: true
+  });
+  assert.equal(
+    noVerified.some(c => c.kind === 'verified_river' || c.kind === 'verified_channel'),
+    false,
+    'Expected no verified corridors when includeVerified=false'
+  );
+
+  // Multi-point orientation resists a single noisy endpoint elevation spike
+  const noisyFlowFc = {
+    type: 'FeatureCollection',
+    features: [
+      {
+        type: 'Feature',
+        properties: { id: 'noisy-1', tier: 1, length_m: 500 },
+        geometry: {
+          type: 'LineString',
+          coordinates: [
+            [100.31, -0.34],
+            [100.31, -0.342],
+            [100.31, -0.344],
+            [100.31, -0.346],
+            [100.31, -0.348],
+            [100.31, -0.35]
+          ]
+        }
+      }
+    ]
+  };
+  const noisyCorridors = buildFlowCorridors([], noisyFlowFc, [], (lng, lat) => {
+    if (Math.abs(lat - -0.34) < 0.0005) return 900; // artificial pit at first vertex only
+    return 1600 - (lng - 100.28) * 1000 + (lat + 0.35) * 4000; // north (-0.34) = 1610 m > south (-0.35) = 1570 m
+  });
+  assert.equal(noisyCorridors.length, 1);
+  assert.ok(
+    noisyCorridors[0].coords[0][1] > noisyCorridors[0].coords[noisyCorridors[0].coords.length - 1][1],
+    'Multi-point check should keep high-north start oriented downhill despite single noisy vertex'
+  );
+
+  const first = corridors[0];
+  assert.ok(first.totalLengthM > 35);
+  assert.ok(first.strandCount >= 3 && first.strandCount <= 7);
+
+  const s0 = sampleCorridorAtDistance(first, 0);
+  const sMid = sampleCorridorAtDistance(first, first.totalLengthM * 0.5);
+  assert.ok(Number.isFinite(s0.lng) && Number.isFinite(s0.lat) && Number.isFinite(s0.nx) && Number.isFinite(s0.ny));
+  assert.ok(Number.isFinite(sMid.lng) && Number.isFinite(sMid.lat));
+});
+
+test('CascadeEngine runoffMmGrid, sampleAtLngLat, and extractAffectedBuildings reflect all soil/forest/corridor parameters', () => {
+  const simFields = JSON.parse(fs.readFileSync(path.join(DATA_DIR, 'sim-fields.json'), 'utf8'));
+  const settlements = JSON.parse(fs.readFileSync(path.join(DATA_DIR, 'settlements.geojson'), 'utf8'));
+  const verifiedWaterways = JSON.parse(fs.readFileSync(path.join(DATA_DIR, 'verified-waterways.geojson'), 'utf8'));
+  const wwList = verifiedWaterways.features || verifiedWaterways;
+  const engine = new CascadeEngine(simFields, extractBuildingCentroids(settlements), 37);
+
+  const avgGrid = arr => {
+    let s = 0;
+    let c = 0;
+    for (let i = 0; i < arr.length; i++) {
+      if (arr[i] > 0) {
+        s += arr[i];
+        c++;
+      }
+    }
+    return c > 0 ? s / c : 0;
+  };
+
+  engine.evaluate({
+    rainMmHr: 80,
+    durationMin: 180,
+    progress: 0.7,
+    soilMoisture: 'dry',
+    rainPattern: 'uniform',
+    drainCondition: 'clogged',
+    forestScenario: 'actual'
+  });
+  const dryAvg = avgGrid(engine.getRunoffMmGrid());
+
+  engine.evaluate({
+    rainMmHr: 80,
+    durationMin: 180,
+    progress: 0.7,
+    soilMoisture: 'saturated',
+    rainPattern: 'uniform',
+    drainCondition: 'clogged',
+    forestScenario: 'actual'
+  });
+  const satAvg = avgGrid(engine.getRunoffMmGrid());
+  assert.ok(satAvg > dryAvg, `Expected saturated runoff (${satAvg.toFixed(1)}) > dry (${dryAvg.toFixed(1)})`);
+
+  engine.evaluate({
+    rainMmHr: 80,
+    durationMin: 180,
+    progress: 0.7,
+    soilMoisture: 'saturated',
+    rainPattern: 'uniform',
+    drainCondition: 'clogged',
+    forestScenario: 'degraded50'
+  });
+  const degradedAvg = avgGrid(engine.getRunoffMmGrid());
+  assert.ok(degradedAvg > satAvg, `Expected saturated degraded50 runoff (${degradedAvg.toFixed(1)}) > actual (${satAvg.toFixed(1)})`);
+
+  engine.evaluate({
+    rainMmHr: 120,
+    durationMin: 180,
+    progress: 0.75,
+    soilMoisture: 'saturated',
+    rainPattern: 'upland',
+    drainCondition: 'clogged',
+    forestScenario: 'actual'
+  });
+
+  const sample = engine.sampleAtLngLat(100.312, -0.346);
+  assert.ok(
+    Number.isFinite(sample.depthM) &&
+      Number.isFinite(sample.handM) &&
+      Number.isFinite(sample.runoffMm) &&
+      sample.insideNagari
+  );
+
+  const pools = extractFloodPoolPolygons(engine, wwList);
+  const affected = extractAffectedBuildings(settlements, pools.filteredDepth, engine.fields);
+  assert.ok(affected.features.length > 0, 'Expected corridor-affected building outlines in extreme rain');
+  assert.ok(affected.features.length < settlements.features.length, 'Affected buildings must be a strict subset');
 });

@@ -53,6 +53,7 @@ import {
 } from './lib/api';
 import { CascadeEngine, extractBuildingCentroids } from './lib/cascadeEngine';
 import { DemClient } from './lib/demClient';
+import { computeUplandBounds } from './lib/flowField';
 import { haversineMeters, orientCoordinatesDownhill } from './lib/geometry';
 import type {
   ActiveTool,
@@ -387,6 +388,8 @@ export function App() {
     return new CascadeEngine(simFields, buildingCentroids, totalCrossings);
   }, [simFields, buildingCentroids, metadata?.crossingsDetected, metadata?.bridgesDetected]);
 
+  const uplandBbox = useMemo(() => (simFields ? computeUplandBounds(simFields) : null), [simFields]);
+
   const cascadeParams: CascadeSimParams = useMemo(
     () => ({
       rainMmHr: simRain,
@@ -688,6 +691,7 @@ export function App() {
           simDurationMin={simDurationMin}
           simProgress={simProgress}
           simScenario={drainCondition === 'cleared' ? 'cleared' : 'clogged'}
+          rainAnimEnabled={rainAnimEnabled}
           cascadeEngine={cascadeEngine}
           cascadeParams={cascadeParams}
           drainFilter={drainFilter}
@@ -848,9 +852,11 @@ export function App() {
 
       {/* Falling Rain Animation Overlay during Simulation */}
       <RainOverlay
-        active={tab === 'sim' && rainAnimEnabled && simProgress > 0.01}
+        active={tab === 'sim' && rainAnimEnabled && simProgress > 0.02}
         intensityMmHr={simRain}
         rainPattern={rainPattern}
+        uplandBbox={uplandBbox}
+        mapControlRef={mapControlRef}
       />
 
       {sidebarCollapsed && (
