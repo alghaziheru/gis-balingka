@@ -81,6 +81,7 @@ export class CascadeEngine {
   private readonly buildingCells: Int32Array;
   private readonly floodDepthGrid: Float32Array;
   private readonly landslideRiskGrid: Float32Array;
+  private readonly runoffMmGrid: Float32Array;
 
   constructor(fields: SimFieldsData, buildingCentroids: [number, number][] = [], totalCrossings = 34) {
     this.fields = fields;
@@ -114,6 +115,68 @@ export class CascadeEngine {
     this.buildingCells = new Int32Array(mapped);
     this.floodDepthGrid = new Float32Array(this.n);
     this.landslideRiskGrid = new Float32Array(this.n);
+    this.runoffMmGrid = new Float32Array(this.n);
+  }
+
+  getFloodDepthGrid(): Float32Array {
+    return this.floodDepthGrid;
+  }
+
+  getLandslideRiskGrid(): Float32Array {
+    return this.landslideRiskGrid;
+  }
+
+  getRunoffMmGrid(): Float32Array {
+    return this.runoffMmGrid;
+  }
+
+  getHandDm(): Uint16Array {
+    return this.handDm;
+  }
+
+  getNagariMask(): Uint8Array | null {
+    return this.nagariMask;
+  }
+
+  getBottleneckProx(): Uint8Array {
+    return this.bottleneckProx;
+  }
+
+  getAccNorm(): Uint8Array {
+    return this.accNorm;
+  }
+
+  getSlopePct(): Uint8Array {
+    return this.slopePct;
+  }
+
+  getUplandWeight(): Uint8Array {
+    return this.uplandWeight;
+  }
+
+  getTravelTimeTenthMin(): Uint16Array {
+    return this.travelTimeTenthMin;
+  }
+
+  sampleAtLngLat(
+    lng: number,
+    lat: number
+  ): { depthM: number; handM: number; runoffMm: number; bottleneckProx: number; insideNagari: boolean } {
+    const { width, height, bbox } = this.fields;
+    if (lng < bbox.west || lng > bbox.east || lat < bbox.south || lat > bbox.north) {
+      return { depthM: 0, handM: 0, runoffMm: 0, bottleneckProx: 0, insideNagari: false };
+    }
+    const col = Math.max(0, Math.min(width - 1, Math.floor(((lng - bbox.west) / (bbox.east - bbox.west)) * width)));
+    const row = Math.max(0, Math.min(height - 1, Math.floor(((bbox.north - lat) / (bbox.north - bbox.south)) * height)));
+    const idx = row * width + col;
+    const insideNagari = !this.nagariMask || this.nagariMask[idx] !== 0;
+    return {
+      depthM: this.floodDepthGrid[idx] || 0,
+      handM: (this.handDm[idx] || 0) * 0.1,
+      runoffMm: this.runoffMmGrid[idx] || 0,
+      bottleneckProx: this.bottleneckProx[idx] || 0,
+      insideNagari
+    };
   }
 
   evaluate(params: CascadeSimParams): CascadeKpis {
@@ -124,6 +187,7 @@ export class CascadeEngine {
     if (p <= 0.02) {
       this.floodDepthGrid.fill(0);
       this.landslideRiskGrid.fill(0);
+      this.runoffMmGrid.fill(0);
       return {
         stage: 0,
         alertLevel: 'normal',
@@ -179,6 +243,7 @@ export class CascadeEngine {
       if (this.nagariMask && this.nagariMask[i] === 0) {
         this.floodDepthGrid[i] = 0;
         this.landslideRiskGrid[i] = 0;
+        this.runoffMmGrid[i] = 0;
         continue;
       }
       insideCells++;
@@ -210,6 +275,7 @@ export class CascadeEngine {
       const accN = this.accNorm[i] / 255;
       const qRouted =
         qLocal * (1 - upRatio * 0.75) + qUpland * (upRatio * 0.75) + qUpland * upRatio * accN * 0.35;
+      this.runoffMmGrid[i] = qRouted;
       sumRunoff += qRouted;
 
       const sl = this.slopePct[i];
