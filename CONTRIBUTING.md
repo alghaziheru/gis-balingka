@@ -25,12 +25,10 @@ pnpm run server           # Terminal 1: SQLite API (http://127.0.0.1:8787)
 pnpm run dev              # Terminal 2: Vite dev server (http://localhost:5173)
 ```
 
-Before opening a pull request, please verify:
+Before opening a pull request, please verify locally:
 
 ```bash
-pnpm run typecheck        # TypeScript strict check
-pnpm test                 # Hydrology, cascade invariants & SQLite API/security tests
-pnpm run build            # Production client bundle
+pnpm run verify           # Runs typecheck, tests & production build together
 ```
 
 - Keep PRs focused and small.

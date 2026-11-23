@@ -38,7 +38,8 @@
     "prepare-data": "node scripts/prepare-data.mjs",
     "sync-seed": "node scripts/sync-seed.mjs",
     "import-seed": "node scripts/import-seed.mjs",
-    "test": "node --test tests/hydrology.test.mjs tests/api.test.mjs"
+    "test": "node --test tests/hydrology.test.mjs tests/api.test.mjs",
+    "verify": "pnpm run typecheck && pnpm test && pnpm run build"
   },
   "dependencies": {
     "lucide-react": "^1.77.0",

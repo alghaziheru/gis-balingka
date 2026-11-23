@@ -1,7 +1,6 @@
 # Nagari Balingka Community GIS
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-0284c7.svg)](./LICENSE)
-[![CI](https://github.com/alghaziheru/gis-balingka/actions/workflows/ci.yml/badge.svg)](https://github.com/alghaziheru/gis-balingka/actions/workflows/ci.yml)
 [![Node >= 24](https://img.shields.io/badge/Node.js-%3E%3D24-047857.svg)](https://nodejs.org/)
 
 Open-source (**MIT**) public spatial data viewer, terrain & drainage inventory, computational terrain-flow visualizer, and collaborative waterway & boundary editor — built for **Nagari Balingka** (`29.89 km²`, `1,032–2,869 mdpl`, Kec. IV Koto, Kab. Agam, West Sumatra) and configurable for **any Indonesian Desa / Nagari** via [`region.config.json`](./region.config.json).
@@ -194,6 +193,7 @@ pnpm start                # Serves dist/ and /api/* together on PORT (default 87
 ## Testing & Verification
 
 ```bash
+pnpm run verify    # Runs typecheck + unit tests + production build in one command
 pnpm run typecheck # TypeScript strict check
 pnpm test          # Unit hydrology, cascade invariants, Agam integration & SQLite API/auth tests
 pnpm run build     # Production client bundle
