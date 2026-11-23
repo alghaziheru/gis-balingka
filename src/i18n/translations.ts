@@ -344,6 +344,12 @@ export const I18N = {
     feedbackSubtitle: 'Bantu kami menyempurnakan tampilan, kejelasan informasi, atau fitur Peta Nagari Balingka.',
     feedbackSubmitBtn: 'Kirim Masukan',
     feedbackSentToast: 'Terima kasih! Masukan Anda sudah diterima.',
+    feedbackStaticHint:
+      'Mode situs statis aktif: kirim masukan tanpa perlu masuk melalui formulir daring berikut, atau laporkan kendala data/peta di GitHub Issues.',
+    feedbackStaticNoFormHint:
+      'Mode situs statis aktif: tautan formulir masukan belum diatur pada build ini. Anda tetap dapat melaporkan kendala data/peta melalui GitHub Issues.',
+    feedbackOpenFormBtn: 'Buka Formulir Masukan',
+    feedbackOpenGithubBtn: 'Laporkan di GitHub Issues',
     infoTabGuide: 'Tentang & Panduan',
     infoTabMethod: 'Data & Metodologi',
     infoTabGlossary: 'Glosarium',
@@ -688,6 +694,12 @@ export const I18N = {
     feedbackSubtitle: 'Help us improve the interface, data clarity, or features of Nagari Balingka Map.',
     feedbackSubmitBtn: 'Submit Feedback',
     feedbackSentToast: 'Thank you! Your feedback has been received.',
+    feedbackStaticHint:
+      'Static site mode active: submit feedback with no sign-in required using the online form below, or report map/data issues via GitHub Issues.',
+    feedbackStaticNoFormHint:
+      'Static site mode active: no external feedback form URL is configured for this build. You can still report map/data issues via GitHub Issues.',
+    feedbackOpenFormBtn: 'Open Feedback Form',
+    feedbackOpenGithubBtn: 'Report on GitHub Issues',
     infoTabGuide: 'About & Guide',
     infoTabMethod: 'Data & Methodology',
     infoTabGlossary: 'Glossary',
