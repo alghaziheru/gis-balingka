@@ -27,6 +27,12 @@ import {
   computeCascadeFields,
   haversineMeters
 } from './lib/hydrology.mjs';
+import {
+  listCopernicusTiles,
+  listWorldCoverTiles,
+  listSlippyTiles,
+  isInsideOpenBuildings2fd
+} from './lib/tiles.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
@@ -57,29 +63,9 @@ const BBOX = {
   north: Number(REGION_CFG.bbox.north)
 };
 
-function computeCopernicusCogUrl(bbox) {
-  const midLat = (bbox.south + bbox.north) / 2;
-  const midLng = (bbox.west + bbox.east) / 2;
-  const latDeg = Math.floor(midLat);
-  const lngDeg = Math.floor(midLng);
-  const latTag = `${latDeg < 0 ? 'S' : 'N'}${String(Math.abs(latDeg)).padStart(2, '0')}_00`;
-  const lngTag = `${lngDeg < 0 ? 'W' : 'E'}${String(Math.abs(lngDeg)).padStart(3, '0')}_00`;
-  const tile = `Copernicus_DSM_COG_10_${latTag}_${lngTag}_DEM`;
-  return `https://copernicus-dem-30m.s3.amazonaws.com/${tile}/${tile}.tif`;
-}
-
-function computeWorldCoverCogUrl(bbox) {
-  const midLat = (bbox.south + bbox.north) / 2;
-  const midLng = (bbox.west + bbox.east) / 2;
-  const latTile = Math.floor(midLat / 3) * 3;
-  const lngTile = Math.floor(midLng / 3) * 3;
-  const latTag = `${latTile < 0 ? 'S' : 'N'}${String(Math.abs(latTile)).padStart(2, '0')}`;
-  const lngTag = `${lngTile < 0 ? 'W' : 'E'}${String(Math.abs(lngTile)).padStart(3, '0')}`;
-  return `https://esa-worldcover.s3.eu-central-1.amazonaws.com/v200/2021/map/ESA_WorldCover_10m_2021_v200_${latTag}${lngTag}_Map.tif`;
-}
-
-const COPERNICUS_COG_URL = computeCopernicusCogUrl(BBOX);
-const ESA_WORLDCOVER_COG_URL = computeWorldCoverCogUrl(BBOX);
+const REGION_NAME = String(REGION_CFG.name || 'Nagari Balingka');
+const COPERNICUS_TILES = listCopernicusTiles(BBOX);
+const WORLDCOVER_TILES = listWorldCoverTiles(BBOX);
 const AGAM_ADMIN_WEBMAP_URL =
   'https://www.arcgis.com/sharing/rest/content/items/c6d9b777f1a84f4283d970881a371536/data?f=json';
 const OPEN_BUILDINGS_2FD_URL =
@@ -134,10 +120,20 @@ async function loadFromGeoTIFF(tiff, sourceLabel) {
   const winH = Math.max(10, r1 - r0);
   const rasters = await image.readRasters({ window: [c0, r0, c0 + winW, r0 + winH] });
   const raw = rasters[0];
+  let validSum = 0;
+  let validCount = 0;
+  for (let i = 0; i < raw.length; i++) {
+    const v = Number(raw[i]);
+    if (Number.isFinite(v) && v > -500) {
+      validSum += v;
+      validCount++;
+    }
+  }
+  const fallbackFill = validCount > 0 ? validSum / validCount : 0;
   const floatGrid = new Float32Array(winW * winH);
   for (let i = 0; i < floatGrid.length; i++) {
     const v = Number(raw[i]);
-    floatGrid[i] = Number.isFinite(v) && v > -500 ? v : 1089;
+    floatGrid[i] = Number.isFinite(v) && v > -500 ? v : fallbackFill;
   }
 
   const exactWest = minX + (c0 / imgW) * (maxX - minX);
@@ -153,6 +149,78 @@ async function loadFromGeoTIFF(tiff, sourceLabel) {
     bbox: { west: exactWest, south: exactSouth, east: exactEast, north: exactNorth },
     sourceLabel
   };
+}
+
+async function loadCopernicusMosaic(tiles, bbox, sourceLabel) {
+  if (tiles.length === 1) {
+    const tiff = await fromUrl(tiles[0].url);
+    return loadFromGeoTIFF(tiff, sourceLabel);
+  }
+  const pxPerDeg = 3600; // Copernicus GLO-30 (~1 arc-second)
+  const rawW = Math.max(20, Math.round((bbox.east - bbox.west) * pxPerDeg));
+  const rawH = Math.max(20, Math.round((bbox.north - bbox.south) * pxPerDeg));
+  const scale = Math.max(1, rawW / 760, rawH / 760);
+  const width = Math.max(20, Math.round(rawW / scale));
+  const height = Math.max(20, Math.round(rawH / scale));
+  const elev = new Float32Array(width * height).fill(Number.NaN);
+
+  for (const tile of tiles) {
+    const tiff = await fromUrl(tile.url);
+    const image = await tiff.getImage();
+    const imgW = image.getWidth();
+    const imgH = image.getHeight();
+    const [minX, minY, maxX, maxY] = image.getBoundingBox();
+
+    const ix0 = Math.max(bbox.west, minX);
+    const ix1 = Math.min(bbox.east, maxX);
+    const iy0 = Math.max(bbox.south, minY);
+    const iy1 = Math.min(bbox.north, maxY);
+    if (ix1 <= ix0 || iy1 <= iy0) continue;
+
+    const c0 = Math.max(0, Math.floor(((ix0 - minX) / (maxX - minX)) * imgW));
+    const c1 = Math.min(imgW, Math.ceil(((ix1 - minX) / (maxX - minX)) * imgW));
+    const r0 = Math.max(0, Math.floor(((maxY - iy1) / (maxY - minY)) * imgH));
+    const r1 = Math.min(imgH, Math.ceil(((maxY - iy0) / (maxY - minY)) * imgH));
+    const winW = Math.max(1, c1 - c0);
+    const winH = Math.max(1, r1 - r0);
+    const [raw] = await image.readRasters({ window: [c0, r0, c0 + winW, r0 + winH] });
+
+    const outC0 = Math.max(0, Math.floor(((ix0 - bbox.west) / (bbox.east - bbox.west)) * width));
+    const outC1 = Math.min(width, Math.ceil(((ix1 - bbox.west) / (bbox.east - bbox.west)) * width));
+    const outR0 = Math.max(0, Math.floor(((bbox.north - iy1) / (bbox.north - bbox.south)) * height));
+    const outR1 = Math.min(height, Math.ceil(((bbox.north - iy0) / (bbox.north - bbox.south)) * height));
+
+    const winWest = minX + (c0 / imgW) * (maxX - minX);
+    const winEast = minX + ((c0 + winW) / imgW) * (maxX - minX);
+    const winNorth = maxY - (r0 / imgH) * (maxY - minY);
+    const winSouth = maxY - ((r0 + winH) / imgH) * (maxY - minY);
+
+    for (let r = outR0; r < outR1; r++) {
+      const lat = bbox.north - ((r + 0.5) / height) * (bbox.north - bbox.south);
+      const sr = Math.max(0, Math.min(winH - 1, Math.floor(((winNorth - lat) / Math.max(1e-9, winNorth - winSouth)) * winH)));
+      for (let c = outC0; c < outC1; c++) {
+        const lng = bbox.west + ((c + 0.5) / width) * (bbox.east - bbox.west);
+        const sc = Math.max(0, Math.min(winW - 1, Math.floor(((lng - winWest) / Math.max(1e-9, winEast - winWest)) * winW)));
+        const v = Number(raw[sr * winW + sc]);
+        if (Number.isFinite(v) && v > -500) elev[r * width + c] = v;
+      }
+    }
+  }
+
+  let validSum = 0;
+  let validCount = 0;
+  for (let i = 0; i < elev.length; i++) {
+    if (Number.isFinite(elev[i])) {
+      validSum += elev[i];
+      validCount++;
+    }
+  }
+  const fillVal = validCount > 0 ? validSum / validCount : 0;
+  for (let i = 0; i < elev.length; i++) {
+    if (!Number.isFinite(elev[i])) elev[i] = fillVal;
+  }
+
+  return { elev, width, height, bbox, sourceLabel: `${sourceLabel} (${tiles.length}-tile mosaic)` };
 }
 
 function decodePngRgb(buf) {
@@ -198,8 +266,7 @@ function decodePngRgb(buf) {
 async function loadFromTerrariumFallback() {
   const z = 13;
   const n = 2 ** z;
-  const txList = [6378, 6379];
-  const tyList = [4102, 4103, 4104];
+  const { txList, tyList } = listSlippyTiles(BBOX, z);
   const tiles = new Map();
   for (const tx of txList) {
     for (const ty of tyList) {
@@ -242,9 +309,8 @@ async function fetchDEM() {
     return loadFromGeoTIFF(tiff, label);
   }
   try {
-    console.log('Fetching Copernicus DEM GLO-30 COG window for Nagari Balingka block...');
-    const tiff = await fromUrl(COPERNICUS_COG_URL);
-    return await loadFromGeoTIFF(tiff, 'Copernicus DEM GLO-30 (30m, ESA/Airbus Open Data)');
+    console.log(`Fetching Copernicus DEM GLO-30 COG (${COPERNICUS_TILES.length} tile(s)) for ${REGION_NAME} block...`);
+    return await loadCopernicusMosaic(COPERNICUS_TILES, BBOX, 'Copernicus DEM GLO-30 (30m, ESA/Airbus Open Data)');
   } catch (err) {
     console.warn(`Copernicus COG failed (${err.message}); falling back to AWS Terrarium tiles...`);
     return loadFromTerrariumFallback();
@@ -252,7 +318,7 @@ async function fetchDEM() {
 }
 
 async function fetchRealOSM(bbox) {
-  console.log('Fetching real OpenStreetMap features for Nagari Balingka block...');
+  console.log(`Fetching real OpenStreetMap features for ${REGION_NAME} block...`);
   const url = `https://api.openstreetmap.org/api/0.6/map.json?bbox=${bbox.west.toFixed(5)},${bbox.south.toFixed(5)},${bbox.east.toFixed(5)},${bbox.north.toFixed(5)}`;
   const res = await fetch(url, { headers: { 'User-Agent': 'nagari-balingka-gis/1.0 (open-source community flood tool)' } });
   if (!res.ok) throw new Error(`OSM API returned HTTP ${res.status}`);
@@ -421,21 +487,79 @@ async function fetchRealOSM(bbox) {
 
 async function fetchLandCover(bbox, demWidth, demHeight, insideMask = null) {
   try {
-    console.log('Fetching ESA WorldCover 10m v200 COG window for Nagari Balingka block...');
-    const tiff = await fromUrl(ESA_WORLDCOVER_COG_URL);
-    const image = await tiff.getImage();
-    const imgW = image.getWidth();
-    const imgH = image.getHeight();
-    const [minX, minY, maxX, maxY] = image.getBoundingBox();
+    console.log(`Fetching ESA WorldCover 10m v200 COG (${WORLDCOVER_TILES.length} tile(s)) for ${REGION_NAME} block...`);
+    let raw;
+    let winW;
+    let winH;
 
-    const c0 = Math.max(0, Math.floor(((bbox.west - minX) / (maxX - minX)) * imgW));
-    const c1 = Math.min(imgW, Math.ceil(((bbox.east - minX) / (maxX - minX)) * imgW));
-    const r0 = Math.max(0, Math.floor(((maxY - bbox.north) / (maxY - minY)) * imgH));
-    const r1 = Math.min(imgH, Math.ceil(((maxY - bbox.south) / (maxY - minY)) * imgH));
+    if (WORLDCOVER_TILES.length === 1) {
+      const tiff = await fromUrl(WORLDCOVER_TILES[0].url);
+      const image = await tiff.getImage();
+      const imgW = image.getWidth();
+      const imgH = image.getHeight();
+      const [minX, minY, maxX, maxY] = image.getBoundingBox();
 
-    const winW = Math.max(10, c1 - c0);
-    const winH = Math.max(10, r1 - r0);
-    const [raw] = await image.readRasters({ window: [c0, r0, c0 + winW, r0 + winH] });
+      const c0 = Math.max(0, Math.floor(((bbox.west - minX) / (maxX - minX)) * imgW));
+      const c1 = Math.min(imgW, Math.ceil(((bbox.east - minX) / (maxX - minX)) * imgW));
+      const r0 = Math.max(0, Math.floor(((maxY - bbox.north) / (maxY - minY)) * imgH));
+      const r1 = Math.min(imgH, Math.ceil(((maxY - bbox.south) / (maxY - minY)) * imgH));
+
+      winW = Math.max(10, c1 - c0);
+      winH = Math.max(10, r1 - r0);
+      [raw] = await image.readRasters({ window: [c0, r0, c0 + winW, r0 + winH] });
+    } else {
+      const targetMax = 1024;
+      const degW = Math.max(1e-6, bbox.east - bbox.west);
+      const degH = Math.max(1e-6, bbox.north - bbox.south);
+      const estW = Math.round(degW * 12000);
+      const estH = Math.round(degH * 12000);
+      const scale = Math.max(1, estW / targetMax, estH / targetMax);
+      winW = Math.max(20, Math.round(estW / scale));
+      winH = Math.max(20, Math.round(estH / scale));
+      raw = new Uint8Array(winW * winH);
+
+      for (const tile of WORLDCOVER_TILES) {
+        const tiff = await fromUrl(tile.url);
+        const image = await tiff.getImage();
+        const imgW = image.getWidth();
+        const imgH = image.getHeight();
+        const [minX, minY, maxX, maxY] = image.getBoundingBox();
+
+        const ix0 = Math.max(bbox.west, minX);
+        const ix1 = Math.min(bbox.east, maxX);
+        const iy0 = Math.max(bbox.south, minY);
+        const iy1 = Math.min(bbox.north, maxY);
+        if (ix1 <= ix0 || iy1 <= iy0) continue;
+
+        const c0 = Math.max(0, Math.floor(((ix0 - minX) / (maxX - minX)) * imgW));
+        const c1 = Math.min(imgW, Math.ceil(((ix1 - minX) / (maxX - minX)) * imgW));
+        const r0 = Math.max(0, Math.floor(((maxY - iy1) / (maxY - minY)) * imgH));
+        const r1 = Math.min(imgH, Math.ceil(((maxY - iy0) / (maxY - minY)) * imgH));
+        const subW = Math.max(1, c1 - c0);
+        const subH = Math.max(1, r1 - r0);
+        const [subRaw] = await image.readRasters({ window: [c0, r0, c0 + subW, r0 + subH] });
+
+        const outC0 = Math.max(0, Math.floor(((ix0 - bbox.west) / degW) * winW));
+        const outC1 = Math.min(winW, Math.ceil(((ix1 - bbox.west) / degW) * winW));
+        const outR0 = Math.max(0, Math.floor(((bbox.north - iy1) / degH) * winH));
+        const outR1 = Math.min(winH, Math.ceil(((bbox.north - iy0) / degH) * winH));
+
+        const subWest = minX + (c0 / imgW) * (maxX - minX);
+        const subEast = minX + ((c0 + subW) / imgW) * (maxX - minX);
+        const subNorth = maxY - (r0 / imgH) * (maxY - minY);
+        const subSouth = maxY - ((r0 + subH) / imgH) * (maxY - minY);
+
+        for (let r = outR0; r < outR1; r++) {
+          const lat = bbox.north - ((r + 0.5) / winH) * degH;
+          const sr = Math.max(0, Math.min(subH - 1, Math.floor(((subNorth - lat) / Math.max(1e-9, subNorth - subSouth)) * subH)));
+          for (let c = outC0; c < outC1; c++) {
+            const lng = bbox.west + ((c + 0.5) / winW) * degW;
+            const sc = Math.max(0, Math.min(subW - 1, Math.floor(((lng - subWest) / Math.max(1e-9, subEast - subWest)) * subW)));
+            raw[r * winW + c] = Number(subRaw[sr * subW + sc]) || 0;
+          }
+        }
+      }
+    }
 
     const counts = { forest: 0, shrubGrass: 0, cropland: 0, builtup: 0, bare: 0, water: 0 };
     let maskedTotal = 0;
@@ -800,6 +924,10 @@ function getArcgisLayerFeatures(webmapJson, titles) {
 }
 
 async function fetchGoogleOpenBuildings(bbox) {
+  if (!isInsideOpenBuildings2fd(bbox)) {
+    console.log('Skipping Sumatra-specific Google Open Buildings tile (2fd) for region outside its extent; using OSM buildings.');
+    return [];
+  }
   const rawDir = path.join(ROOT, 'raw-data');
   const cachePath = path.join(rawDir, 'open-buildings-balingka.geojson');
   if (fs.existsSync(cachePath)) {
@@ -1234,7 +1362,7 @@ async function main() {
     fetchRealOSM(bbox),
     fetchLandCover(bbox, width, height, nagariMask),
     useSentinel ? fetchSentinel2ScourChange(bbox, hand, gridMeta, nagariMask) : Promise.resolve(null),
-    useRegional ? fetchGoogleOpenBuildings(bbox) : Promise.resolve(null),
+    useRegional ? fetchGoogleOpenBuildings(bbox) : Promise.resolve([]),
     useRegional ? fetchAgamOfficialGis(bbox) : Promise.resolve(null)
   ]);
   const activeFlowFeatures = flowPaths.features.filter(f => !verified.suppressedIds.has(f.properties.id));
@@ -1521,8 +1649,8 @@ async function main() {
     features: [{
       type: 'Feature',
       properties: {
-        name_id: 'Blok Peta Nagari Balingka',
-        name_en: 'Nagari Balingka Map Block',
+        name_id: `Blok Peta ${REGION_NAME}`,
+        name_en: `${REGION_NAME} Map Block`,
         area_km2: Number(((totalWidthM * totalHeightM) / 1e6).toFixed(2))
       },
       geometry: {
@@ -1532,7 +1660,7 @@ async function main() {
     }]
   };
 
-  // Inverted studio mask polygon covering the globe with inner cutout matching official Nagari Balingka boundary
+  // Inverted studio mask polygon covering the globe with inner cutout matching official region boundary
   const ensureRingWinding = (ring, wantCcw) => {
     let area2 = 0;
     for (let i = 0; i < ring.length - 1; i++) {
@@ -1557,7 +1685,7 @@ async function main() {
     type: 'FeatureCollection',
     features: [{
       type: 'Feature',
-      properties: { name: 'Studio Mask Outside Official Nagari Balingka' },
+      properties: { name: `Studio Mask Outside Official ${REGION_NAME}` },
       geometry: {
         type: 'Polygon',
         coordinates: [
@@ -1585,7 +1713,7 @@ async function main() {
     const c = polygonCentroid(f);
     return c && inNagariPt(c);
   });
-  const googleBuildingsInside = googleBuildings.filter(f => {
+  const googleBuildingsInside = (googleBuildings || []).filter(f => {
     const c = polygonCentroid(f);
     return c && inNagariPt(c);
   });
@@ -1671,7 +1799,7 @@ async function main() {
   const nagariPath = path.join(OUT_DIR, 'nagari-boundary.geojson');
   if (nagariBoundary) {
     writeJson('nagari-boundary.geojson', nagariBoundary);
-  } else if (!fs.existsSync(nagariPath)) {
+  } else if (!useRegional || !fs.existsSync(nagariPath)) {
     writeJson('nagari-boundary.geojson', { type: 'FeatureCollection', features: [] });
   }
 
@@ -1680,23 +1808,45 @@ async function main() {
   if (fs.existsSync(metaPath)) {
     try { existingMeta = JSON.parse(fs.readFileSync(metaPath, 'utf8')); } catch {}
   }
-  const landCoverStats = landCover?.stats || existingMeta.landCoverStats;
-  const scourStats = scourChange?.stats || existingMeta.scourStats;
-  const hasNagariBoundary = Boolean(nagariBoundary) || fs.existsSync(nagariPath);
+  const landCoverStats = landCover?.stats || (useRegional ? existingMeta.landCoverStats : undefined);
+  const scourStats = scourChange?.stats || (useSentinel ? existingMeta.scourStats : undefined);
+  const hasNagariBoundary = Boolean(nagariBoundary);
   const agamStats = agamGis
     ? {
         source: agamGis.agamContext.source,
         rbiRiversCount: rbiCollection?.features?.length || agamGis.rbiRivers.features.length,
         ...(agamGrids?.summary || {})
       }
-    : existingMeta.agamStats;
+    : useRegional
+      ? existingMeta.agamStats
+      : undefined;
 
   const nagariSrcLabel =
     nagariBoundary?.features?.[0]?.properties?.source ||
-    'Pemkab Agam — Batas Administrasi Nagari (Kemendagri 13.06.05.2003)';
+    (REGION_CFG.officialBoundaryCode
+      ? `Batas Administrasi ${REGION_NAME} (${REGION_CFG.officialBoundaryCode})`
+      : `Batas Administrasi ${REGION_NAME}`);
+
+  const licenses = [
+    { name: 'MapLibre GL JS', license: 'BSD-3-Clause' },
+    { name: sourceLabel, license: sourceLabel.includes('BIG') ? 'Public Government Data (Badan Informasi Geospasial)' : 'Open Geospatial Data' },
+    ...(hasNagariBoundary
+      ? [{ name: nagariSrcLabel, license: REGION_CFG.officialBoundaryCode ? `Public Government Data (${REGION_CFG.officialBoundaryCode})` : 'Open Boundary GeoJSON' }]
+      : []),
+    ...(scourStats ? [{ name: 'Copernicus Sentinel-2 L2A (10m)', license: 'Copernicus Open License (ESA)' }] : []),
+    ...(landCoverStats ? [{ name: 'ESA WorldCover 10m v200', license: 'CC-BY-4.0 (ESA / Copernicus)' }] : []),
+    ...(googleAddedCount > 0 ? [{ name: 'Google Open Buildings v3', license: 'CC-BY-4.0 (Google Research / Cloud Open Data)' }] : []),
+    ...(agamStats
+      ? [{ name: `${REGION_CFG.regionalOverlays?.providerName || 'Regional'} Open GIS`, license: 'Public Government Data' }]
+      : []),
+    { name: 'Esri World Imagery', license: 'Free w/ Attribution (No API Key)' },
+    { name: 'OpenStreetMap & OpenTopoMap', license: 'ODbL / CC-BY-SA' }
+  ];
 
   const metadata = {
     generatedAt: new Date().toISOString(),
+    regionId: REGION_CFG.id || 'nagari-balingka',
+    regionName: REGION_NAME,
     center,
     bbox,
     demSource: sourceLabel,
@@ -1721,17 +1871,7 @@ async function main() {
     ...(landCoverStats ? { landCoverStats } : {}),
     ...(scourStats ? { scourStats } : {}),
     ...(hasNagariBoundary ? { nagariBoundarySource: nagariSrcLabel } : {}),
-    licenses: [
-      { name: 'MapLibre GL JS', license: 'BSD-3-Clause' },
-      { name: 'BIG DEMNAS (8.3m) & RBI 50K Kab. Agam (Des 2022)', license: 'Public Government Data (Badan Informasi Geospasial)' },
-      { name: 'BIG Batas Wilayah Desa/Nagari (Juni 2026)', license: 'Public Government Data (13.06.05.2003)' },
-      { name: 'Copernicus Sentinel-2 L2A (10m)', license: 'Copernicus Open License (ESA)' },
-      { name: 'ESA WorldCover 10m v200', license: 'CC-BY-4.0 (ESA / Copernicus)' },
-      { name: 'Google Open Buildings v3', license: 'CC-BY-4.0 (Google Research / Cloud Open Data)' },
-      { name: 'Pemkab Agam Open GIS (Tanah, Geologi, SK 35, Gerakan Tanah)', license: 'Public Government Data (ptsp.agam ArcGIS)' },
-      { name: 'Esri World Imagery', license: 'Free w/ Attribution (No API Key)' },
-      { name: 'OpenStreetMap & OpenTopoMap', license: 'ODbL / CC-BY-SA' }
-    ]
+    licenses
   };
 
   writeJson('metadata.json', metadata);
@@ -1744,7 +1884,7 @@ async function main() {
   writeJson('settlements.geojson', settlements);
   writeJson('drainage-draft.geojson', drainageDraft);
 
-  console.log('Generated Balingka-only crisp studio assets in public/data/:');
+  console.log(`Generated spatial assets for ${REGION_NAME} in public/data/:`);
   console.log(`  Block: ${metadata.studyAreaKm2} km2 (${metadata.gridDimensions}, ${metadata.minElevM}..${metadata.maxElevM}m)`);
   console.log(`  Smooth streams: ${flowPaths.features.length} reaches (${metadata.streamNetworkKm} km, snapped=${deduped.snappedCount})`);
   console.log(`  Smooth contours: ${contours.features.length} polylines`);

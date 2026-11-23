@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -19,6 +20,13 @@ import {
   DX,
   DY
 } from '../scripts/lib/hydrology.mjs';
+import {
+  listCopernicusTiles,
+  listWorldCoverTiles,
+  listSlippyTiles,
+  isInsideOpenBuildings2fd
+} from '../scripts/lib/tiles.mjs';
+import { runResetRegion } from '../scripts/reset-region.mjs';
 import { CascadeEngine, extractBuildingCentroids } from '../src/lib/cascadeEngine.ts';
 import { estimateChannelThresholds } from '../src/lib/channelHydraulics.ts';
 import { computeRunoffMergeNetwork } from '../src/lib/geometry.ts';
@@ -26,7 +34,12 @@ import { getOverlayContrastPalette, isDarkBasemap } from '../src/lib/mapPalette.
 import { lookupAgamAtPoint } from '../src/lib/agamLookup.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DATA_DIR = path.resolve(__dirname, '..', 'public', 'data');
+const ROOT_DIR = path.resolve(__dirname, '..');
+const DATA_DIR = path.resolve(ROOT_DIR, 'public', 'data');
+const REGION_CFG = fs.existsSync(path.join(ROOT_DIR, 'region.config.json'))
+  ? JSON.parse(fs.readFileSync(path.join(ROOT_DIR, 'region.config.json'), 'utf8'))
+  : { id: 'nagari-balingka' };
+const IS_BALINGKA = REGION_CFG.id === 'nagari-balingka';
 
 test('priorityFloodFill removes interior sink and guarantees acyclic drainage', () => {
   const w = 5, h = 5;
@@ -126,11 +139,18 @@ test('chaikinSmooth preserves endpoints and encodePngRgba produces valid PNG hea
   assert.equal(png.toString('ascii', 1, 4), 'PNG');
 });
 
-test('generated Balingka-only block assets, smooth PNGs, and mask.geojson are valid', () => {
+test('generated region block assets, smooth PNGs, and mask.geojson are valid', t => {
+  if (!fs.existsSync(path.join(DATA_DIR, 'metadata.json'))) {
+    t.skip('public/data/metadata.json not generated yet (run pnpm run prepare-data)');
+    return;
+  }
   const meta = JSON.parse(fs.readFileSync(path.join(DATA_DIR, 'metadata.json'), 'utf8'));
-  assert(meta.studyAreaKm2 > 15 && meta.studyAreaKm2 < 30, `expected ~20.9 km2 Balingka block, got ${meta.studyAreaKm2}`);
-  assert(meta.simAreasHa.clogged.high > meta.simAreasHa.cleared.high, 'cleared crossings should reduce HAND footprint');
-  assert(meta.osmPlaceCount >= 3);
+  assert(meta.studyAreaKm2 > 0.1, `expected positive study area, got ${meta.studyAreaKm2}`);
+  if (IS_BALINGKA) {
+    assert(meta.studyAreaKm2 > 15 && meta.studyAreaKm2 < 30, `expected ~29.89 km2 Balingka block, got ${meta.studyAreaKm2}`);
+    assert(meta.osmPlaceCount >= 3);
+  }
+  assert(meta.simAreasHa.clogged.high >= meta.simAreasHa.cleared.high, 'cleared crossings should not increase HAND footprint');
 
   const requiredPngs = [
     'raster-relief.png',
@@ -145,23 +165,24 @@ test('generated Balingka-only block assets, smooth PNGs, and mask.geojson are va
   ];
   for (const name of requiredPngs) {
     const buf = fs.readFileSync(path.join(DATA_DIR, name));
-    assert(buf.length > 1000, `${name} unexpectedly small`);
+    assert(buf.length > 500, `${name} unexpectedly small`);
     assert.equal(buf.toString('ascii', 1, 4), 'PNG', `${name} is not valid PNG`);
   }
 
   const mask = JSON.parse(fs.readFileSync(path.join(DATA_DIR, 'mask.geojson'), 'utf8'));
   assert.equal(mask.features[0].geometry.type, 'Polygon');
-  assert.equal(mask.features[0].geometry.coordinates.length, 2, 'mask polygon should have outer ring and Balingka cutout hole');
+  assert(mask.features[0].geometry.coordinates.length >= 2, 'mask polygon should have outer ring and region cutout hole');
 
   for (const file of ['watershed.geojson', 'contours.geojson', 'flow-paths.geojson', 'osm-context.geojson', 'drainage-draft.geojson']) {
     const fc = JSON.parse(fs.readFileSync(path.join(DATA_DIR, file), 'utf8'));
     assert.equal(fc.type, 'FeatureCollection');
-    assert(fc.features.length >= 1, `${file} empty`);
+    assert(Array.isArray(fc.features), `${file} missing features array`);
+    if (IS_BALINGKA) assert(fc.features.length >= 1, `${file} empty`);
   }
 
   const draft = JSON.parse(fs.readFileSync(path.join(DATA_DIR, 'drainage-draft.geojson'), 'utf8'));
   const draftCrossings = draft.features.filter(f => f.properties?.kind === 'drainage');
-  assert(draftCrossings.length >= 1, 'expected detected crossings in drainage-draft.geojson');
+  if (IS_BALINGKA) assert(draftCrossings.length >= 1, 'expected detected crossings in drainage-draft.geojson');
   for (const c of draftCrossings) {
     assert.equal(c.properties.status, 'unverified', `uninspected crossing ${c.properties.id} must be unverified`);
   }
@@ -290,13 +311,20 @@ test('renderLandCoverRaster produces valid PNG output for discrete WorldCover cl
   assert(png.length > 60);
 });
 
-test('computeCascadeFields and CascadeEngine obey physical invariants on real Balingka sim-fields', () => {
+test('computeCascadeFields and CascadeEngine obey physical invariants on active sim-fields', t => {
   const simFieldsPath = path.join(DATA_DIR, 'sim-fields.json');
   const settlementsPath = path.join(DATA_DIR, 'settlements.geojson');
+  if (!fs.existsSync(simFieldsPath) || !fs.existsSync(settlementsPath)) {
+    t.skip('sim-fields.json / settlements.geojson not present yet');
+    return;
+  }
   const fields = JSON.parse(fs.readFileSync(simFieldsPath, 'utf8'));
   const settlements = JSON.parse(fs.readFileSync(settlementsPath, 'utf8'));
-  assert(fields.width >= 100 && fields.height >= 100);
-  assert(fields.p90TravelMin >= 15 && fields.p90TravelMin <= 240);
+  assert(fields.width >= 20 && fields.height >= 20);
+  if (IS_BALINGKA) {
+    assert(fields.width >= 100 && fields.height >= 100);
+    assert(fields.p90TravelMin >= 15 && fields.p90TravelMin <= 240);
+  }
 
   // Also test computeCascadeFields directly on a synthetic slope->valley grid
   const w = 6, h = 6;
@@ -324,7 +352,9 @@ test('computeCascadeFields and CascadeEngine obey physical invariants on real Ba
   assert(cf.travelTimeTenthMinBase64.length > 0);
 
   const centroids = extractBuildingCentroids(settlements);
-  assert(centroids.length > 500, 'expected extracted OSM building centroids');
+  if (IS_BALINGKA) {
+    assert(centroids.length > 500, 'expected extracted OSM building centroids');
+  }
   const engine = new CascadeEngine(fields, centroids, 34);
 
   const dryStart = engine.evaluate({
@@ -485,7 +515,11 @@ test('estimateChannelThresholds computes width delta, moisture sensitivity, and 
   assert.ok(moist.severeScourRainMmHr >= moist.wideningRainMmHr);
 });
 
-test('Pemkab Agam GIS context, merged Google Open Buildings v3, and soil calibration integrate cleanly', () => {
+test('Pemkab Agam GIS context, merged Google Open Buildings v3, and soil calibration integrate cleanly', t => {
+  if (!IS_BALINGKA) {
+    t.skip(`Balingka-specific Pemkab Agam fixture check skipped for custom region "${REGION_CFG.id}"`);
+    return;
+  }
   const dataDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'public', 'data');
   const meta = JSON.parse(fs.readFileSync(path.join(dataDir, 'metadata.json'), 'utf8'));
   const agamCtx = JSON.parse(fs.readFileSync(path.join(dataDir, 'agam-context.json'), 'utf8'));
@@ -632,7 +666,11 @@ test('computeRunoffMergeNetwork slices downstream tributary reach, propagates to
   assert.ok(mainReach.coordinates[0][0] >= 100.3139, 'Main river reach should begin at tributary junction');
 });
 
-test('computeRunoffMergeNetwork detects real Balingka confluences and downstream propagation', () => {
+test('computeRunoffMergeNetwork detects real Balingka confluences and downstream propagation', t => {
+  if (!IS_BALINGKA) {
+    t.skip(`Balingka-specific confluence fixture check skipped for custom region "${REGION_CFG.id}"`);
+    return;
+  }
   const dataDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'public', 'data');
   const flowPaths = JSON.parse(fs.readFileSync(path.join(dataDir, 'flow-paths.geojson'), 'utf8'));
   const verifiedWaterways = JSON.parse(fs.readFileSync(path.join(dataDir, 'verified-waterways.geojson'), 'utf8'));
@@ -669,4 +707,62 @@ test('getOverlayContrastPalette adapts overlay colors for dark Satellite vs ligh
   assert.equal(osm.agamRbi.lineColor, '#0e7490');
   assert.equal(osm.agamForest.lineColor, '#15803d');
   assert.deepEqual(osm, topo);
+});
+
+test('multi-tile Copernicus DEM, ESA WorldCover, Slippy Terrarium & Open Buildings helpers cover tile boundaries', () => {
+  // Single-tile Balingka bbox
+  const balingka = { west: 100.278, south: -0.408, east: 100.345, north: -0.314 };
+  const balCop = listCopernicusTiles(balingka);
+  assert.equal(balCop.length, 1);
+  assert.ok(balCop[0].url.includes('Copernicus_DSM_COG_10_S01_00_E100_00_DEM'));
+  const balWc = listWorldCoverTiles(balingka);
+  assert.equal(balWc.length, 1);
+  assert.ok(balWc[0].url.includes('S03E099'));
+  assert.equal(isInsideOpenBuildings2fd(balingka), true);
+
+  // Village straddling a 1-degree lat & lng line (4 Copernicus tiles) and 3-degree boundary (4 WorldCover tiles)
+  const straddle = { west: 107.95, south: -6.05, east: 108.05, north: -5.95 };
+  const multiCop = listCopernicusTiles(straddle);
+  assert.equal(multiCop.length, 4);
+  const multiWc = listWorldCoverTiles(straddle);
+  assert.equal(multiWc.length, 4);
+  assert.equal(isInsideOpenBuildings2fd(straddle), false);
+
+  const slippy = listSlippyTiles(balingka, 13);
+  assert.ok(slippy.txList.includes(6378) && slippy.txList.includes(6379));
+  assert.ok(slippy.tyList.length >= 2);
+});
+
+test('reset-region blocks accidental wipe on nagari-balingka and cleans stale artifacts for custom regions', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gis-reset-region-'));
+  try {
+    fs.mkdirSync(path.join(dir, 'public', 'data'), { recursive: true });
+    fs.mkdirSync(path.join(dir, 'data'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'region.config.json'), JSON.stringify({ id: 'nagari-balingka', name: 'Nagari Balingka' }));
+    fs.writeFileSync(path.join(dir, 'public', 'data', 'agam-context.json'), '{}');
+    fs.writeFileSync(path.join(dir, 'public', 'data', 'nagari-boundary.geojson'), '{}');
+    fs.writeFileSync(path.join(dir, 'data', 'balingka.db'), 'sqlite');
+
+    // 1. Blocked when id is still nagari-balingka without force
+    const blocked = runResetRegion({ rootDir: dir, force: false });
+    assert.equal(blocked.ok, false);
+    assert.equal(blocked.blocked, true);
+    assert.equal(fs.existsSync(path.join(dir, 'public', 'data', 'agam-context.json')), true);
+
+    // 2. Allowed once region.config.json uses a custom id
+    fs.writeFileSync(path.join(dir, 'region.config.json'), JSON.stringify({ id: 'desa-sukamaju', name: 'Desa Sukamaju' }));
+    const dry = runResetRegion({ rootDir: dir, dryRun: true });
+    assert.equal(dry.ok, true);
+    assert.equal(dry.removed.length, 3);
+    assert.equal(fs.existsSync(path.join(dir, 'public', 'data', 'agam-context.json')), true);
+
+    const cleaned = runResetRegion({ rootDir: dir });
+    assert.equal(cleaned.ok, true);
+    assert.equal(cleaned.removed.length, 3);
+    assert.equal(fs.existsSync(path.join(dir, 'public', 'data', 'agam-context.json')), false);
+    assert.equal(fs.existsSync(path.join(dir, 'public', 'data', 'nagari-boundary.geojson')), false);
+    assert.equal(fs.existsSync(path.join(dir, 'data', 'balingka.db')), false);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });

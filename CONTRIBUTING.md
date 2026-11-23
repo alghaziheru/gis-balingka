@@ -39,48 +39,28 @@ pnpm run verify           # Runs typecheck, tests & production build together
 
 ## 3. Run This GIS for Your Own Desa / Nagari (*Panduan Adaptasi Wilayah Lain*)
 
-This repository ships with **Nagari Balingka** pre-configured so it runs immediately after cloning. To adapt it for another **Desa, Nagari, or Kelurahan in Indonesia**:
+This repository ships with **Nagari Balingka** pre-configured so it runs immediately after cloning. For the complete human + AI-agent adaptation SOP (including finding your `bbox`, `KDEPUM` code, BIG Tanah Air downloads, and troubleshooting), see **[`docs/ADAPT_REGION.md`](./docs/ADAPT_REGION.md)**.
 
-### Step 1 — Configure `region.config.json`
-Start from [`region.config.example.json`](./region.config.example.json) or edit [`region.config.json`](./region.config.json):
-
-```bash
-cp region.config.example.json region.config.json
-```
-
-Update the key fields:
-- `name`, `shortName`, `district`, `regency`, `province`, `appTitle`
-- `adminLevelLabel` (e.g., `Desa` / `Nagari` / `Kelurahan`) & `subRegionLabel` (e.g., `Dusun` / `Jorong` / `RW`)
-- `bbox`: padded geographic bounding box (`west`, `south`, `east`, `north` in WGS84 degrees) covering your village plus ~1–2 km upstream slope buffer for clean D8 drainage routing
-- `defaultView`, `dataCenter`, `cameraPresets` (quick-jump sub-region centers), `subRegionSuggestions`, and `drainageFocus`
-- `authorities`: local `BPBD` and village/nagari office labels
-- `regionalOverlays.enabled`: set to `false` unless you have custom municipal ArcGIS overlays (this automatically hides Agam-specific UI panels)
-
-### Step 2 — Provide Your Official Boundary & Elevation Data (Optional but Recommended)
-You have two options:
-
-- **Option A — Quick Global Open-Data Build (No Manual Downloads Needed):**
-  - Drop your village boundary polygon GeoJSON (WGS84 `FeatureCollection`) at `raw-data/region-boundary.geojson` (optional — if omitted, the `bbox` extent is used).
-  - Run `pnpm run prepare-data`. The script automatically fetches **Copernicus DEM GLO-30**, **ESA WorldCover 10m**, and **OpenStreetMap** roads/rivers/buildings for your `bbox`.
-
-- **Option B — High-Resolution BIG Indonesia Build (Recommended for Indonesia):**
-  1. Download your **DEMNAS (~8.3 m)** GeoTIFF tile and **Batas Wilayah Desa/Nagari** / **RBI 1:50.000** archives from [BIG Tanah Air Indonesia](https://tanahair.indonesia.go.id/portal-web/) (see [`DATA_SOURCES.md`](./DATA_SOURCES.md)).
-  2. Place the DEMNAS GeoTIFF at `raw-data/<regionalOverlays.localDemFilename>` (e.g., `raw-data/demnas-region.tif`).
-  3. Extract your boundary & RBI layers using your `region.config.json` codes:
+### Quick Summary
+1. **Configure `region.config.json`:**
+   ```bash
+   cp region.config.example.json region.config.json
+   ```
+   Update `"id"` (must differ from `"nagari-balingka"`), `name`, `adminLevelLabel`/`subRegionLabel`, `bbox`, `defaultView`, `cameraPresets`, `drainageFocus`, `authorities`, and `regionalOverlays.enabled: false`.
+2. **Clean stale Nagari Balingka artifacts:**
+   ```bash
+   pnpm run reset-region
+   ```
+3. **Provide Data (Option A or Option B):**
+   - **Option A — Automatic Open Global Fallback (No Login):** Optionally place a WGS84 polygon at `raw-data/region-boundary.geojson` and run `pnpm run prepare-data`. Copernicus DEM GLO-30 (~30 m, multi-tile), ESA WorldCover 10m (multi-tile), and OpenStreetMap are fetched automatically.
+   - **Option B — Official BIG Tanah Air Indonesia (~8.3 m DEMNAS):** Download **DEMNAS**, **Batas Wilayah Desa**, and optionally **RBI 1:50.000** from [BIG Tanah Air Indonesia](https://tanahair.indonesia.go.id/portal-web/) (see [`DATA_SOURCES.md`](./DATA_SOURCES.md) & [`docs/ADAPT_REGION.md`](./docs/ADAPT_REGION.md)), place DEMNAS at `raw-data/<localDemFilename>`, and run:
      ```bash
-     python3 scripts/extract-big-ref.py --ref-dir /path/to/your-big-downloads
-     ```
-  4. Generate all clipped rasters, contours, D8 flow paths, HAND overlays, and cascade simulation fields:
-     ```bash
+     python3 scripts/extract-big-ref.py --ref-dir raw-data/big-ref   # RBI 50K is optional (--desa-only supported)
      pnpm run prepare-data
      ```
-
-### Step 3 — Start Clean & Verify
-1. Remove any previous Balingka seed files (`public/data/verified-waterways.geojson`, `public/data/verified-structures.geojson`, `public/data/suppressed-dem.json`) or replace them with your region's initial verified waterways.
-2. Delete any local `data/balingka.db` so SQLite initializes cleanly for your region.
-3. Run:
+4. **Verify & Start:**
    ```bash
-   pnpm run typecheck && pnpm run build && pnpm start
+   pnpm run verify && pnpm start
    ```
 
 ---

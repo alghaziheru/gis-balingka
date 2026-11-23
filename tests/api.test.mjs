@@ -3,20 +3,100 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { createAppServer } from '../server/index.mjs';
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const PUBLIC_DATA_DIR = path.resolve(__dirname, '..', 'public', 'data');
 
 function makeTempDb(prefix) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
   return { dir, dbPath: path.join(dir, 'test.db') };
 }
 
+/**
+ * Creates a self-contained synthetic public/data fixture so API/SQLite/recompute tests
+ * stay deterministic and pass even after a user adapts region.config.json to another village.
+ */
+function makeSyntheticPublicData(dir) {
+  const dataDir = path.join(dir, 'fixture-public-data');
+  fs.mkdirSync(dataDir, { recursive: true });
+  const width = 24;
+  const height = 24;
+  const bbox = { west: 100.31, south: -0.35, east: 100.33, north: -0.33 };
+  const int16 = new Int16Array(width * height);
+  for (let r = 0; r < height; r++) {
+    for (let c = 0; c < width; c++) {
+      // Gentle V-shaped valley draining south-to-north
+      int16[r * width + c] = Math.round(1100 + r * 6 + Math.abs(c - 12) * 8);
+    }
+  }
+  fs.writeFileSync(
+    path.join(dataDir, 'dem-grid.json'),
+    JSON.stringify({
+      width,
+      height,
+      bbox,
+      cellSizeX: 90,
+      cellSizeY: 90,
+      minElev: 1100,
+      maxElev: 1340,
+      elevBase64: Buffer.from(int16.buffer).toString('base64')
+    })
+  );
+  const osmContext = {
+    type: 'FeatureCollection',
+    features: [
+      {
+        type: 'Feature',
+        properties: { id: 'osm-w-1', kind: 'waterway', waterway: 'river', name: 'Batang Ngalai' },
+        geometry: { type: 'LineString', coordinates: [[100.318, -0.345], [100.318, -0.334]] }
+      },
+      {
+        type: 'Feature',
+        properties: { id: 'osm-w-2', kind: 'waterway', waterway: 'river', name: 'Batang Tuhua' },
+        geometry: { type: 'LineString', coordinates: [[100.324, -0.346], [100.324, -0.335]] }
+      },
+      {
+        type: 'Feature',
+        properties: { id: 'osm-w-3', kind: 'waterway', waterway: 'stream', name: 'Anak Sungai' },
+        geometry: { type: 'LineString', coordinates: [[100.314, -0.342], [100.318, -0.339]] }
+      },
+      {
+        type: 'Feature',
+        properties: { id: 'osm-r-1', kind: 'road', highway: 'secondary', name: 'Jalan Nagari' },
+        geometry: { type: 'LineString', coordinates: [[100.312, -0.338], [100.328, -0.338]] }
+      }
+    ]
+  };
+  const osmPath = path.join(dataDir, 'osm-context.geojson');
+  fs.writeFileSync(osmPath, JSON.stringify(osmContext));
+  fs.writeFileSync(
+    path.join(dataDir, 'metadata.json'),
+    JSON.stringify({
+      generatedAt: '2026-01-01T00:00:00.000Z',
+      center: [100.32, -0.34],
+      bbox,
+      demSource: 'Synthetic Test DEM',
+      gridDimensions: `${width}x${height}`,
+      resolutionMeters: 90,
+      minElevM: 1100,
+      maxElevM: 1340,
+      studyAreaKm2: 4.8,
+      streamNetworkKm: 3.1,
+      osmPlaceCount: 0,
+      osmWaterwayCount: 3,
+      osmRoadCount: 1,
+      crossingsDetected: 1,
+      bridgesDetected: 0,
+      simAreasHa: { clogged: { low: 5, med: 10, high: 15 }, cleared: { low: 3, med: 6, high: 9 } },
+      verifiedWaterwayCount: 3,
+      hydroConditioned: false
+    })
+  );
+  return { dataDir, osmPath };
+}
+
 test('SQLite API auto-seeds 3 OSM rivers, records full audit snapshots, supports promote & revert', async () => {
   const { dir, dbPath } = makeTempDb('balingka-api-open-');
-  const { server } = createAppServer({ dbPath, distDir: null, adminPassphrase: '' });
+  const { dataDir, osmPath } = makeSyntheticPublicData(dir);
+  const { server } = createAppServer({ dbPath, publicDataDir: dataDir, seedGeoJsonPath: osmPath, distDir: null, adminPassphrase: '' });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const { port } = server.address();
   const base = `http://127.0.0.1:${port}`;
@@ -105,7 +185,14 @@ test('SQLite API auto-seeds 3 OSM rivers, records full audit snapshots, supports
 
 test('ADMIN_PASSPHRASE locks waterway edits & suggestion moderation while keeping public suggestions open', async () => {
   const { dir, dbPath } = makeTempDb('balingka-api-auth-');
-  const { server } = createAppServer({ dbPath, distDir: null, adminPassphrase: 'rahasia-balingka-2026' });
+  const { dataDir, osmPath } = makeSyntheticPublicData(dir);
+  const { server } = createAppServer({
+    dbPath,
+    publicDataDir: dataDir,
+    seedGeoJsonPath: osmPath,
+    distDir: null,
+    adminPassphrase: 'rahasia-balingka-2026'
+  });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const { port } = server.address();
   const base = `http://127.0.0.1:${port}`;
@@ -199,8 +286,11 @@ test('ADMIN_PASSPHRASE locks waterway edits & suggestion moderation while keepin
 
 test('Rate limiter throttles excessive verify and suggestion requests with 429 + Retry-After', async () => {
   const { dir, dbPath } = makeTempDb('balingka-api-rate-');
+  const { dataDir, osmPath } = makeSyntheticPublicData(dir);
   const { server } = createAppServer({
     dbPath,
+    publicDataDir: dataDir,
+    seedGeoJsonPath: osmPath,
     distDir: null,
     adminPassphrase: 'rahasia-balingka-2026',
     rateLimits: { verifyMax: 2, suggestionMax: 2, verifyWindowMs: 60000, suggestionWindowMs: 60000 }
@@ -249,16 +339,13 @@ test('Rate limiter throttles excessive verify and suggestion requests with 429 +
 
 test('POST /api/hydrology/recompute burns verified waterways into temp DEM data, updates HAND rasters, and resets dirty flag', async () => {
   const { dir, dbPath } = makeTempDb('balingka-api-hydro-');
-  const tempPublicData = path.join(dir, 'public-data');
-  fs.mkdirSync(tempPublicData, { recursive: true });
-  for (const name of ['dem-grid.json', 'osm-context.geojson', 'metadata.json']) {
-    fs.copyFileSync(path.join(PUBLIC_DATA_DIR, name), path.join(tempPublicData, name));
-  }
+  const { dataDir: tempPublicData, osmPath } = makeSyntheticPublicData(dir);
 
   const { server } = createAppServer({
     dbPath,
     distDir: null,
     publicDataDir: tempPublicData,
+    seedGeoJsonPath: osmPath,
     adminPassphrase: 'hydro-pass-2026'
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
@@ -337,7 +424,14 @@ test('POST /api/hydrology/recompute burns verified waterways into temp DEM data,
 
 test('Structures CRUD (culverts & bridges), passphrase auth, audit revert, and export bundle work end-to-end', async () => {
   const { dir, dbPath } = makeTempDb('balingka-api-struct-');
-  const { server } = createAppServer({ dbPath, distDir: null, adminPassphrase: 'struct-pass-2026' });
+  const { dataDir, osmPath } = makeSyntheticPublicData(dir);
+  const { server } = createAppServer({
+    dbPath,
+    publicDataDir: dataDir,
+    seedGeoJsonPath: osmPath,
+    distDir: null,
+    adminPassphrase: 'struct-pass-2026'
+  });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const { port } = server.address();
   const base = `http://127.0.0.1:${port}`;
@@ -447,11 +541,7 @@ test('Structures CRUD (culverts & bridges), passphrase auth, audit revert, and e
 
 test('Verified GeoJSON snapshots seed fresh DBs, recompute auto-exports them, and importSeedSnapshot preserves suggestions', async () => {
   const { dir, dbPath } = makeTempDb('balingka-api-seed-');
-  const tempPublicData = path.join(dir, 'public-data');
-  fs.mkdirSync(tempPublicData, { recursive: true });
-  for (const name of ['dem-grid.json', 'osm-context.geojson', 'metadata.json']) {
-    fs.copyFileSync(path.join(PUBLIC_DATA_DIR, name), path.join(tempPublicData, name));
-  }
+  const { dataDir: tempPublicData } = makeSyntheticPublicData(dir);
 
   // Write canonical verified GeoJSON snapshots into tempPublicData
   fs.writeFileSync(
@@ -611,8 +701,15 @@ test('Verified GeoJSON snapshots seed fresh DBs, recompute auto-exports them, an
 
 test('waterway cross-sections & Jorong boundary API enforce auth, persist to SQLite, and support audit revert', async () => {
   const { dir, dbPath } = makeTempDb('balingka-api-f3-');
+  const { dataDir, osmPath } = makeSyntheticPublicData(dir);
   const secret = 'balingka-test-pass';
-  const { server } = createAppServer({ dbPath, distDir: null, adminPassphrase: secret });
+  const { server } = createAppServer({
+    dbPath,
+    publicDataDir: dataDir,
+    seedGeoJsonPath: osmPath,
+    distDir: null,
+    adminPassphrase: secret
+  });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const { port } = server.address();
   const base = `http://127.0.0.1:${port}`;

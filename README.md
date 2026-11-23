@@ -76,15 +76,20 @@ gis-balingka/
 │   ├── i18n/translations.ts   # Full Indonesian (ID) & English (EN) copy (Ringkas & Lengkap registers)
 │   └── types/gis.ts           # Shared TypeScript domain interfaces
 ├── scripts/
-│   ├── extract-big-ref.py     # Extracts official BIG Nagari polygon & RBI 50K Kab. Agam (.gdb/.zip)
+│   ├── extract-big-ref.py     # Extracts official BIG Desa/Nagari polygon & optional RBI 50K (.gdb/.zip)
 │   ├── lib/hydrology.mjs      # Priority-Flood, D8, Horn slope, HAND, Chaikin, polygon mask & stream-burning
+│   ├── lib/tiles.mjs          # Multi-tile Copernicus DEM (1°), ESA WorldCover (3°) & Terrarium tile addressing
 │   ├── lib/recompute-hydrology.mjs # Live server handler for offline stream-burned DEM recomputation
-│   ├── prepare-data.mjs       # Full offline DEMNAS/WorldCover/Sentinel-2/Open Buildings/Agam asset builder
+│   ├── prepare-data.mjs       # Full offline DEMNAS/Copernicus/WorldCover/OSM/Sentinel-2/Agam asset builder
+│   ├── reset-region.mjs       # Safe cleanup of stale Nagari Balingka artifacts before adapting a new region
 │   ├── sync-seed.mjs          # Export SQLite verified waterways & structures back to Git GeoJSON snapshots
 │   └── import-seed.mjs        # Import Git GeoJSON snapshots into SQLite without overwriting suggestions
 ├── public/data/               # Pre-built clipped 29.89 km² Nagari Balingka DEM, GeoJSONs & PNG rasters (~11 MB)
+├── docs/
+│   ├── ADAPT_REGION.md        # Step-by-step adaptation SOP for humans & AI coding agents
+│   └── screenshot-desktop.png # Full-loaded desktop preview image
 ├── tests/
-│   ├── hydrology.test.mjs     # Hydrology, cascade invariants, Agam integration & asset integrity tests
+│   ├── hydrology.test.mjs     # Hydrology, cascade invariants, multi-tile addressing & asset integrity tests
 │   └── api.test.mjs           # SQLite CRUD, Jorong boundaries, recompute, revert & passphrase auth tests
 ├── DATA_SOURCES.md            # Detailed data provenance, attribution & BIG Tanah Air Indonesia rebuild guide
 ├── CONTRIBUTING.md            # Contribution guidelines & step-by-step guide to adapt for another Desa/Nagari
@@ -129,13 +134,31 @@ pnpm run dev              # Terminal 2: starts Vite dev server with /api proxy o
 
 ## Run for Your Own Desa / Nagari
 
-Want to deploy this GIS for another Indonesian **Desa, Nagari, or Kelurahan**?
+Want to deploy this GIS for another Indonesian **Desa, Nagari, or Kelurahan**? Two open-data tracks are supported out of the box:
 
-1. Copy [`region.config.example.json`](./region.config.example.json) to [`region.config.json`](./region.config.json) and update your region's name, `bbox`, sub-region camera presets (*Jorong / Dusun / RW*), local authority labels, and `regionalOverlays.enabled: false` (automatically hides Agam-specific overlays).
-2. Optionally drop your official boundary GeoJSON at `raw-data/region-boundary.geojson` (and BIG DEMNAS GeoTIFF if available — otherwise `prepare-data` automatically fetches **Copernicus DEM GLO-30**, **ESA WorldCover 10m**, and **OpenStreetMap** for your `bbox`).
-3. Run `pnpm run prepare-data && pnpm run build && pnpm start`.
+| Data Track | Manual Downloads | Elevation & Layers | Best For |
+| --- | --- | --- | --- |
+| **Option A — Automatic Open Global Fallback** | None *(optional `raw-data/region-boundary.geojson`)* | **Copernicus DEM GLO-30 (~30 m)**, **ESA WorldCover 10m**, **OpenStreetMap** (auto-fetched & multi-tile mosaicked) | Fastest 10-minute setup without any login |
+| **Option B — Official BIG Tanah Air Indonesia** | Free login at [tanahair.indonesia.go.id](https://tanahair.indonesia.go.id/portal-web/): **DEMNAS** (`.tif`), **Batas Wilayah Desa** (`.gdb.zip`), and optional **RBI 1:50.000** | **BIG DEMNAS (~8.3 m)** + official village polygon + optional RBI rivers, culverts, bridges & public facilities | High-resolution Indonesian village production atlas |
 
-See **[`CONTRIBUTING.md`](./CONTRIBUTING.md#3-run-this-gis-for-your-own-desa--nagari-panduan-adaptasi-wilayah-lain)** for the full step-by-step guide.
+**Quick Steps:**
+
+```bash
+cp region.config.example.json region.config.json
+# 1. Edit region.config.json (unique "id", name, bbox, cameraPresets, authorities, regionalOverlays.enabled: false)
+pnpm run reset-region                                     # 2. Clean stale Nagari Balingka artifacts
+# 3. (Option B only) Put BIG downloads in raw-data/ and run:
+#    python3 scripts/extract-big-ref.py --ref-dir raw-data/big-ref
+pnpm run prepare-data && pnpm run verify && pnpm start    # 4. Build hydrology assets, verify & launch
+```
+
+### Adapting with an AI Coding Agent
+
+Using **Cursor, Claude Code, Codex, or Antigravity** to adapt this repo for your village? Paste this prompt into your agent:
+
+> *"Read `docs/ADAPT_REGION.md` and adapt this GIS repository for **[Desa/Nagari Name, Kecamatan, Kabupaten, Province]**. Follow the AI Agent Protocol in `docs/ADAPT_REGION.md` step-by-step (ask me for any missing coordinates or BIG Tanah Air files before running `reset-region` and `prepare-data`)."*
+
+See **[`docs/ADAPT_REGION.md`](./docs/ADAPT_REGION.md)** for the complete human & AI-agent guide (including how to find your `bbox`, `KDEPUM` code, and BIG Tanah Air files), and [`CONTRIBUTING.md`](./CONTRIBUTING.md) for contribution rules.
 
 ---
 

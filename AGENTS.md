@@ -1,5 +1,7 @@
 # AGENTS.md — Nagari Balingka GIS
 
+> **Adapting a fork/clone for another Desa / Nagari / Kelurahan?** Follow **[`docs/ADAPT_REGION.md`](./docs/ADAPT_REGION.md)** (you may replace `region.config.json` and run `pnpm run reset-region` instead of keeping the Nagari Balingka area/boundary numbers below, while still preserving the MIT license, neutral open-data framing, and UI/UX standards). When maintaining the upstream **Nagari Balingka** repository itself, follow all invariants below strictly.
+
 Public interactive spatial data viewer for terrain, hydrology, drainage inventory, and exploratory rainfall-flow modeling in **Nagari Balingka**, Kec. IV Koto, Kab. Agam, West Sumatra (`29.89 km²` official BIG June 2026 boundary `13.06.05.2003`, `1,032–2,869 m dpl`, default visual center `-0.345, 100.319`). Strictly displays open/official datasets and field inventory without making disaster-status declarations or evacuation recommendations.
 
 ## 1. Stack & License Constraints
