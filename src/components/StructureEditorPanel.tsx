@@ -156,8 +156,8 @@ export function StructureEditorPanel({
         {!apiAvailable && (
           <p className="mt-2.5 mb-0 text-[12.5px] text-[#78350f]">
             {isEn
-              ? 'Static read-only preview: run `pnpm run server` to persist culvert & bridge points.'
-              : 'Mode pratinjau statis: jalankan `pnpm run server` agar titik gorong-gorong tersimpan.'}
+              ? 'Read-only preview mode: saving culvert and bridge points is only active when connected to the application server.'
+              : 'Mode pratinjau baca saja: fitur penyimpanan titik gorong-gorong hanya aktif saat terhubung ke server aplikasi.'}
           </p>
         )}
 

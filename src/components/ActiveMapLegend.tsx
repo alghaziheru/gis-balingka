@@ -8,19 +8,22 @@ import type {
   Language,
   LayerToggles,
   ScourStats,
-  TabId
+  TabId,
+  ViewMode
 } from '../types/gis';
 import { InfoTooltip } from './InfoTooltip';
 import { LegendIcon } from './LegendIcon';
 
 export interface ActiveMapLegendProps {
   lang: Language;
+  viewMode: ViewMode;
   tab: TabId;
   basemap: BasemapId;
   layers: LayerToggles;
   flowDensity: number;
   simProgress: number;
   drainFilter: 'all' | DrainageStatus;
+  elevRange?: [number, number];
   landCoverStats?: LandCoverStats;
   scourStats?: ScourStats;
 }
@@ -32,12 +35,14 @@ interface LegendRow {
 
 export function ActiveMapLegend({
   lang,
+  viewMode,
   tab,
   basemap,
   layers,
   flowDensity,
   simProgress,
   drainFilter,
+  elevRange,
   landCoverStats,
   scourStats
 }: ActiveMapLegendProps) {
@@ -54,7 +59,7 @@ export function ActiveMapLegend({
         node: (
           <div className="flex items-center gap-2 text-[#161c1a]">
             <LegendIcon kind="flow" />
-            <span>{isEn ? 'Modeled flow direction' : 'Arah aliran model'}</span>
+            <span>{isEn ? 'Modeled flow direction' : 'Arah aliran simulasi'}</span>
           </div>
         )
       },
@@ -64,7 +69,7 @@ export function ActiveMapLegend({
           <div className="flex items-center gap-2 text-[#161c1a]">
             <span className="h-3 w-3 shrink-0 rounded-[3px] bg-[#0369a1]" />
             <span className="flex min-w-0 items-center gap-1">
-              <span>{isEn ? 'Deep basin (>1.5m HAND)' : 'Cekungan utama (>1,5m HAND)'}</span>
+              <span>{isEn ? 'Deep basin (>1.5m HAND)' : 'Cekungan utama (>1,5 m HAND)'}</span>
               <InfoTooltip
                 text={t.infoLegendDeep}
                 label={isEn ? 'Deep HAND basin' : 'Cekungan utama HAND'}
@@ -88,10 +93,10 @@ export function ActiveMapLegend({
           <div className="flex items-center gap-2 text-[#161c1a]">
             <span className="h-3 w-3 shrink-0 rounded-[3px] bg-[#ea580c]" />
             <span className="flex min-w-0 items-center gap-1">
-              <span>{isEn ? 'Steep slope (model)' : 'Lereng curam jenuh (model)'}</span>
+              <span>{isEn ? 'Steep slope (model)' : 'Lereng curam jenuh air'}</span>
               <InfoTooltip
                 text={t.infoLegendLandslide}
-                label={isEn ? 'Saturated steep slope (model)' : 'Lereng curam terjenuhkan (model)'}
+                label={isEn ? 'Saturated steep slope (model)' : 'Lereng curam jenuh air'}
               />
             </span>
           </div>
@@ -102,13 +107,17 @@ export function ActiveMapLegend({
 
   const overlayRows: LegendRow[] = [];
   if (basemap === 'elev') {
+    const [minE, maxE] = elevRange ?? [1032, 2869];
+    const fmt = (n: number) => Math.round(n).toLocaleString(isEn ? 'en-US' : 'id-ID');
     overlayRows.push({
       key: 'surf-elev',
       node: (
         <div className="flex flex-col gap-1">
           <div className="flex items-center justify-between gap-2 font-semibold text-[#161c1a]">
             <span>{t.bmElev}</span>
-            <span className="font-mono-num text-[10.5px] font-semibold text-[#636f6a]">1.032 → 2.869 mdpl</span>
+            <span className="font-mono-num text-[10.5px] font-semibold text-[#636f6a]">
+              {fmt(minE)} → {fmt(maxE)} mdpl
+            </span>
           </div>
           <span
             className="block h-2 w-full rounded-[3px] border border-black/12"
@@ -324,7 +333,7 @@ export function ActiveMapLegend({
       node: (
         <div className="flex items-center gap-2 text-[#161c1a]">
           <LegendIcon kind="flow" />
-          <span>{t.lblFlowSimple}</span>
+          <span>{viewMode === 'detail' ? t.lblFlowDetail : t.lblFlowSimple}</span>
         </div>
       )
     });

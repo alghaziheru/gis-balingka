@@ -194,6 +194,32 @@ export function SimulationTab({
         }`
     : '';
 
+  const rainIntensityLabel = isDetail ? t.lblRainIntensity : t.lblRainIntensitySimple;
+  const durationLabel = isDetail ? t.lblDuration : t.lblDurationSimple;
+  const soilShortLabel = isDetail ? t.lblSoilShort : t.lblSoilShortSimple;
+  const drainShortLabel = isDetail ? t.lblDrainShort : t.lblDrainShortSimple;
+  const controlTitle = isDetail ? t.simControlTitle : t.simControlTitleSimple;
+  const outputTitle = isDetail ? t.simOutputTitleDetail : t.simOutputTitleSimple;
+  const kpiFloodLabel = isDetail ? t.kpiFloodArea : t.kpiFloodAreaSimple;
+  const kpiLandslideLabel = isDetail ? t.kpiLandslideArea : t.kpiLandslideAreaSimple;
+  const kpiBuildingsLabel = isDetail ? t.kpiBuildings : t.kpiBuildingsSimple;
+
+  const waterwayKindLabel: Record<string, string> = isEn
+    ? {
+        river: 'River',
+        stream: 'Stream',
+        canal: 'Canal',
+        drain: 'Drain',
+        culvert: 'Culvert'
+      }
+    : {
+        river: 'Sungai Utama',
+        stream: 'Anak Sungai',
+        canal: 'Bandar / Irigasi',
+        drain: 'Parit / Drainase',
+        culvert: 'Gorong-gorong'
+      };
+
   const isAtEnd = !playing && progress >= 0.99;
 
   return (
@@ -284,7 +310,7 @@ export function SimulationTab({
 
       {/* Rain, Soil & Channel Parameters — Strictly Dropdown, Slider, Checkbox */}
       <section className="rounded-xl border border-[#161c1a]/12 bg-white p-3.5">
-        <div className="mb-2.5 text-[13px] font-bold text-[#161c1a]">{t.simControlTitle}</div>
+        <div className="mb-2.5 text-[13px] font-bold text-[#161c1a]">{controlTitle}</div>
 
         {/* Dropdown 1: Scenario Preset (single-line) */}
         <div className="flex items-center justify-between gap-2.5 py-1">
@@ -316,8 +342,8 @@ export function SimulationTab({
         <div className="mt-2.5 flex flex-col gap-1.5 border-t border-[#161c1a]/10 pt-3">
           <div className="flex items-center justify-between gap-2 text-[12.5px]">
             <span className="flex items-center gap-1.5 font-semibold text-[#434d49]">
-              <label htmlFor={`${uid}-rain`}>{t.lblRainIntensity}</label>
-              <InfoTooltip text={t.infoRainIntensity} label={t.lblRainIntensity} />
+              <label htmlFor={`${uid}-rain`}>{rainIntensityLabel}</label>
+              <InfoTooltip text={t.infoRainIntensity} label={rainIntensityLabel} />
             </span>
             <span className="font-mono-num shrink-0 font-bold text-[#161c1a]">
               {rainMm} {isEn ? 'mm/hr' : 'mm/jam'} · {rainCategoryLabel}
@@ -344,8 +370,8 @@ export function SimulationTab({
         <div className="mt-3 flex flex-col gap-1.5 border-t border-[#161c1a]/10 pt-3">
           <div className="flex items-center justify-between gap-2 text-[12.5px]">
             <span className="flex items-center gap-1.5 font-semibold text-[#434d49]">
-              <label htmlFor={`${uid}-duration`}>{t.lblDuration}</label>
-              <InfoTooltip text={t.infoDuration} label={t.lblDuration} />
+              <label htmlFor={`${uid}-duration`}>{durationLabel}</label>
+              <InfoTooltip text={t.infoDuration} label={durationLabel} />
             </span>
             <span className="font-mono-num shrink-0 font-bold text-[#161c1a]">
               {formatDurationLabel(durationMin, isEn)}
@@ -374,9 +400,9 @@ export function SimulationTab({
           <div className="flex items-center justify-between gap-2.5 py-2">
             <div className="flex min-w-0 flex-1 items-center gap-1.5 text-[12.5px] font-semibold text-[#434d49]">
               <label htmlFor={`${uid}-soil`} className="truncate">
-                {t.lblSoilShort}
+                {soilShortLabel}
               </label>
-              <InfoTooltip text={t.infoSoilMoisture} label={t.lblSoilShort} />
+              <InfoTooltip text={t.infoSoilMoisture} label={soilShortLabel} />
             </div>
             <select
               id={`${uid}-soil`}
@@ -394,9 +420,9 @@ export function SimulationTab({
           <div className="flex items-center justify-between gap-2.5 py-2">
             <div className="flex min-w-0 flex-1 items-center gap-1.5 text-[12.5px] font-semibold text-[#434d49]">
               <label htmlFor={`${uid}-drain`} className="truncate">
-                {t.lblDrainShort}
+                {drainShortLabel}
               </label>
-              <InfoTooltip text={t.infoDrainState} label={t.lblDrainShort} />
+              <InfoTooltip text={t.infoDrainState} label={drainShortLabel} />
             </div>
             <select
               id={`${uid}-drain`}
@@ -533,13 +559,11 @@ export function SimulationTab({
       {/* Model Output Summary */}
       <section className="rounded-xl border border-[#161c1a]/12 bg-white p-3.5">
         <div className="mb-2.5 flex flex-wrap items-center justify-between gap-1.5">
-          <span className="text-[13px] font-bold text-[#161c1a]">
-            {isEn ? 'Computed Model Outputs' : 'Ringkasan Luaran Model'}
-          </span>
+          <span className="text-[13px] font-bold text-[#161c1a]">{outputTitle}</span>
           <div className="flex items-center gap-1.5">
             {drainCondition === 'cleared' && progress > 0.03 && kpis.reductionPct > 0 && (
               <span className="font-mono-num rounded-md bg-[#047857]/12 px-2 py-0.5 text-[11px] font-bold text-[#047857]">
-                -{kpis.reductionPct}% {isEn ? 'HAND zone' : 'area model'}
+                -{kpis.reductionPct}% {isEn ? 'HAND zone' : isDetail ? 'zona HAND' : 'area cekungan'}
               </span>
             )}
             {isDetail && agamStats && (
@@ -554,8 +578,8 @@ export function SimulationTab({
         <div className="grid grid-cols-2 gap-2">
           <div className="rounded-lg bg-[#fafaf8] px-3 py-2">
             <div className="flex items-start justify-between gap-1 text-[11.5px] leading-tight text-[#636f6a]">
-              <span>{t.kpiFloodArea}</span>
-              <InfoTooltip text={t.infoKpiFlood} label={t.kpiFloodArea} />
+              <span>{kpiFloodLabel}</span>
+              <InfoTooltip text={t.infoKpiFlood} label={kpiFloodLabel} />
             </div>
             <div className="font-mono-num mt-0.5 text-[15px] font-bold text-[#0369a1]">
               {kpis.floodAreaHa.toFixed(1)} ha
@@ -563,8 +587,8 @@ export function SimulationTab({
           </div>
           <div className="rounded-lg bg-[#fafaf8] px-3 py-2">
             <div className="flex items-start justify-between gap-1 text-[11.5px] leading-tight text-[#636f6a]">
-              <span>{t.kpiLandslideArea}</span>
-              <InfoTooltip text={t.infoKpiLandslide} label={t.kpiLandslideArea} />
+              <span>{kpiLandslideLabel}</span>
+              <InfoTooltip text={t.infoKpiLandslide} label={kpiLandslideLabel} />
             </div>
             <div className="font-mono-num mt-0.5 text-[15px] font-bold text-[#c2410c]">
               {kpis.landslideAreaHa.toFixed(1)} ha
@@ -572,8 +596,8 @@ export function SimulationTab({
           </div>
           <div className="rounded-lg bg-[#fafaf8] px-3 py-2">
             <div className="flex items-start justify-between gap-1 text-[11.5px] leading-tight text-[#636f6a]">
-              <span>{t.kpiBuildings}</span>
-              <InfoTooltip text={t.infoKpiBuildings} label={t.kpiBuildings} />
+              <span>{kpiBuildingsLabel}</span>
+              <InfoTooltip text={t.infoKpiBuildings} label={kpiBuildingsLabel} />
             </div>
             <div className="font-mono-num mt-0.5 text-[15px] font-bold text-[#161c1a]">
               ~{kpis.affectedBuildingsFlood}
@@ -645,7 +669,7 @@ export function SimulationTab({
           soilMoisture
         });
 
-        const overflowLabel = isEn ? 'Bankfull capacity (Manning)' : 'Kapasitas penuh tebing (Manning)';
+        const overflowLabel = isEn ? 'Bankfull capacity (Manning)' : 'Kapasitas penuh saluran (Manning)';
         const wideningLabel = isEn ? 'High stream power (ω ≥ 300 W/m²)' : 'Energi arus tinggi (ω ≥ 300 W/m²)';
         const scourLabel = isEn ? 'Extreme stream power (ω ≥ 1000)' : 'Energi arus ekstrem (ω ≥ 1000)';
 
@@ -667,7 +691,7 @@ export function SimulationTab({
                     : 'Ukuran lapangan'
                   : isEn
                     ? 'Default est.'
-                    : 'Estimasi default'}
+                    : 'Perkiraan bawaan'}
               </span>
             </div>
 
@@ -679,7 +703,7 @@ export function SimulationTab({
             >
               {verifiedWaterways.map(w => (
                 <option key={w.properties.id} value={w.properties.id}>
-                  {w.properties.name} ({w.properties.kind})
+                  {w.properties.name} ({waterwayKindLabel[w.properties.kind] || w.properties.kind})
                 </option>
               ))}
             </select>

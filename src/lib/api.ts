@@ -88,9 +88,9 @@ export function buildStaticSeedWaterways(osmContext: GeoFeatureCollection): Veri
         status: 'normal',
         source: 'osm',
         source_ref: String(f.properties?.id || ''),
-        notes: 'Seed awal OpenStreetMap (mode baca statis).',
+        notes: 'Data awal OpenStreetMap (mode baca saja).',
         length_m: 0,
-        updated_by: 'OSM Seed',
+        updated_by: 'Data Awal OSM',
         updated_at: ''
       },
       geometry: {

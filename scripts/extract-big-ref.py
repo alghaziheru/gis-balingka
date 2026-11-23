@@ -18,8 +18,31 @@ ROOT = Path(__file__).resolve().parent.parent
 RAW_DIR = ROOT / "raw-data"
 DEFAULT_REF_DIR = os.environ.get("BIG_REF_DIR") or str(RAW_DIR / "big-ref")
 
-BBOX = (100.278, -0.408, 100.345, -0.314)
-PAD_BBOX = (100.275, -0.411, 100.348, -0.311)
+
+def load_region_config():
+    cfg_path = ROOT / "region.config.json"
+    if cfg_path.exists():
+        return json.loads(cfg_path.read_text(encoding="utf-8"))
+    return {
+        "name": "Nagari Balingka",
+        "district": "Kec. IV Koto",
+        "regency": "Kab. Agam",
+        "officialBoundaryCode": "13.06.05.2003",
+        "officialBoundaryNameMatch": "BALINGKA",
+        "bbox": {"west": 100.278, "south": -0.408, "east": 100.345, "north": -0.314},
+        "regionalOverlays": {
+            "bigRbiZipName": "Agam.zip",
+            "bigRbiGdbName": "RBI50K_AGAM_KUGI50_20221231.gdb",
+            "bigDesaGdbName": "BATASWILAYAH_DESA_20260601.gdb",
+            "bigRbiDasName": "MASANG KIRI",
+        },
+    }
+
+
+REGION_CFG = load_region_config()
+_bb = REGION_CFG["bbox"]
+BBOX = (float(_bb["west"]), float(_bb["south"]), float(_bb["east"]), float(_bb["north"]))
+PAD_BBOX = (BBOX[0] - 0.003, BBOX[1] - 0.003, BBOX[2] + 0.003, BBOX[3] + 0.003)
 
 
 def parse_args():
@@ -86,30 +109,39 @@ def main():
 
     ref_dir = Path(args.ref_dir)
     RAW_DIR.mkdir(parents=True, exist_ok=True)
+    ro = REGION_CFG.get("regionalOverlays") or {}
+    rbi_zip_name = ro.get("bigRbiZipName") or "Agam.zip"
+    rbi_gdb_name = ro.get("bigRbiGdbName") or "RBI50K_AGAM_KUGI50_20221231.gdb"
+    desa_gdb_name = ro.get("bigDesaGdbName") or "BATASWILAYAH_DESA_20260601.gdb"
+    target_code = str(REGION_CFG.get("officialBoundaryCode") or "13.06.05.2003").strip()
+    target_name = str(REGION_CFG.get("officialBoundaryNameMatch") or "BALINGKA").strip().upper()
+    region_name = str(REGION_CFG.get("name") or "Nagari Balingka")
+    das_name = str(ro.get("bigRbiDasName") or "")
+
     with tempfile.TemporaryDirectory(prefix="big-ref-") as tmp:
         rbi_gdb = resolve_gdb(
             tmp,
             [
-                ref_dir / "KAB AGAM" / "RBI50K_AGAM_KUGI50_20221231.gdb",
-                ref_dir / "RBI50K_AGAM_KUGI50_20221231.gdb",
+                ref_dir / "KAB AGAM" / rbi_gdb_name,
+                ref_dir / rbi_gdb_name,
             ],
-            ref_dir / "Agam.zip",
-            Path("KAB AGAM") / "RBI50K_AGAM_KUGI50_20221231.gdb",
-            Path("RBI50K_AGAM_KUGI50_20221231.gdb"),
+            ref_dir / rbi_zip_name,
+            Path("KAB AGAM") / rbi_gdb_name,
+            Path(rbi_gdb_name),
         )
         desa_gdb = resolve_gdb(
             tmp,
-            [ref_dir / "BATASWILAYAH_DESA_20260601.gdb"],
-            ref_dir / "BATASWILAYAH_DESA_20260601.gdb.zip",
-            Path("BATASWILAYAH_DESA_20260601.gdb"),
+            [ref_dir / desa_gdb_name],
+            ref_dir / f"{desa_gdb_name}.zip",
+            Path(desa_gdb_name),
         )
 
-        # 1. Extract BIG June 2026 Nagari Balingka official boundary (KDEPUM = 13.06.05.2003)
+        # 1. Extract BIG official village/nagari boundary from region.config.json
         nagari_features = []
         for geom, attrs in read_gdb_layer(str(desa_gdb), "BATAS_DESAKEL_AR", bbox=BBOX):
             code = str(attrs.get("KDEPUM") or "").strip()
             name = str(attrs.get("NAMOBJ") or attrs.get("WADMKD") or "").strip()
-            if code != "13.06.05.2003" and name.upper() != "BALINGKA":
+            if code != target_code and name.upper() != target_name:
                 continue
             gj = json.loads(pyogrio.to_geojson(geom) if hasattr(pyogrio, "to_geojson") else json.dumps(geom.__geo_interface__))
             coords = round_coords(gj["coordinates"])
@@ -117,11 +149,11 @@ def main():
                 {
                     "type": "Feature",
                     "properties": {
-                        "name_id": "Batas Administrasi Nagari Balingka",
-                        "name_en": "Nagari Balingka Administrative Boundary",
-                        "code": code or "13.06.05.2003",
-                        "kecamatan": str(attrs.get("WADMKC") or "IV Koto"),
-                        "kabupaten": str(attrs.get("WADMKK") or "Agam"),
+                        "name_id": f"Batas Administrasi {region_name}",
+                        "name_en": f"{region_name} Administrative Boundary",
+                        "code": code or target_code,
+                        "kecamatan": str(attrs.get("WADMKC") or REGION_CFG.get("district") or ""),
+                        "kabupaten": str(attrs.get("WADMKK") or REGION_CFG.get("regency") or ""),
                         "source": "BIG — Batas Wilayah Desa/Nagari (Juni 2026)",
                         "official": True,
                     },
@@ -132,7 +164,7 @@ def main():
         out_nagari = RAW_DIR / "big-nagari-2026.geojson"
         out_nagari.write_text(json.dumps({"type": "FeatureCollection", "features": nagari_features}))
 
-        # 2. Extract BIG RBI 50K Agam (Dec 2022)
+        # 2. Extract BIG RBI 50K layers
         rivers = []
         for idx, (geom, attrs) in enumerate(read_gdb_layer(str(rbi_gdb), "SUNGAI_LN_50K", bbox=PAD_BBOX), 1):
             raw_name = str(attrs.get("NAMOBJ") or "").strip()
@@ -150,7 +182,7 @@ def main():
                             "id": f"rbi22-{idx}" + (f"-{pi + 1}" if len(parts) > 1 else ""),
                             "name": raw_name or f"Anak Sungai RBI #{idx}",
                             "kind": "river" if raw_name.lower().startswith("sungai") else "stream",
-                            "das": "MASANG KIRI",
+                            "das": das_name,
                             "remark": remark,
                             "source": "BIG — Peta RBI 1:50.000 (Des 2022)",
                         },

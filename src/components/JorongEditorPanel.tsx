@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from 'react';
 import { Crosshair, Lock, Map, Pencil, Trash2, Unlock, Upload } from 'lucide-react';
+import { REGION } from '../config/region';
 import { I18N } from '../i18n/translations';
 import type { JorongBoundaryFeature, JorongBoundaryStatus, Language } from '../types/gis';
 
@@ -33,7 +34,7 @@ interface JorongEditorPanelProps {
   onNotify: (msg: string) => void;
 }
 
-const JORONG_SUGGESTIONS = ['Jorong Pahambatan', 'Jorong Koto Hilalang', 'Jorong Subarang'];
+const JORONG_SUGGESTIONS = REGION.subRegionSuggestions;
 
 export function JorongEditorPanel({
   lang,
@@ -223,7 +224,7 @@ export function JorongEditorPanel({
                 : 'Batas Jorong Baru'}
             </strong>
             <span className="font-mono-num rounded bg-[#0369a1]/10 px-2 py-0.5 text-[12px] font-bold text-[#0369a1]">
-              {editingJorong.coordinates.length} pts
+              {editingJorong.coordinates.length} {isEn ? 'pts' : 'titik'}
             </span>
           </div>
 

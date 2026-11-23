@@ -82,8 +82,8 @@ export function FeedbackModal({ open, lang, apiAvailable, onSubmit, onClose }: F
         {!apiAvailable && (
           <div className="mb-3 rounded-lg border border-[#b45309]/25 bg-[#b45309]/8 px-3 py-2 text-[12.5px] text-[#78350f]">
             {isEn
-              ? 'Preview mode: start the local server (`pnpm run server`) to submit feedback.'
-              : 'Mode pratinjau: jalankan server lokal (`pnpm run server`) untuk mengirim feedback.'}
+              ? 'Read-only preview mode: submitting feedback is only active when connected to the application server.'
+              : 'Mode pratinjau baca saja: pengiriman masukan hanya aktif saat terhubung ke server aplikasi.'}
           </div>
         )}
 

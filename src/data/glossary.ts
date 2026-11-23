@@ -88,9 +88,9 @@ export const GLOSSARY_ENTRIES: GlossaryEntry[] = [
   },
   {
     id: 'hillshade',
-    termId: 'Hillshade',
+    termId: 'Bayangan Bukit & Lembah (Hillshade)',
     termEn: 'Hillshade',
-    shortId: 'Bayangan bukit & lembah',
+    shortId: 'Pencahayaan relief topografi 2D & 3D',
     shortEn: 'Shaded terrain relief',
     descId:
       'Efek pencahayaan bayangan buatan dari ketinggian DEM untuk menonjolkan punggungan bukit, ngarai, dan lekukan lembah sehingga bentuk permukaan bumi lebih mudah dibaca pada peta 2D maupun 3D.',
@@ -138,7 +138,7 @@ export const GLOSSARY_ENTRIES: GlossaryEntry[] = [
   },
   {
     id: 'vertical-exag',
-    termId: 'Tinggi Relief 3D (Vertical Exag.)',
+    termId: 'Skala Tinggi Bukit 3D (Vertical Exaggeration)',
     termEn: '3D Relief Height (Vertical Exag.)',
     shortId: 'Pengali skala visual ketinggian 1,0×–2,2×',
     shortEn: 'Visual height multiplier 1.0×–2.2×',
@@ -182,9 +182,9 @@ export const GLOSSARY_ENTRIES: GlossaryEntry[] = [
   },
   {
     id: 'd8',
-    termId: 'D8 (Arah Aliran Topografi)',
+    termId: 'D8 (Penelusuran Arah Aliran)',
     termEn: 'D8 (Flow Direction)',
-    shortId: 'Deterministic-8 dari DEMNAS',
+    shortId: 'Algoritma Deterministic-8 dari DEMNAS',
     shortEn: 'Deterministic-8 elevation routing',
     descId:
       'Algoritma hidrologi yang menentukan ke mana air mengalir di setiap kotak grid dengan memilih 1 dari 8 tetangga yang paling curam ke bawah. Digunakan untuk menggambar garis putus-putus jingga arah kemiringan dan menghitung waktu tempuh gelombang air.',
@@ -257,18 +257,18 @@ export const GLOSSARY_ENTRIES: GlossaryEntry[] = [
   },
   {
     id: 'stream-burning',
-    termId: 'Stream Burning (Bakar ke DEM)',
+    termId: 'Sisipkan ke DEM (Stream Burning)',
     termEn: 'Stream Burning',
-    shortId: 'Penanaman jalur sungai nyata ke DEM',
+    shortId: 'Menyisipkan jalur sungai nyata ke data elevasi DEM',
     shortEn: 'Carving verified channels into DEM',
     descId:
-      'Teknik menyisipkan alur sungai yang sudah dipetakan/diverifikasi di lapangan ke dalam salinan data elevasi DEM. Tujuannya agar jalur komputer tidak melenceng akibat pohon atau atap bangunan dan aliran tetap mengikuti sungai nyata.',
+      'Teknik menyisipkan alur sungai yang sudah dipetakan atau diverifikasi di lapangan ke dalam salinan data elevasi DEM (dalam literatur GIS dikenal sebagai Stream Burning). Tujuannya agar jalur perhitungan tidak melenceng akibat tajuk pohon atau atap bangunan sehingga aliran tetap mengikuti sungai nyata.',
     descEn:
       'Technique that lowers DEM elevation slightly along verified real-world river lines inside a working copy so computed D8 drainage paths follow actual channels rather than artifacts from tree canopy or roofs.',
     links: [
       {
         kind: 'video',
-        labelId: 'Video penjelasan DEM Stream Burning',
+        labelId: 'Video penjelasan Stream Burning DEM',
         labelEn: 'DEM stream burning explained',
         href: 'https://www.youtube.com/results?search_query=DEM+stream+burning+hydrology'
       }
@@ -278,10 +278,10 @@ export const GLOSSARY_ENTRIES: GlossaryEntry[] = [
     id: 'manning-omega',
     termId: 'Rumus Manning & Energi Arus (ω)',
     termEn: 'Manning Formula & Stream Power (ω)',
-    shortId: 'Kapasitas penampang saluran & W/m²',
+    shortId: 'Kapasitas penuh saluran (bankfull) & W/m²',
     shortEn: 'Bankfull channel capacity & W/m²',
     descId:
-      'Rumus hidrolika untuk memperkirakan debit maksimal saat sungai penuh tebing (Manning) serta kekuatan arus per meter lebar saluran (Specific Stream Power, ω dalam Watt/m²). Nilai ω ≥ 300 dan ≥ 1000 W/m² lazim dipakai dalam literatur erosi tebing.',
+      'Rumus hidrolika untuk memperkirakan debit maksimal saat kapasitas saluran penuh (bankfull, rumus Manning) serta kekuatan arus per meter lebar saluran (Specific Stream Power, ω dalam Watt/m²). Nilai ω ≥ 300 dan ≥ 1000 W/m² lazim dipakai dalam literatur erosi tebing.',
     descEn:
       'Open-channel hydraulics equations estimating bankfull discharge (Manning) and flow energy per unit width (Specific Stream Power ω in W/m²). Thresholds ω ≥ 300 and ≥ 1000 W/m² are standard hydraulic energy benchmarks.',
     links: [

@@ -53,9 +53,47 @@ function timingSafeMatch(candidate, expected) {
   return crypto.timingSafeEqual(hashDigest(candidate), hashDigest(expected));
 }
 
+const SECURITY_HEADERS = {
+  'X-Content-Type-Options': 'nosniff',
+  'X-Frame-Options': 'SAMEORIGIN',
+  'Referrer-Policy': 'strict-origin-when-cross-origin'
+};
+
+function createRateLimiter({ windowMs, max }) {
+  const hits = new Map();
+  return key => {
+    const now = Date.now();
+    const cutoff = now - windowMs;
+    const prev = hits.get(key) || [];
+    const recent = prev.filter(ts => ts > cutoff);
+    if (recent.length >= max) {
+      const retryAfterSec = Math.max(1, Math.ceil((recent[0] + windowMs - now) / 1000));
+      hits.set(key, recent);
+      return { allowed: false, retryAfterSec };
+    }
+    recent.push(now);
+    hits.set(key, recent);
+    if (hits.size > 2000) {
+      for (const [k, list] of hits.entries()) {
+        if (list.every(ts => ts <= cutoff)) hits.delete(k);
+      }
+    }
+    return { allowed: true, retryAfterSec: 0 };
+  };
+}
+
+function getClientIp(req) {
+  const fwd = req.headers['x-forwarded-for'];
+  if (typeof fwd === 'string' && fwd.trim()) {
+    return fwd.split(',')[0].trim();
+  }
+  return req.socket?.remoteAddress || 'unknown';
+}
+
 function sendJson(res, status, data, extraHeaders = {}) {
   const body = JSON.stringify(data);
   res.writeHead(status, {
+    ...SECURITY_HEADERS,
     'Content-Type': 'application/json; charset=utf-8',
     'Cache-Control': 'no-store',
     ...extraHeaders
@@ -115,6 +153,7 @@ function tryServeStatic(req, res, distDir, pathname) {
 
   const ext = path.extname(targetFile).toLowerCase();
   res.writeHead(200, {
+    ...SECURITY_HEADERS,
     'Content-Type': MIME_TYPES[ext] || 'application/octet-stream'
   });
   fs.createReadStream(targetFile).pipe(res);
@@ -126,11 +165,20 @@ export function createAppServer({
   seedGeoJsonPath = DEFAULT_SEED_PATH,
   distDir = DEFAULT_DIST_DIR,
   publicDataDir = DEFAULT_PUBLIC_DATA_DIR,
-  adminPassphrase = ''
+  adminPassphrase = '',
+  rateLimits = {}
 } = {}) {
   const store = createStore(dbPath, seedGeoJsonPath);
   const configuredPassphrase = String(adminPassphrase || '').trim();
   const requiresPassphrase = configuredPassphrase.length > 0;
+  const checkVerifyLimit = createRateLimiter({
+    windowMs: Number(rateLimits?.verifyWindowMs) || 15 * 60 * 1000,
+    max: Number(rateLimits?.verifyMax) || 10
+  });
+  const checkSuggestionLimit = createRateLimiter({
+    windowMs: Number(rateLimits?.suggestionWindowMs) || 15 * 60 * 1000,
+    max: Number(rateLimits?.suggestionMax) || 15
+  });
 
   const isEditorAuthorized = req => {
     if (!requiresPassphrase) return true;
@@ -165,6 +213,15 @@ export function createAppServer({
       }
 
       if (method === 'POST' && pathname === '/api/editor/verify') {
+        const limit = checkVerifyLimit(getClientIp(req));
+        if (!limit.allowed) {
+          return sendJson(
+            res,
+            429,
+            { ok: false, error: 'Terlalu banyak percobaan verifikasi. Coba lagi beberapa menit lagi.' },
+            { 'Retry-After': String(limit.retryAfterSec) }
+          );
+        }
         const body = await readJsonBody(req, 8 * 1024);
         if (!requiresPassphrase) {
           return sendJson(res, 200, { ok: true, unlocked: true });
@@ -192,10 +249,22 @@ export function createAppServer({
       }
 
       if (method === 'GET' && pathname === '/api/suggestions') {
+        if (!isEditorAuthorized(req)) {
+          return sendJson(res, 401, { error: 'Mode Editor terkunci. Masukkan Admin Passphrase terlebih dahulu.' });
+        }
         return sendJson(res, 200, { suggestions: store.listSuggestions() });
       }
 
       if (method === 'POST' && pathname === '/api/suggestions') {
+        const limit = checkSuggestionLimit(getClientIp(req));
+        if (!limit.allowed) {
+          return sendJson(
+            res,
+            429,
+            { error: 'Terlalu banyak kiriman masukan dari alamat ini. Coba lagi nanti.' },
+            { 'Retry-After': String(limit.retryAfterSec) }
+          );
+        }
         const body = await readJsonBody(req, 32 * 1024);
         const created = store.createSuggestion(body);
         return sendJson(res, 201, { suggestion: created });

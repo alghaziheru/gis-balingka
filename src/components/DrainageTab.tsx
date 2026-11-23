@@ -1,5 +1,6 @@
 import { useId } from 'react';
 import { Building2, ExternalLink } from 'lucide-react';
+import { REGION } from '../config/region';
 import { I18N } from '../i18n/translations';
 import type { DrainageStatus, Language, LayerToggles, ViewMode } from '../types/gis';
 import { InfoTooltip } from './InfoTooltip';
@@ -58,7 +59,7 @@ export function DrainageTab({
       href: 'https://www.bmkg.go.id'
     },
     {
-      name: 'BPBD Kab. Agam & BNPB',
+      name: `${REGION.authorities.bpbdLabel} & BNPB`,
       role: isEn
         ? 'Official disaster status declarations, early warnings & evacuation directives'
         : 'Penetapan status bencana, informasi potensi bahaya & arahan evakuasi resmi',
@@ -72,7 +73,7 @@ export function DrainageTab({
       href: 'https://vsi.esdm.go.id'
     },
     {
-      name: isEn ? 'Wali Nagari Balingka Office & Wali Jorong' : 'Kantor Wali Nagari Balingka & Wali Jorong',
+      name: isEn ? REGION.authorities.localOfficeEn : REGION.authorities.localOfficeId,
       role: isEn
         ? 'Local coordination, field infrastructure verification & community updates'
         : 'Koordinasi lapangan, verifikasi saluran setempat & informasi resmi nagari',

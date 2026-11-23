@@ -1,8 +1,12 @@
 # Nagari Balingka Community GIS
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-0284c7.svg)](./LICENSE)
+[![CI](https://github.com/alghaziheru/gis-balingka/actions/workflows/ci.yml/badge.svg)](https://github.com/alghaziheru/gis-balingka/actions/workflows/ci.yml)
+[![Node >= 24](https://img.shields.io/badge/Node.js-%3E%3D24-047857.svg)](https://nodejs.org/)
 
-Open-source (**MIT**) public spatial data viewer, terrain & drainage inventory, computational terrain-flow visualizer, and collaborative waterway & Jorong editor focused exclusively on **Nagari Balingka** (`29.89 km²`, `1,032–2,869 m dpl`, Kec. IV Koto, Kab. Agam, West Sumatra).
+Open-source (**MIT**) public spatial data viewer, terrain & drainage inventory, computational terrain-flow visualizer, and collaborative waterway & boundary editor — built for **Nagari Balingka** (`29.89 km²`, `1,032–2,869 mdpl`, Kec. IV Koto, Kab. Agam, West Sumatra) and configurable for **any Indonesian Desa / Nagari** via [`region.config.json`](./region.config.json).
+
+![Nagari Balingka Community GIS — Desktop View](./docs/screenshot-desktop.png)
 
 > **Scope & Role Boundary:** This application displays open geospatial datasets (BIG, Pemkab Agam, ESA/Copernicus, OpenStreetMap) and field-recorded infrastructure data alongside computational terrain visualizations — it **does not** issue disaster predictions, hazard declarations, or official evacuation designations. Official hazard assessments and emergency directives belong exclusively to **BNPB**, **BPBD Kab. Agam**, **BMKG**, **PVMBG**, and **Wali Nagari Balingka**.
 
@@ -12,26 +16,27 @@ Clipped strictly to the official **Badan Informasi Geospasial (BIG) June 2026** 
 
 ## Key Capabilities
 
-1. **Two-Tier Interface (`Ringkas` & `Lengkap`) + Standardized Cartographic Legend**
-   - **Ringkas (default)**: Plain-language public mode with 3 tabs (**Peta**, **Simulasi**, **Drainase**), Jorong quick-jump dropdown (*Balingka*, *Subarang*, *Koto Hilalang*, *Pahambatan*), unified **Legenda & Lapisan Peta** with matching cartographic badge icons (`LegendIcon`), and mobile **Legenda** popover.
-   - **Lengkap**: Adds 2D/3D toggle, 6 surface modes (**Satelit**, **Elevasi**, **Relief**, **Lereng**, **Topo**, **Jalan**), 3D vertical exaggeration, **BIG RBI 50K** rivers, **KLHK SK 35** protected forest, **Andosol/Kambisol** soil & geology overlays, **Drop Raindrop (*Cek Arah Air*)**, **Elevation Profile (*Ukur Tanjakan*)**, live telemetry dock, tap-to-inspect **Pemkab Agam Open Map Attributes**, and the **Editor** tab.
-   - **Info & Data Drawer**: Bilingual (`ID` / `EN`) 3-tab modal covering a 30-second public guide + explicit role boundaries, terrain/hydrology methodology, and public API + GeoJSON bundle downloads.
+1. **Two-Tier Interface (`Ringkas` & `Lengkap`) + Floating Active Map Legend**
+   - **Ringkas (default)**: Plain-language public mode with 3 tabs (**Peta**, **Simulasi**, **Drainase**), Jorong quick-jump dropdown (*Balingka*, *Subarang*, *Koto Hilalang*, *Pahambatan*), layer quick actions (*Bawaan* / *Matikan Semua*), unified **Lapisan Peta** with matching cartographic badge icons (`LegendIcon`), desktop collapsible **Legenda Peta** (`ActiveMapLegend`), and mobile **Legenda** popover.
+   - **Lengkap**: Adds 2D/3D toggle, 6 surface modes (**Satelit**, **Elevasi**, **Relief**, **Lereng**, **Topo**, **Jalan**), 3D relief height scaling, **BIG RBI 50K** rivers, **KLHK SK 35** protected forest, **Andosol/Kambisol** soil & geology overlays, **Drop Raindrop (*Cek Arah Air*)**, **Elevation Profile (*Ukur Tanjakan*)**, tap-to-inspect **Pemkab Agam Open Map Attributes**, and the **Editor** tab.
+   - **Clean HUD & Unified Map Controls**: Top-right **Pengaturan** gear popover consolidates view mode (`Ringkas`/`Lengkap`), language (`ID`/`EN`), **Masukan**, and **Info & Data**; bottom-right stacks `+ / − / Compass` above an inline metric scale, live elevation/slope telemetry (`mdpl`), and `(i)` attribution popover.
+   - **Info & Data Drawer**: Bilingual (`ID` / `EN`) 4-tab modal covering a public guide + explicit role boundaries (**Tentang & Panduan**), terrain/hydrology methodology (**Data & Metodologi**), a searchable bilingual **Glosarium** (`18` GIS, hydrology, and local terms with reference links), and **Sumber Terbuka** (GitHub repository link, MIT stack & data provenance).
 
 2. **Computational Terrain Flow Model Visualizer (`Simulasi`)**
-   - Driven by interactive **Rainfall Intensity** (`10–150 mm/jam`) × **Storm Duration** (`15 mnt – 6 jam`) input sliders, timeline playback, and intensity-scaled visual rainfall overlay (`RainOverlay`).
-   - Evaluates a 4-stage computational model via `CascadeEngine`: **SCS-CN** theoretical runoff from ESA WorldCover 10m → **D8 headwater-to-valley travel wave** (`~88 min` across Gunung Singgalang catchments) → **HAND** low-terrain basin index (clogged vs. cleared crossing parameters) → **steep-slope saturation model with Pemkab Agam open-map inputs**.
-   - **Clear non-authority framing**: Displays explicit computational-model disclaimers (`BUKAN prediksi/peringatan resmi BNPB/BPBD/BMKG`), neutral model-level badges (`Intensitas Rendah / Sedang / Tinggi / Sangat Tinggi`), and polygon intersection counts (`Bangunan di poligon model`) without claiming house-level predictions.
-   - **Theoretical Channel Capacity Calculator (Manning, `Lengkap`)**: Evaluates measured pre/post channel widths (`Manning` + *Specific Stream Power* `ω ≥ 300 / 1000 W/m²` with `±25%` ranges) as theoretical open-channel hydraulic reference equations.
+   - Driven by interactive **Curah hujan / Intensitas curah hujan** (`10–150 mm/jam`) × **Lama hujan / Durasi hujan** (`15 mnt – 6 jam`) sliders, quick scenarios (*Hujan Biasa*, *Hujan Hulu Gunung*, *Hujan Sangat Ekstrem*, *Atur manual*), timeline playback, toggleable **Lapisan Sungai di Simulasi** (verified waterways & BIG RBI 50K rivers), and intensity-scaled visual rainfall overlay (`RainOverlay`).
+   - Evaluates a 4-stage computational model via `CascadeEngine`: **SCS-CN** theoretical runoff from ESA WorldCover 10m → **D8 headwater-to-valley travel wave** (`~88 min` across Gunung Singgalang catchments) → **HAND** low-terrain basin index (clogged vs. cleared crossing parameters) → **steep-slope saturation model with Pemkab Agam open-map inputs**, with downstream waterway flow continuity and Satellite-adaptive overlay contrast (`mapPalette.ts`).
+   - **Clear non-authority framing**: Displays explicit computational-model disclaimers (`BUKAN prediksi/peringatan resmi BNPB/BPBD/BMKG`), neutral intensity badges (`Intensitas Rendah / Sedang / Tinggi / Sangat Tinggi`), and polygon intersection counts without claiming house-level predictions.
+   - **Channel Capacity Calculator (Manning, `Lengkap`)**: Evaluates measured pre/post channel widths (`Manning` + *Specific Stream Power* `ω ≥ 300 / 1000 W/m²` with `±25%` ranges) as theoretical open-channel hydraulic reference equations.
 
 3. **Drainage Inventory & Official Agency References (`Drainase`)**
    - Inspects **`27` DEM road–channel crossings (`4` bridges)** plus **BIG RBI 50K** culverts/bridges/weirs filtered by field physical status (`Normal`, `Tersumbat`, `Rusak`, `Rusak Berat`), paired with **`8` elevated public facilities (BIG RBI 50K)**, **`3` steep DEM slope points (>38%)**, quick map focus buttons, and an **Official References & Contacts** directory (**BMKG**, **BPBD Kab. Agam & BNPB**, **PVMBG**, **Kantor Wali Nagari & Wali Jorong**).
 
 4. **2-Layer Waterway, Structure & Jorong Editor + SQLite Audit Trail (`Editor` in `Lengkap` mode)**
-   - **Waterways (`Jalur Air`)**: Edit verified solid streams (drag vertices, `+` midpoint insertion, flow-direction markers, pre/post cross-section width & depth fields), draw new channels, or **1-click Promote / Suppress** misaligned **BIG RBI 50K** and **DEMNAS** dashed reaches.
-   - **Structures & Jorong Boundaries**: Create/edit culverts & bridges with condition status, draw or import **Jorong Boundary GeoJSON polygons** transparently tagged **`Indicative`** vs. **`Verified`**, and re-run offline stream-burned DEM recomputation (`POST /api/hydrology/recompute`).
-   - **Immutable SQLite Audit Trail (`Riwayat`)**: Built on Node 24's built-in `node:sqlite` (`data/balingka.db`), storing full `before`/`after` snapshots, timestamps, and reasons with **2-click Revert** and full **GeoJSON + Audit Bundle export**.
+   - **Waterways (`Jalur Air`)**: Edit verified solid streams (drag vertices, `+` midpoint insertion, flow-direction markers, pre/post cross-section width & depth fields), draw new channels, or **1-click verify / suppress** misaligned **BIG RBI 50K** and **DEMNAS** dashed reaches.
+   - **Structures & Jorong Boundaries**: Create/edit culverts & bridges with condition status, draw or import **Jorong Boundary GeoJSON polygons** transparently tagged **`Indicative`** vs. **`Verified`**, and re-run offline stream-burned DEM recomputation (**Sisipkan ke DEM & Hitung Ulang**, `POST /api/hydrology/recompute`).
+   - **Immutable SQLite Audit Trail (`Riwayat`)**: Built on Node 24's built-in `node:sqlite` (`data/balingka.db`), storing full `before`/`after` snapshots, timestamps, localized action badges, and reasons with **2-click Revert** and editor-side **GeoJSON + History Bundle export**.
 
-5. **Zero-Login Citizen Feedback (`Feedback`)**
+5. **Zero-Login Citizen Feedback (`Masukan`)**
    - Anyone can inspect all layers, run simulations, and submit usability feedback or local observations (`POST /api/suggestions`) without logging in.
 
 ---
@@ -47,31 +52,46 @@ gis-balingka/
 ├── src/
 │   ├── components/
 │   │   ├── MapView.tsx        # MapLibre 2D/3D map, Nagari mask, cartographic badges & vertex editor
+│   │   ├── ActiveMapLegend.tsx # Desktop collapsible floating legend reflecting active basemap & layers
 │   │   ├── RainOverlay.tsx    # Intensity-scaled HTML5 canvas falling rain animation
 │   │   ├── LegendIcon.tsx     # Synchronized canvas/SVG map symbol badges across sidebar & mobile legend
+│   │   ├── InfoTooltip.tsx    # Portal-anchored contextual info popovers
 │   │   ├── TerrainTab.tsx / SimulationTab.tsx / DrainageTab.tsx / EditorTab.tsx
-│   │   ├── WaterwayEditorPanel.tsx / JorongEditorPanel.tsx / AuditLogPanel.tsx / EditorUnlockModal.tsx
+│   │   ├── WaterwayEditorPanel.tsx / StructureEditorPanel.tsx / JorongEditorPanel.tsx
+│   │   ├── AuditLogPanel.tsx / EditorUnlockModal.tsx
 │   │   ├── TopHud.tsx / TelemetryDock.tsx / ElevationProfileModal.tsx
 │   │   └── FeedbackModal.tsx / InfoDataModal.tsx
+│   ├── config/
+│   │   └── region.ts          # Typed loader for root region.config.json (multi-region adaptability)
+│   ├── data/
+│   │   └── glossary.ts        # Bilingual searchable glossary (GIS, hydrology & local Nagari terms)
 │   ├── lib/
 │   │   ├── api.ts             # Typed REST client + sessionStorage passphrase + static read-only fallback
 │   │   ├── cascadeEngine.ts   # Real-time 4-stage rainfall-flood-landslide cascade evaluator (masked to Nagari)
 │   │   ├── channelHydraulics.ts # Manning + Specific Stream Power bank-widening rain threshold estimator
 │   │   ├── agamLookup.ts      # Spatial point-in-Nagari & Pemkab Agam soil/geology/hazard profile lookup
 │   │   ├── demClient.ts       # Client-side bilinear DEM interpolation, raindrop tracer & profile sampler
-│   │   └── storage.ts         # Browser localStorage helpers for preparedness checklist
-│   ├── i18n/translations.ts   # Full Indonesian (ID) & English (EN) copy
+│   │   ├── geometry.ts        # Line snapping, downhill orientation & runoff-to-waterway merge utilities
+│   │   ├── mapPalette.ts      # Basemap-adaptive high-contrast overlay palettes (Satellite vs daylight)
+│   │   └── storage.ts         # Browser localStorage helpers
+│   ├── i18n/translations.ts   # Full Indonesian (ID) & English (EN) copy (Ringkas & Lengkap registers)
 │   └── types/gis.ts           # Shared TypeScript domain interfaces
 ├── scripts/
 │   ├── extract-big-ref.py     # Extracts official BIG Nagari polygon & RBI 50K Kab. Agam (.gdb/.zip)
 │   ├── lib/hydrology.mjs      # Priority-Flood, D8, Horn slope, HAND, Chaikin, polygon mask & stream-burning
 │   ├── lib/recompute-hydrology.mjs # Live server handler for offline stream-burned DEM recomputation
-│   └── prepare-data.mjs       # Full offline DEMNAS/WorldCover/Sentinel-2/Open Buildings/Agam asset builder
+│   ├── prepare-data.mjs       # Full offline DEMNAS/WorldCover/Sentinel-2/Open Buildings/Agam asset builder
+│   ├── sync-seed.mjs          # Export SQLite verified waterways & structures back to Git GeoJSON snapshots
+│   └── import-seed.mjs        # Import Git GeoJSON snapshots into SQLite without overwriting suggestions
 ├── public/data/               # Pre-built clipped 29.89 km² Nagari Balingka DEM, GeoJSONs & PNG rasters (~11 MB)
 ├── tests/
 │   ├── hydrology.test.mjs     # Hydrology, cascade invariants, Agam integration & asset integrity tests
 │   └── api.test.mjs           # SQLite CRUD, Jorong boundaries, recompute, revert & passphrase auth tests
 ├── DATA_SOURCES.md            # Detailed data provenance, attribution & BIG Tanah Air Indonesia rebuild guide
+├── CONTRIBUTING.md            # Contribution guidelines & step-by-step guide to adapt for another Desa/Nagari
+├── SECURITY.md                # Vulnerability disclosure & VPS deployment hardening checklist
+├── region.config.json         # Active region config (Nagari Balingka by default)
+├── region.config.example.json # Starter template for adapting to another Indonesian Desa/Nagari
 └── .env.example               # Production passphrase, port, DB path & custom imagery env template
 ```
 
@@ -108,6 +128,18 @@ pnpm run dev              # Terminal 2: starts Vite dev server with /api proxy o
 
 ---
 
+## Run for Your Own Desa / Nagari
+
+Want to deploy this GIS for another Indonesian **Desa, Nagari, or Kelurahan**?
+
+1. Copy [`region.config.example.json`](./region.config.example.json) to [`region.config.json`](./region.config.json) and update your region's name, `bbox`, sub-region camera presets (*Jorong / Dusun / RW*), local authority labels, and `regionalOverlays.enabled: false` (automatically hides Agam-specific overlays).
+2. Optionally drop your official boundary GeoJSON at `raw-data/region-boundary.geojson` (and BIG DEMNAS GeoTIFF if available — otherwise `prepare-data` automatically fetches **Copernicus DEM GLO-30**, **ESA WorldCover 10m**, and **OpenStreetMap** for your `bbox`).
+3. Run `pnpm run prepare-data && pnpm run build && pnpm start`.
+
+See **[`CONTRIBUTING.md`](./CONTRIBUTING.md#3-run-this-gis-for-your-own-desa--nagari-panduan-adaptasi-wilayah-lain)** for the full step-by-step guide.
+
+---
+
 ## VPS Production Deployment & Security
 
 Deploy the full app + SQLite backend as a single Node process (no external database service required):
@@ -129,7 +161,7 @@ pnpm start                # Serves dist/ and /api/* together on PORT (default 87
 
 ## Hydro-Conditioning (Stream Burning) & Custom Data
 
-- **Re-route hydrology after waterway corrections**: Click **Hitung Ulang Aliran** in `Editor` (calls `POST /api/hydrology/recompute`), or run offline via CLI:
+- **Re-route hydrology after waterway corrections**: Click **Sisipkan ke DEM & Hitung Ulang** in `Editor` (calls `POST /api/hydrology/recompute`), or run offline via CLI:
   ```bash
   pnpm run prepare-data
   ```
@@ -154,7 +186,7 @@ pnpm start                # Serves dist/ and /api/* together on PORT (default 87
 | `POST /api/dem-segments/suppress` / `DELETE` | Editor Passphrase | Hide or restore misaligned DEM runoff segments |
 | `POST /api/hydrology/recompute` | Editor Passphrase | Burn verified waterways into DEM copy and recompute HAND + cascade assets |
 | `GET /api/audit` / `POST /api/audit/:id/revert` | Public / Passphrase | Chronological change log with full before/after snapshots & 2-click revert |
-| `GET /api/suggestions` / `POST /api/suggestions` / `PATCH` | Public / Public / Passphrase | List, submit (zero-login), and moderate general user feedback |
+| `GET /api/suggestions` / `POST` / `PATCH` | Passphrase / Public / Passphrase | Submit public citizen feedback (zero-login, rate-limited); read & moderate behind `ADMIN_PASSPHRASE` |
 | `GET /api/export/bundle` | Public | Download JSON bundle (verified GeoJSON + structures + audit logs) |
 
 ---
@@ -166,6 +198,12 @@ pnpm run typecheck # TypeScript strict check
 pnpm test          # Unit hydrology, cascade invariants, Agam integration & SQLite API/auth tests
 pnpm run build     # Production client bundle
 ```
+
+---
+
+## Contributing & Security
+
+Contributions, bug reports, field data improvements, and regional adaptations are welcome in **English or Bahasa Indonesia** — please see [`CONTRIBUTING.md`](./CONTRIBUTING.md), [`CODE_OF_CONDUCT.md`](./CODE_OF_CONDUCT.md), and [`SECURITY.md`](./SECURITY.md).
 
 ---
 

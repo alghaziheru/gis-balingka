@@ -147,6 +147,20 @@ export function recomputeHydrologyFromLocalData({
       desc_en: String(f.properties.desc_en || '')
     }));
 
+  const HIGHWAY_ID = {
+    trunk: 'jalan nasional',
+    primary: 'jalan utama',
+    secondary: 'jalan kolektor',
+    tertiary: 'jalan penghubung',
+    residential: 'jalan permukiman',
+    unclassified: 'jalan nagari',
+    service: 'jalan akses',
+    track: 'jalan tanah/kebun',
+    path: 'jalan setapak',
+    footway: 'jalan setapak'
+  };
+  const formatHighwayId = hw => HIGHWAY_ID[String(hw || '').toLowerCase()] || 'jalan';
+
   const rawDraftBottlenecks = [
     ...preservedBigCrossings,
     ...crossings
@@ -163,7 +177,7 @@ export function recomputeHydrologyFromLocalData({
         status: 'unverified',
         name_id: c.roadName ? `Perlintasan ${c.roadName}` : `Persilangan Jalan–Alur #${idx + 1}`,
         name_en: c.roadName ? `Crossing at ${c.roadName}` : `Road–Stream Crossing #${idx + 1}`,
-        desc_id: `Titik silang jalan (${c.highway}) & alur komputasi DEM (belum diverifikasi lapangan).`,
+        desc_id: `Titik silang ${formatHighwayId(c.highway)} & alur perkiraan DEM (belum dicek lapangan).`,
         desc_en: `DEM road (${c.highway}) & computed channel crossing (unverified in the field).`
       })),
     ...bridgeFeatures
@@ -180,7 +194,7 @@ export function recomputeHydrologyFromLocalData({
         status: 'unverified',
         name_id: b.properties.name,
         name_en: String(b.properties.name || '').replace(/^Jembatan/, 'Bridge'),
-        desc_id: `Jembatan jalan (${b.properties.highway}) dari OpenStreetMap — belum dicek lapangan.`,
+        desc_id: `Jembatan ${formatHighwayId(b.properties.highway)} dari OpenStreetMap — belum dicek lapangan.`,
         desc_en: `OpenStreetMap bridge (${b.properties.highway}) — unverified in the field.`
       }))
   ];

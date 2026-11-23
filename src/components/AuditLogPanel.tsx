@@ -14,12 +14,16 @@ interface AuditLogPanelProps {
 
 const ACTION_BADGE: Record<string, string> = {
   seed: 'bg-[#475569]/12 text-[#334155]',
+  import_seed: 'bg-[#475569]/12 text-[#334155]',
   create: 'bg-[#047857]/12 text-[#047857]',
   update: 'bg-[#0369a1]/12 text-[#0369a1]',
   create_structure: 'bg-[#047857]/12 text-[#047857]',
   verify_crossing: 'bg-[#0284c7]/14 text-[#0369a1]',
   update_structure: 'bg-[#0369a1]/12 text-[#0369a1]',
   delete_structure: 'bg-[#b91c1c]/12 text-[#b91c1c]',
+  create_jorong: 'bg-[#047857]/12 text-[#047857]',
+  update_jorong: 'bg-[#0369a1]/12 text-[#0369a1]',
+  delete_jorong: 'bg-[#b91c1c]/12 text-[#b91c1c]',
   promote_dem: 'bg-[#0284c7]/14 text-[#0369a1]',
   suppress_dem: 'bg-[#b45309]/14 text-[#b45309]',
   restore_dem: 'bg-[#047857]/12 text-[#047857]',
@@ -29,9 +33,44 @@ const ACTION_BADGE: Record<string, string> = {
   recompute_hydrology: 'bg-[#0369a1]/12 text-[#0369a1]'
 };
 
+const ACTION_LABEL: Record<string, { id: string; en: string }> = {
+  seed: { id: 'Data Awal', en: 'Initial Data' },
+  import_seed: { id: 'Impor Data', en: 'Data Import' },
+  create: { id: 'Tambah Jalur', en: 'Add Waterway' },
+  update: { id: 'Ubah Jalur', en: 'Update Waterway' },
+  delete: { id: 'Hapus Jalur', en: 'Delete Waterway' },
+  create_structure: { id: 'Tambah Titik', en: 'Add Structure' },
+  verify_crossing: { id: 'Verifikasi Titik', en: 'Verify Crossing' },
+  update_structure: { id: 'Ubah Titik', en: 'Update Structure' },
+  delete_structure: { id: 'Hapus Titik', en: 'Delete Structure' },
+  create_jorong: { id: 'Tambah Jorong', en: 'Add Jorong' },
+  update_jorong: { id: 'Ubah Jorong', en: 'Update Jorong' },
+  delete_jorong: { id: 'Hapus Jorong', en: 'Delete Jorong' },
+  promote_dem: { id: 'Verifikasi DEM', en: 'Verify DEM' },
+  suppress_dem: { id: 'Sembunyikan DEM', en: 'Hide DEM' },
+  restore_dem: { id: 'Pulihkan DEM', en: 'Restore DEM' },
+  revert: { id: 'Pulihkan Data', en: 'Revert' },
+  resolve_suggestion: { id: 'Tindak Lanjut', en: 'Resolved' },
+  recompute_hydrology: { id: 'Hitung Ulang DEM', en: 'Recompute DEM' }
+};
+
+const STATUS_LABEL: Record<string, { id: string; en: string }> = {
+  unverified: { id: 'Belum Dicek', en: 'Unverified' },
+  normal: { id: 'Normal', en: 'Normal' },
+  clogged: { id: 'Tersumbat', en: 'Clogged' },
+  damaged: { id: 'Rusak', en: 'Damaged' },
+  critical: { id: 'Rusak Berat', en: 'Severe' }
+};
+
+function formatStatus(val: unknown, isEn: boolean): string {
+  const key = String(val || '');
+  return STATUS_LABEL[key]?.[isEn ? 'en' : 'id'] || key;
+}
+
 function summarizeDiff(log: AuditLogEntry, isEn: boolean): string {
   const b = log.before as Record<string, unknown> | null;
   const a = log.after as Record<string, unknown> | null;
+  const ptUnit = isEn ? 'pts' : 'titik';
   if (log.action === 'seed') {
     const count = Array.isArray(a?.seeded) ? a.seeded.length : 0;
     return isEn ? `Seeded ${count} OSM waterways` : `Data awal ${count} sungai OSM`;
@@ -39,7 +78,9 @@ function summarizeDiff(log: AuditLogEntry, isEn: boolean): string {
   if (log.action === 'recompute_hydrology') {
     const cells = Number(a?.burnedCellCount || 0);
     const ww = Number(a?.verifiedWaterwayCount || 0);
-    return isEn ? `Burned ${ww} waterways (${cells} DEM cells)` : `Bakar ${ww} sungai (${cells} sel DEM)`;
+    return isEn
+      ? `Embedded ${ww} waterways (${cells} DEM cells)`
+      : `Sisipkan ${ww} sungai (${cells} sel DEM disesuaikan)`;
   }
   if (log.action === 'suppress_dem') {
     return isEn ? 'DEM segment hidden from reference' : 'Perkiraan DEM disembunyikan';
@@ -51,15 +92,18 @@ function summarizeDiff(log: AuditLogEntry, isEn: boolean): string {
     const bLen = Number(b.length_m || 0);
     const aLen = Number(a.length_m || 0);
     const ptsChange =
-      b.coordinates.length !== a.coordinates.length ? ` · ${b.coordinates.length}→${a.coordinates.length} pts` : '';
-    const statusChange = b.status !== a.status ? ` · ${b.status}→${a.status}` : '';
-    return `${bLen}m → ${aLen}m${ptsChange}${statusChange}`;
+      b.coordinates.length !== a.coordinates.length
+        ? ` · ${b.coordinates.length}→${a.coordinates.length} ${ptUnit}`
+        : '';
+    const statusChange =
+      b.status !== a.status ? ` · ${formatStatus(b.status, isEn)}→${formatStatus(a.status, isEn)}` : '';
+    return `${bLen} m → ${aLen} m${ptsChange}${statusChange}`;
   }
   if (!b && a && typeof a.length_m === 'number') {
-    return `+${a.length_m}m (${Array.isArray(a.coordinates) ? a.coordinates.length : 0} pts)`;
+    return `+${a.length_m} m (${Array.isArray(a.coordinates) ? a.coordinates.length : 0} ${ptUnit})`;
   }
   if (b && !a && typeof b.length_m === 'number') {
-    return isEn ? `Removed (${b.length_m}m)` : `Dihapus (${b.length_m}m)`;
+    return isEn ? `Removed (${b.length_m} m)` : `Dihapus (${b.length_m} m)`;
   }
   return '';
 }
@@ -126,7 +170,7 @@ export function AuditLogPanel({
                           ACTION_BADGE[log.action] || 'bg-[#f2f3ef] text-[#434d49]'
                         }`}
                       >
-                        {log.action}
+                        {ACTION_LABEL[log.action]?.[isEn ? 'en' : 'id'] || log.action}
                       </span>
                       <strong className="truncate text-[13px] text-[#161c1a]">{log.entity_name}</strong>
                     </div>

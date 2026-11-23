@@ -1,20 +1,21 @@
 import { useEffect, useState } from 'react';
-import { BookOpen, BookText, Code2, Database, Download, ExternalLink, PlayCircle, Search, ShieldAlert, X } from 'lucide-react';
+import { BookOpen, BookText, Code2, Database, ExternalLink, PlayCircle, Search, ShieldAlert, X } from 'lucide-react';
 import { GLOSSARY_ENTRIES } from '../data/glossary';
+import { REGION } from '../config/region';
 import { I18N } from '../i18n/translations';
-import { fetchExportBundle } from '../lib/api';
 import type { DatasetMetadata, Language } from '../types/gis';
 
 export type InfoModalTab = 'guide' | 'method' | 'glossary' | 'api';
+
+const GITHUB_REPO_URL = REGION.repositoryUrl;
+const GITHUB_DATA_SOURCES_URL = `${GITHUB_REPO_URL}/blob/main/DATA_SOURCES.md`;
 
 interface InfoDataModalProps {
   open: boolean;
   initialTab?: InfoModalTab;
   lang: Language;
   metadata: DatasetMetadata | null;
-  apiAvailable: boolean;
   verifiedCount: number;
-  onNotify: (msg: string) => void;
   onClose: () => void;
 }
 
@@ -28,13 +29,10 @@ function InfoDataModalContent({
   initialTab = 'guide',
   lang,
   metadata,
-  apiAvailable,
   verifiedCount,
-  onNotify,
   onClose
 }: InfoDataModalProps) {
   const [activeTab, setActiveTab] = useState<InfoModalTab>(initialTab);
-  const [downloading, setDownloading] = useState(false);
   const [glossaryQuery, setGlossaryQuery] = useState('');
 
   useEffect(() => {
@@ -52,27 +50,6 @@ function InfoDataModalContent({
 
   const t = I18N[lang];
   const isEn = lang === 'en';
-
-  const handleDownloadBundle = async () => {
-    setDownloading(true);
-    try {
-      const bundle = await fetchExportBundle();
-      const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = 'balingka-waterways-audit-bundle.json';
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
-      onNotify(t.toastExported);
-    } catch (err) {
-      onNotify(err instanceof Error ? err.message : 'Download failed');
-    } finally {
-      setDownloading(false);
-    }
-  };
 
   const tabs: { id: InfoModalTab; label: string; Icon: typeof BookOpen }[] = [
     { id: 'guide', label: t.infoTabGuide, Icon: BookOpen },
@@ -98,25 +75,17 @@ function InfoDataModalContent({
   });
 
   const softwareRows = [
-    { name: 'React 19, TypeScript, Vite & Tailwind CSS', role: isEn ? 'Open-source web UI & build tools' : 'Antarmuka web & sistem build terbuka', license: 'MIT' },
+    { name: 'React 19, TypeScript, Vite & Tailwind CSS', role: isEn ? 'Open-source web UI & build tools' : 'Antarmuka web & alat pengembangan terbuka', license: 'MIT' },
     { name: 'MapLibre GL JS & Lucide Icons', role: isEn ? 'Interactive 2D/3D map engine & icons' : 'Mesin peta 2D/3D interaktif & ikon', license: 'BSD-3 / ISC' },
     { name: 'Node.js SQLite & Pure-Node Hydrology', role: isEn ? 'DEM processing, HAND model & audit storage' : 'Pengolahan elevasi, model HAND & riwayat data', license: 'MIT' },
-    { name: 'BIG DEMNAS (~8.3m) & RBI 50K Agam (Dec 2022)', role: isEn ? 'High-resolution DEM, rivers, culverts, bridges & public shelters' : 'Elevasi tanah ~8,3m, sungai, gorong-gorong, jembatan & fasilitas umum resmi BIG', license: 'Public Gov Data (BIG)' },
+    { name: 'BIG DEMNAS (~8.3m) & RBI 50K Agam (Dec 2022)', role: isEn ? 'High-resolution DEM, rivers, culverts, bridges & public shelters' : 'Elevasi tanah ~8,3 m, sungai, gorong-gorong, jembatan & fasilitas umum resmi BIG', license: 'Public Gov Data (BIG)' },
     { name: 'BIG Batas Wilayah Desa/Nagari (June 2026)', role: isEn ? 'Official Nagari Balingka polygon (13.06.05.2003)' : 'Poligon resmi batas Nagari Balingka (13.06.05.2003)', license: 'Public Gov Data (BIG)' },
-    { name: 'ESA WorldCover 10m v200', role: isEn ? '10m forest, cropland & built-up land cover' : 'Tutupan lahan hutan, kebun, sawah & terbangun (10m)', license: 'CC-BY-4.0' },
-    { name: 'Copernicus Sentinel-2 L2A (10m)', role: isEn ? 'Pre vs post vegetation-index (NDVI) difference (Dec 2022 vs Jul 2024)' : 'Selisih indeks vegetasi (NDVI) satelit antara 24 Des 2022 dan 11 Jul 2024 (10m)', license: 'Copernicus Open License' },
+    { name: 'ESA WorldCover 10m v200', role: isEn ? '10m forest, cropland & built-up land cover' : 'Tutupan lahan hutan, kebun, sawah & terbangun (10 m)', license: 'CC-BY-4.0' },
+    { name: 'Copernicus Sentinel-2 L2A (10m)', role: isEn ? 'Pre vs post vegetation-index (NDVI) difference (Dec 2022 vs Jul 2024)' : 'Selisih indeks vegetasi (NDVI) satelit antara 24 Des 2022 dan 11 Jul 2024 (10 m)', license: 'Copernicus Open License' },
     { name: 'OpenStreetMap & OpenTopoMap', role: isEn ? 'Buildings, roads, rivers, bridges & topo basemap' : 'Bangunan, jalan, sungai, jembatan & peta topografi', license: 'ODbL / CC-BY-SA' },
     { name: 'Google Open Buildings v3', role: isEn ? 'Rural building footprint supplement (confidence >= 0.75)' : 'Pelengkap tapak bangunan pedesaan (kepercayaan >= 0,75)', license: 'CC-BY-4.0' },
     { name: 'Pemkab Agam Open GIS (ArcGIS Web Maps)', role: isEn ? 'Ground-movement map, soil (Andosol), geology, BMKG rainfall & SK 35 forest' : 'Peta gerakan tanah, jenis tanah (Andosol), geologi, curah hujan BMKG & hutan SK 35', license: 'Public Gov Data' },
     { name: 'Esri World Imagery', role: isEn ? 'Satellite basemap (replaceable with drone tiles)' : 'Citra satelit (dapat diganti citra drone lokal)', license: 'Free w/ Attribution' }
-  ];
-
-  const apiEndpoints = [
-    { method: 'GET', path: '/api/waterways', desc: isEn ? 'Verified waterways GeoJSON & hidden DEM IDs' : 'GeoJSON sungai terverifikasi & segmen DEM tersembunyi' },
-    { method: 'GET', path: '/api/audit', desc: isEn ? 'Full chronological change log with snapshots' : 'Riwayat perubahan lengkap beserta snapshot sebelum/sesudah' },
-    { method: 'GET', path: '/api/suggestions', desc: isEn ? 'General user feedback entries' : 'Daftar masukan (feedback) umum pengguna' },
-    { method: 'POST', path: '/api/suggestions', desc: isEn ? 'Submit general feedback (no auth)' : 'Kirim masukan umum (tanpa login)' },
-    { method: 'GET', path: '/api/export/bundle', desc: isEn ? 'Download combined GeoJSON + audit JSON' : 'Unduh gabungan GeoJSON terverifikasi + log audit' }
   ];
 
   return (
@@ -197,7 +166,7 @@ function InfoDataModalContent({
                     <strong className="text-[#161c1a]">{isEn ? 'Simulation tab:' : 'Tab Simulasi:'}</strong>{' '}
                     {isEn
                       ? 'Explore a computational terrain flow model across rainfall and channel-state input parameters (educational visualization only, not a hazard prediction).'
-                      : 'Eksplorasi model visualisasi aliran topografi berdasarkan variasi parameter input hujan dan saluran (hanya untuk visualisasi komputasi, bukan prediksi bencana).'}
+                      : 'Eksplorasi visualisasi aliran topografi berdasarkan variasi skenario hujan dan kondisi saluran (hanya untuk simulasi komputasi, bukan prediksi bencana).'}
                   </li>
                   <li>
                     <strong className="text-[#161c1a]">{isEn ? 'Drainage tab:' : 'Tab Drainase:'}</strong>{' '}
@@ -206,10 +175,10 @@ function InfoDataModalContent({
                       : 'Saring gorong-gorong dan jembatan berdasarkan kondisi fisik lapangan, lihat titik kemiringan DEM maupun fasilitas umum BIG RBI, serta rujukan instansi berwenang.'}
                   </li>
                   <li>
-                    <strong className="text-[#161c1a]">{isEn ? 'Feedback button:' : 'Tombol Feedback:'}</strong>{' '}
+                    <strong className="text-[#161c1a]">{isEn ? 'Feedback button:' : 'Tombol Masukan:'}</strong>{' '}
                     {isEn
                       ? 'Share general suggestions on usability, map clarity, or new features without logging in.'
-                      : 'Kirim saran umum terkait kemudahan tampilan, kejelasan data, atau usulan fitur tanpa perlu login.'}
+                      : 'Kirim saran umum terkait kemudahan tampilan, kejelasan data, atau usulan fitur tanpa perlu masuk.'}
                   </li>
                 </ul>
               </div>
@@ -278,22 +247,26 @@ function InfoDataModalContent({
                   {isEn ? 'Hydrology & terrain pipeline' : 'Cara kerja pemodelan topografi'}
                 </h3>
                 <p className="m-0 text-[13px] text-[#434d49]">
-                  <strong className="text-[#161c1a]">1. DEM & Stream Burning:</strong>{' '}
+                  <strong className="text-[#161c1a]">
+                    {isEn ? '1. DEM & Stream Burning:' : '1. Data Elevasi DEM & Penyisipan Sungai (Stream Burning):'}
+                  </strong>{' '}
                   {isEn
                     ? 'Elevation uses BIG DEMNAS (~8.3m terrain resolution). Verified community waterways are gently burned into the elevation copy prior to flow routing.'
-                    : 'Elevasi menggunakan BIG DEMNAS resolusi ~8,3 meter. Jalur sungai yang sudah diverifikasi warga ditanamkan ke salinan DEM sebelum perhitungan aliran.'}
+                    : 'Elevasi menggunakan BIG DEMNAS resolusi ~8,3 meter. Jalur sungai yang sudah diverifikasi warga disisipkan ke salinan DEM sebelum penelusuran arah aliran.'}
                 </p>
                 <p className="m-0 text-[13px] text-[#434d49]">
-                  <strong className="text-[#161c1a]">2. D8 Flow & HAND Model:</strong>{' '}
+                  <strong className="text-[#161c1a]">
+                    {isEn ? '2. D8 Flow & HAND Model:' : '2. Penelusuran Aliran D8 & Indeks HAND:'}
+                  </strong>{' '}
                   {isEn
                     ? 'Priority-Flood depression filling and D8 routing compute topographic flow paths and HAND (Height Above Nearest Drainage) elevation-relative indices.'
-                    : 'Pengisian cekungan Priority-Flood dan perutean D8 menghitung arah kemiringan aliran topografi serta indeks HAND (ketinggian relatif terhadap alur terdekat).'}
+                    : 'Pengisian cekungan Priority-Flood dan penelusuran arah aliran D8 menghitung arah kemiringan topografi serta indeks HAND (ketinggian relatif terhadap alur terdekat).'}
                 </p>
                 <p className="m-0 text-[13px] text-[#434d49]">
                   <strong className="text-[#161c1a]">3. {isEn ? 'Known Accuracy Limits:' : 'Batas Akurasi:'}</strong>{' '}
                   {isEn
                     ? 'Computed DEMNAS 8m D8 lines (dashed) can differ from narrow roadside drains and culverts in the field. Use Detailed mode → Waterways to verify or correct them.'
-                    : 'Garis komputasi dari DEMNAS 8m (garis putus-putus) dapat berbeda dari parit atau gorong-gorong sempit di lapangan. Gunakan mode Lengkap → Jalur Air untuk verifikasi data lapangan.'}
+                    : 'Garis komputasi dari DEMNAS 8 m (garis putus-putus) dapat berbeda dari parit atau gorong-gorong sempit di lapangan. Gunakan mode Lengkap → Jalur Air untuk verifikasi data lapangan.'}
                 </p>
               </div>
             </div>
@@ -389,44 +362,26 @@ function InfoDataModalContent({
           {activeTab === 'api' && (
             <div className="flex flex-col gap-4">
               <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[#161c1a]/12 bg-[#fafaf8] p-4">
-                <div>
+                <div className="min-w-0 flex-1">
                   <h3 className="m-0 text-[14px] font-bold text-[#161c1a]">
-                    {isEn ? 'Download Community Dataset' : 'Unduh Data Terbuka Balingka'}
+                    {isEn ? 'Open-Source Repository (GitHub)' : 'Repositori Kode Sumber Terbuka (GitHub)'}
                   </h3>
                   <p className="mt-0.5 mb-0 text-[13px] text-[#434d49]">
                     {isEn
-                      ? 'Includes verified waterways GeoJSON, hidden DEM segments, and full audit history.'
-                      : 'Berisi berkas GeoJSON sungai terverifikasi, segmen DEM tersaring, dan riwayat audit lengkap.'}
+                      ? 'Access the complete MIT-licensed source code, open spatial datasets, processing tools, and documentation on GitHub.'
+                      : 'Akses kode program lengkap berlisensi MIT, data spasial terbuka, alat pengolahan data, dan dokumentasi proyek melalui GitHub.'}
                   </p>
                 </div>
-                <button
-                  type="button"
-                  disabled={downloading || !apiAvailable}
-                  onClick={handleDownloadBundle}
-                  className="inline-flex min-h-[40px] items-center gap-1.5 rounded-lg bg-[#0369a1] px-3.5 py-2 text-[13px] font-bold text-white transition hover:bg-[#075985] disabled:opacity-50"
+                <a
+                  href={GITHUB_REPO_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  data-testid="info-github-link"
+                  className="inline-flex min-h-[40px] shrink-0 items-center gap-1.5 rounded-lg bg-[#0369a1] px-3.5 py-2 text-[13px] font-bold text-white transition hover:bg-[#075985]"
                 >
-                  <Download className="h-4 w-4" />
-                  <span>{downloading ? '...' : t.wwExportBundle}</span>
-                </button>
-              </div>
-
-              <div>
-                <h3 className="m-0 mb-2 text-[14px] font-bold text-[#161c1a]">
-                  {isEn ? 'Public Read & Report Endpoints' : 'Endpoint API Publik'}
-                </h3>
-                <div className="divide-y divide-[#161c1a]/10 rounded-xl border border-[#161c1a]/12 bg-white">
-                  {apiEndpoints.map(ep => (
-                    <div key={ep.path + ep.method} className="flex flex-wrap items-center justify-between gap-2 px-3.5 py-2.5">
-                      <div className="flex items-center gap-2">
-                        <span className="font-mono-num rounded bg-[#f2f3ef] px-1.5 py-0.5 text-[11px] font-bold text-[#0369a1]">
-                          {ep.method}
-                        </span>
-                        <code className="font-mono-num text-[12px] font-semibold text-[#161c1a]">{ep.path}</code>
-                      </div>
-                      <span className="text-[12.5px] text-[#434d49]">{ep.desc}</span>
-                    </div>
-                  ))}
-                </div>
+                  <span>{isEn ? 'Open on GitHub' : 'Buka di GitHub'}</span>
+                  <ExternalLink className="h-3.5 w-3.5" />
+                </a>
               </div>
 
               <div>
@@ -448,14 +403,19 @@ function InfoDataModalContent({
                 </div>
               </div>
 
-              <div className="flex items-center justify-between rounded-xl border border-[#161c1a]/12 bg-[#fafaf8] px-3.5 py-2.5 text-[12.5px] text-[#434d49]">
+              <a
+                href={GITHUB_DATA_SOURCES_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center justify-between gap-2 rounded-xl border border-[#161c1a]/12 bg-[#fafaf8] px-3.5 py-2.5 text-[12.5px] text-[#434d49] transition hover:border-[#0369a1]/40 hover:text-[#161c1a]"
+              >
                 <span>
                   {isEn
-                    ? 'Upgrade elevation with BIG DEMNAS 8m or custom drone orthophotos via prepare-data.'
-                    : 'Dapat ditingkatkan dengan GeoTIFF BIG DEMNAS 8m atau citra drone lokal via skrip prepare-data.'}
+                    ? 'Upgrade elevation with BIG DEMNAS 8m or custom drone orthophotos via the data preparation guide on GitHub.'
+                    : 'Dapat ditingkatkan dengan GeoTIFF BIG DEMNAS 8 m atau citra drone lokal melalui panduan pengolahan data di GitHub.'}
                 </span>
-                <ExternalLink className="h-3.5 w-3.5 shrink-0 text-[#636f6a]" />
-              </div>
+                <ExternalLink className="h-3.5 w-3.5 shrink-0 text-[#0369a1]" />
+              </a>
             </div>
           )}
         </div>

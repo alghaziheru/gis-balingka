@@ -1,0 +1,20 @@
+name: Feature Request or New Region Adaptation
+description: Suggest an enhancement or ask about adapting this GIS for another Desa/Nagari (EN / ID welcome)
+labels: ['enhancement']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Share a feature idea or ask about adapting this GIS to your Desa/Nagari. **English** and **Bahasa Indonesia** are both welcome.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Goal or Use Case / Tujuan atau kebutuhan
+      placeholder: Describe the feature or the region you want to map...
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context / Data sources (optional)
+      placeholder: Links to open datasets, screenshots, or design notes.

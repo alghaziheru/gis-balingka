@@ -145,7 +145,20 @@ test('ADMIN_PASSPHRASE locks waterway edits & suggestion moderation while keepin
       })
     });
     assert.equal(sugRes.status, 201);
+    assert.equal(sugRes.headers.get('x-content-type-options'), 'nosniff');
+    assert.equal(sugRes.headers.get('x-frame-options'), 'SAMEORIGIN');
+    assert.equal(sugRes.headers.get('referrer-policy'), 'strict-origin-when-cross-origin');
     const { suggestion } = await sugRes.json();
+
+    // Reading suggestions list without passphrase -> 401; WITH passphrase -> 200
+    const listBlocked = await fetch(`${base}/api/suggestions`);
+    assert.equal(listBlocked.status, 401);
+    const listOk = await fetch(`${base}/api/suggestions`, {
+      headers: { 'X-Admin-Passphrase': 'rahasia-balingka-2026' }
+    });
+    assert.equal(listOk.status, 200);
+    const listData = await listOk.json();
+    assert.equal(listData.suggestions.length, 1);
 
     // Moderating suggestion without passphrase -> 401
     const modBlocked = await fetch(`${base}/api/suggestions/${suggestion.id}`, {
@@ -178,6 +191,56 @@ test('ADMIN_PASSPHRASE locks waterway edits & suggestion moderation while keepin
     const bundle = await bundleRes.json();
     assert.ok(bundle.verifiedWaterways.features.length >= 3);
     assert.ok(bundle.auditLogs.length >= 2);
+  } finally {
+    await new Promise(resolve => server.close(resolve));
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('Rate limiter throttles excessive verify and suggestion requests with 429 + Retry-After', async () => {
+  const { dir, dbPath } = makeTempDb('balingka-api-rate-');
+  const { server } = createAppServer({
+    dbPath,
+    distDir: null,
+    adminPassphrase: 'rahasia-balingka-2026',
+    rateLimits: { verifyMax: 2, suggestionMax: 2, verifyWindowMs: 60000, suggestionWindowMs: 60000 }
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const { port } = server.address();
+  const base = `http://127.0.0.1:${port}`;
+
+  try {
+    const v1 = await fetch(`${base}/api/editor/verify`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ passphrase: 'wrong' })
+    });
+    const v2 = await fetch(`${base}/api/editor/verify`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ passphrase: 'wrong' })
+    });
+    const v3 = await fetch(`${base}/api/editor/verify`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ passphrase: 'rahasia-balingka-2026' })
+    });
+    assert.equal(v1.status, 401);
+    assert.equal(v2.status, 401);
+    assert.equal(v3.status, 429);
+    assert.ok(Number(v3.headers.get('retry-after')) >= 1);
+
+    const postSug = () =>
+      fetch(`${base}/api/suggestions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reporter_name: 'Warga', message: 'Masukan uji rate limit' })
+      });
+    assert.equal((await postSug()).status, 201);
+    assert.equal((await postSug()).status, 201);
+    const s3 = await postSug();
+    assert.equal(s3.status, 429);
+    assert.ok(Number(s3.headers.get('retry-after')) >= 1);
   } finally {
     await new Promise(resolve => server.close(resolve));
     fs.rmSync(dir, { recursive: true, force: true });

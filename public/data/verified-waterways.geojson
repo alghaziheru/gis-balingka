@@ -214,7 +214,7 @@
         "status": "normal",
         "source": "osm",
         "source_ref": "osm-w-887749960",
-        "notes": "Seed awal dari jaringan sungai OpenStreetMap Nagari Balingka.",
+        "notes": "Data awal dari jaringan sungai OpenStreetMap Nagari Balingka.",
         "length_m": 842,
         "updated_by": "System (OSM Seed)",
         "updated_at": "2026-11-21T12:25:04.343Z"
@@ -310,7 +310,7 @@
         "status": "normal",
         "source": "osm",
         "source_ref": "osm-w-887751790",
-        "notes": "Seed awal dari jaringan sungai OpenStreetMap Nagari Balingka.",
+        "notes": "Data awal dari jaringan sungai OpenStreetMap Nagari Balingka.",
         "length_m": 8278,
         "updated_by": "Relawan Balingka",
         "updated_at": "2026-11-22T00:54:49.577Z"
@@ -1178,7 +1178,7 @@
         "status": "normal",
         "source": "osm",
         "source_ref": "osm-w-964457604",
-        "notes": "Seed awal dari jaringan sungai OpenStreetMap Nagari Balingka.",
+        "notes": "Data awal dari jaringan sungai OpenStreetMap Nagari Balingka.",
         "length_m": 7215,
         "updated_by": "System (OSM Seed)",
         "updated_at": "2026-11-21T12:25:04.343Z"

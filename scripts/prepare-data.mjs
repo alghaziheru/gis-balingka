@@ -32,18 +32,54 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
 const OUT_DIR = path.join(ROOT, 'public', 'data');
 
-// Full official Nagari Balingka territory + buffer for clean edge drainage (795m valley to 2,869m Singgalang)
+function loadRegionConfig() {
+  const cfgPath = path.join(ROOT, 'region.config.json');
+  if (fs.existsSync(cfgPath)) {
+    return JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
+  }
+  return {
+    name: 'Nagari Balingka',
+    bbox: { west: 100.278, south: -0.408, east: 100.345, north: -0.314 },
+    dataCenter: [100.319, -0.345],
+    regionalOverlays: {
+      enabled: true,
+      sentinelChangeAvailable: true,
+      localDemFilename: 'demnas-balingka.tif'
+    }
+  };
+}
+
+const REGION_CFG = loadRegionConfig();
 const BBOX = {
-  west: 100.278,
-  south: -0.408,
-  east: 100.345,
-  north: -0.314
+  west: Number(REGION_CFG.bbox.west),
+  south: Number(REGION_CFG.bbox.south),
+  east: Number(REGION_CFG.bbox.east),
+  north: Number(REGION_CFG.bbox.north)
 };
 
-const COPERNICUS_COG_URL =
-  'https://copernicus-dem-30m.s3.amazonaws.com/Copernicus_DSM_COG_10_S01_00_E100_00_DEM/Copernicus_DSM_COG_10_S01_00_E100_00_DEM.tif';
-const ESA_WORLDCOVER_COG_URL =
-  'https://esa-worldcover.s3.eu-central-1.amazonaws.com/v200/2021/map/ESA_WorldCover_10m_2021_v200_S03E099_Map.tif';
+function computeCopernicusCogUrl(bbox) {
+  const midLat = (bbox.south + bbox.north) / 2;
+  const midLng = (bbox.west + bbox.east) / 2;
+  const latDeg = Math.floor(midLat);
+  const lngDeg = Math.floor(midLng);
+  const latTag = `${latDeg < 0 ? 'S' : 'N'}${String(Math.abs(latDeg)).padStart(2, '0')}_00`;
+  const lngTag = `${lngDeg < 0 ? 'W' : 'E'}${String(Math.abs(lngDeg)).padStart(3, '0')}_00`;
+  const tile = `Copernicus_DSM_COG_10_${latTag}_${lngTag}_DEM`;
+  return `https://copernicus-dem-30m.s3.amazonaws.com/${tile}/${tile}.tif`;
+}
+
+function computeWorldCoverCogUrl(bbox) {
+  const midLat = (bbox.south + bbox.north) / 2;
+  const midLng = (bbox.west + bbox.east) / 2;
+  const latTile = Math.floor(midLat / 3) * 3;
+  const lngTile = Math.floor(midLng / 3) * 3;
+  const latTag = `${latTile < 0 ? 'S' : 'N'}${String(Math.abs(latTile)).padStart(2, '0')}`;
+  const lngTag = `${lngTile < 0 ? 'W' : 'E'}${String(Math.abs(lngTile)).padStart(3, '0')}`;
+  return `https://esa-worldcover.s3.eu-central-1.amazonaws.com/v200/2021/map/ESA_WorldCover_10m_2021_v200_${latTag}${lngTag}_Map.tif`;
+}
+
+const COPERNICUS_COG_URL = computeCopernicusCogUrl(BBOX);
+const ESA_WORLDCOVER_COG_URL = computeWorldCoverCogUrl(BBOX);
 const AGAM_ADMIN_WEBMAP_URL =
   'https://www.arcgis.com/sharing/rest/content/items/c6d9b777f1a84f4283d970881a371536/data?f=json';
 const OPEN_BUILDINGS_2FD_URL =
@@ -61,7 +97,8 @@ const S2_POST_SCENE_ID = 'S2B_47MPV_20240711_0_L2A';
 function parseCliDemArg() {
   const idx = process.argv.indexOf('--dem');
   if (idx !== -1 && process.argv[idx + 1]) return path.resolve(process.argv[idx + 1]);
-  const defaultLocal = path.join(ROOT, 'raw-data', 'demnas-balingka.tif');
+  const demFile = REGION_CFG.regionalOverlays?.localDemFilename || 'demnas-balingka.tif';
+  const defaultLocal = path.join(ROOT, 'raw-data', demFile);
   if (fs.existsSync(defaultLocal)) return defaultLocal;
   return null;
 }
@@ -362,7 +399,7 @@ async function fetchRealOSM(bbox) {
             properties: {
               id: `osm-res-${w.id}`,
               kind: 'residential',
-              name: tags.name || 'Area Pemukiman'
+              name: tags.name || 'Area Permukiman'
             },
             geometry: { type: 'Polygon', coordinates: [closedRing] }
           });
@@ -455,15 +492,29 @@ async function fetchLandCover(bbox, demWidth, demHeight, insideMask = null) {
 }
 
 async function fetchNagariBoundary() {
+  const localCustom = path.join(ROOT, 'raw-data', 'region-boundary.geojson');
+  if (fs.existsSync(localCustom)) {
+    try {
+      const gj = JSON.parse(fs.readFileSync(localCustom, 'utf8'));
+      if (gj?.features?.length > 0) {
+        console.log(`Loaded custom region boundary (raw-data/region-boundary.geojson) for ${REGION_CFG.name}.`);
+        return gj;
+      }
+    } catch {}
+  }
   const localBig2026 = path.join(ROOT, 'raw-data', 'big-nagari-2026.geojson');
   if (fs.existsSync(localBig2026)) {
     try {
       const gj = JSON.parse(fs.readFileSync(localBig2026, 'utf8'));
       if (gj?.features?.length > 0) {
-        console.log('Loaded official BIG June 2026 Nagari Balingka boundary (raw-data/big-nagari-2026.geojson).');
+        console.log(`Loaded official BIG boundary (raw-data/big-nagari-2026.geojson) for ${REGION_CFG.name}.`);
         return gj;
       }
     } catch {}
+  }
+  if (!REGION_CFG.regionalOverlays?.enabled) {
+    console.log('No local boundary GeoJSON found in raw-data/; using configured bounding box extent.');
+    return null;
   }
   try {
     console.log('Fetching official Nagari Balingka boundary (Pemkab Agam)...');
@@ -1177,12 +1228,14 @@ async function main() {
     } catch {}
   }
 
+  const useRegional = Boolean(REGION_CFG.regionalOverlays?.enabled);
+  const useSentinel = Boolean(REGION_CFG.regionalOverlays?.sentinelChangeAvailable);
   const [osm, landCover, scourChange, googleBuildings, agamGis] = await Promise.all([
     fetchRealOSM(bbox),
     fetchLandCover(bbox, width, height, nagariMask),
-    fetchSentinel2ScourChange(bbox, hand, gridMeta, nagariMask),
-    fetchGoogleOpenBuildings(bbox),
-    fetchAgamOfficialGis(bbox)
+    useSentinel ? fetchSentinel2ScourChange(bbox, hand, gridMeta, nagariMask) : Promise.resolve(null),
+    useRegional ? fetchGoogleOpenBuildings(bbox) : Promise.resolve(null),
+    useRegional ? fetchAgamOfficialGis(bbox) : Promise.resolve(null)
   ]);
   const activeFlowFeatures = flowPaths.features.filter(f => !verified.suppressedIds.has(f.properties.id));
   const combinedStreams = [
@@ -1250,6 +1303,20 @@ async function main() {
     );
   }
 
+  const HIGHWAY_ID = {
+    trunk: 'jalan nasional',
+    primary: 'jalan utama',
+    secondary: 'jalan kolektor',
+    tertiary: 'jalan penghubung',
+    residential: 'jalan permukiman',
+    unclassified: 'jalan nagari',
+    service: 'jalan akses',
+    track: 'jalan tanah/kebun',
+    path: 'jalan setapak',
+    footway: 'jalan setapak'
+  };
+  const formatHighwayId = hw => HIGHWAY_ID[String(hw || '').toLowerCase()] || 'jalan';
+
   const bottlenecks = [
     ...bigCrossings,
     ...crossings
@@ -1265,7 +1332,7 @@ async function main() {
         status: 'unverified',
         name_id: c.roadName ? `Perlintasan ${c.roadName}` : `Persilangan Jalan–Alur #${idx + 1}`,
         name_en: c.roadName ? `Crossing at ${c.roadName}` : `Road–Stream Crossing #${idx + 1}`,
-        desc_id: `Titik silang jalan (${c.highway}) & alur komputasi DEM (belum diverifikasi lapangan).`,
+        desc_id: `Titik silang ${formatHighwayId(c.highway)} & alur perkiraan DEM (belum dicek lapangan).`,
         desc_en: `DEM road (${c.highway}) & computed channel crossing (unverified in the field).`
       })),
     ...osm.bridgeFeatures
@@ -1281,7 +1348,7 @@ async function main() {
         status: 'unverified',
         name_id: b.properties.name,
         name_en: b.properties.name.replace(/^Jembatan/, 'Bridge'),
-        desc_id: `Jembatan jalan (${b.properties.highway}) dari OpenStreetMap — belum dicek lapangan.`,
+        desc_id: `Jembatan ${formatHighwayId(b.properties.highway)} dari OpenStreetMap — belum dicek lapangan.`,
         desc_en: `OpenStreetMap bridge (${b.properties.highway}) — unverified in the field.`
       }))
   ];
@@ -1541,7 +1608,9 @@ async function main() {
 
   const officialAreaKm2 = nagariBoundary ? computeFeatureCollectionAreaKm2(nagariBoundary) : Number(((totalWidthM * totalHeightM) / 1e6).toFixed(2));
   const totalStreamKm = flowPaths.features.reduce((s, f) => s + f.properties.length_m, 0) / 1000;
-  const center = [100.319, -0.345];
+  const center = Array.isArray(REGION_CFG.dataCenter)
+    ? REGION_CFG.dataCenter
+    : [Number(((bbox.west + bbox.east) / 2).toFixed(5)), Number(((bbox.south + bbox.north) / 2).toFixed(5))];
 
   const writeJson = (name, obj) => fs.writeFileSync(path.join(OUT_DIR, name), JSON.stringify(obj));
 
@@ -1659,7 +1728,7 @@ async function main() {
       { name: 'Copernicus Sentinel-2 L2A (10m)', license: 'Copernicus Open License (ESA)' },
       { name: 'ESA WorldCover 10m v200', license: 'CC-BY-4.0 (ESA / Copernicus)' },
       { name: 'Google Open Buildings v3', license: 'CC-BY-4.0 (Google Research / Cloud Open Data)' },
-      { name: 'Pemkab Agam Open GIS (Tanah, Geologi, SK 35, Longsor)', license: 'Public Government Data (ptsp.agam ArcGIS)' },
+      { name: 'Pemkab Agam Open GIS (Tanah, Geologi, SK 35, Gerakan Tanah)', license: 'Public Government Data (ptsp.agam ArcGIS)' },
       { name: 'Esri World Imagery', license: 'Free w/ Attribution (No API Key)' },
       { name: 'OpenStreetMap & OpenTopoMap', license: 'ODbL / CC-BY-SA' }
     ]

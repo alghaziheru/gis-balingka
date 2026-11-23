@@ -1,0 +1,38 @@
+name: Bug Report
+description: Report a bug or unexpected behavior (EN / ID welcome)
+labels: ['bug']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting an issue! You may write in **English** or **Bahasa Indonesia**.
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened? / Apa kendala yang ditemukan?
+      placeholder: Describe the issue clearly...
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce / Langkah mereproduksi
+      placeholder: |
+        1. Open tab ...
+        2. Toggle layer ...
+        3. Observe ...
+  - type: dropdown
+    id: environment
+    attributes:
+      label: Viewport / Device
+      options:
+        - Desktop browser
+        - Mobile browser
+        - Local Node server / CLI script
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Console output, screenshot, or error logs (optional)
+      placeholder: Paste any relevant logs or attach a screenshot.

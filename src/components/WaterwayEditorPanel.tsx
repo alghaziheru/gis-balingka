@@ -123,7 +123,7 @@ export function WaterwayEditorPanel({
     setWidthPreStr(editingWaterway.widthPreM != null ? String(editingWaterway.widthPreM) : '');
     setWidthPostStr(editingWaterway.widthPostM != null ? String(editingWaterway.widthPostM) : '');
     setDepthStr(editingWaterway.depthM != null ? String(editingWaterway.depthM) : '');
-    setReason(editingWaterway.source === 'dem_promoted' ? 'Promosi & sesuaikan segmen DEM ke lapangan' : '');
+    setReason(editingWaterway.source === 'dem_promoted' ? 'Verifikasi & sesuaikan segmen DEM ke lapangan' : '');
   }, [editingWaterway?.id, editingWaterway?.sourceRef, editingWaterway?.source]);
 
   const handleSubmit = async (e: FormEvent) => {
@@ -194,6 +194,22 @@ export function WaterwayEditorPanel({
     critical: t.fCritical
   };
 
+  const kindLabel: Record<WaterwayKind, string> = isEn
+    ? {
+        river: 'River',
+        stream: 'Stream',
+        canal: 'Canal',
+        drain: 'Drain',
+        culvert: 'Culvert'
+      }
+    : {
+        river: 'Sungai Utama',
+        stream: 'Anak Sungai',
+        canal: 'Bandar / Irigasi',
+        drain: 'Parit / Drainase',
+        culvert: 'Gorong-gorong'
+      };
+
   return (
     <div className="flex flex-col gap-3.5">
       <section className="rounded-xl border border-[#161c1a]/12 bg-white p-3.5">
@@ -230,8 +246,8 @@ export function WaterwayEditorPanel({
         {!apiAvailable && (
           <p className="mt-2.5 mb-0 text-[12.5px] text-[#78350f]">
             {isEn
-              ? 'Static read-only preview: run `pnpm run server` to persist edits & audit logs.'
-              : 'Mode pratinjau statis: jalankan `pnpm run server` agar koreksi & riwayat tersimpan.'}
+              ? 'Read-only preview mode: saving waterway edits and change history is only active when connected to the application server.'
+              : 'Mode pratinjau baca saja: fitur penyimpanan koreksi & riwayat hanya aktif saat terhubung ke server aplikasi.'}
           </p>
         )}
 
@@ -285,11 +301,11 @@ export function WaterwayEditorPanel({
                     ? 'Editing Waterway Vertices'
                     : 'Sedang Mengoreksi Jalur'
                   : isEn
-                  ? 'New / Promoted Waterway'
-                  : 'Jalur Baru / Promosi DEM'}
+                  ? 'New / Verified DEM Waterway'
+                  : 'Jalur Baru / Verifikasi Segmen DEM'}
               </strong>
               <span className="font-mono-num rounded bg-[#0369a1]/10 px-2 py-0.5 text-[12px] font-bold text-[#0369a1]">
-                {coords.length} pts
+                {coords.length} {isEn ? 'pts' : 'titik'}
               </span>
             </div>
 
@@ -303,7 +319,7 @@ export function WaterwayEditorPanel({
               >
                 <span className="font-semibold">{t.wwDirectionSummary}</span>
                 <span className="font-mono-num font-bold">
-                  {startElev}m → {endElev}m {uphillWarning ? (isEn ? '(Uphill!)' : '(Menanjak!)') : ''}
+                  {startElev} mdpl → {endElev} mdpl {uphillWarning ? (isEn ? '(Uphill!)' : '(Menanjak!)') : ''}
                 </span>
               </div>
             )}
@@ -541,7 +557,7 @@ export function WaterwayEditorPanel({
           {(hydroStatus.lastRecomputedAt || hydroStatus.burnedCellCount > 0) && (
             <div className="font-mono-num mb-2.5 text-[11px] text-[#636f6a]">
               {hydroStatus.burnedCellCount > 0
-                ? `${hydroStatus.burnedCellCount} ${isEn ? 'burned cells' : 'sel terbakar'}`
+                ? `${hydroStatus.burnedCellCount} ${isEn ? 'adjusted DEM cells' : 'sel DEM disesuaikan'}`
                 : ''}
               {hydroStatus.lastRecomputedAt
                 ? `${hydroStatus.burnedCellCount > 0 ? ' · ' : ''}${new Date(hydroStatus.lastRecomputedAt).toLocaleString()}`
@@ -563,7 +579,9 @@ export function WaterwayEditorPanel({
             </button>
           ) : (
             <div className="text-[12px] font-medium text-[#636f6a]">
-              {isEn ? 'Unlock Editor Mode to run DEM stream-burning.' : 'Buka Mode Editor untuk menjalankan stream-burning DEM.'}
+              {isEn
+                ? 'Unlock Editor Mode to embed waterways into DEM & recompute flow.'
+                : 'Buka Mode Editor untuk menyisipkan jalur sungai ke DEM & menghitung ulang aliran.'}
             </div>
           )}
         </section>
@@ -591,8 +609,8 @@ export function WaterwayEditorPanel({
                     {statusLabel[w.properties.status] || w.properties.status}
                   </span>
                   <span className="font-mono-num text-[11.5px] text-[#636f6a]">
-                    {w.properties.kind} · {w.properties.length_m}m
-                    {w.properties.width_post_m ? ` · L=${w.properties.width_post_m}m` : ''}
+                    {kindLabel[w.properties.kind] || w.properties.kind} · {w.properties.length_m} m
+                    {w.properties.width_post_m ? ` · L=${w.properties.width_post_m} m` : ''}
                   </span>
                 </div>
               </div>

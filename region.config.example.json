@@ -1,0 +1,108 @@
+{
+  "id": "desa-contoh",
+  "name": "Desa Contoh",
+  "shortName": "Contoh",
+  "adminLevelLabel": {
+    "id": "Desa",
+    "en": "Village"
+  },
+  "subRegionLabel": {
+    "id": "Dusun",
+    "en": "Hamlet"
+  },
+  "district": "Kec. Contoh",
+  "regency": "Kab. Contoh",
+  "province": "Jawa Barat",
+  "officialBoundaryCode": "32.04.01.2001",
+  "officialBoundaryNameMatch": "CONTOH",
+  "appTitle": {
+    "id": "Peta Desa Contoh",
+    "en": "Desa Contoh Map"
+  },
+  "areaKm2": 12.5,
+  "uplandLandmark": {
+    "id": "Perbukitan Hulu",
+    "en": "Upper Slopes"
+  },
+  "mainRivers": ["Sungai Utama"],
+  "bbox": {
+    "west": 107.55,
+    "south": -7.08,
+    "east": 107.61,
+    "north": -7.02
+  },
+  "defaultView": {
+    "center": [107.58, -7.05],
+    "zoom": 15.0
+  },
+  "dataCenter": [107.58, -7.05],
+  "cameraPresets": [
+    {
+      "id": "center",
+      "label": "Desa Contoh",
+      "center": [107.58, -7.05],
+      "zoom": 15.0,
+      "pitch3D": 36,
+      "bearing3D": -12
+    },
+    {
+      "id": "dusun-utara",
+      "label": "Dusun Utara",
+      "center": [107.582, -7.038],
+      "zoom": 15.4,
+      "pitch3D": 34,
+      "bearing3D": -10
+    },
+    {
+      "id": "dusun-selatan",
+      "label": "Dusun Selatan",
+      "center": [107.576, -7.062],
+      "zoom": 15.4,
+      "pitch3D": 34,
+      "bearing3D": -10
+    }
+  ],
+  "subRegionSuggestions": [
+    "Dusun Utara",
+    "Dusun Selatan"
+  ],
+  "drainageFocus": {
+    "upland": {
+      "center": [107.58, -7.035],
+      "zoom": 14.4,
+      "pitch": 50,
+      "bearing": -15
+    },
+    "culverts": {
+      "center": [107.58, -7.05],
+      "zoom": 15.0,
+      "pitch": 35,
+      "bearing": -10
+    },
+    "facilities": {
+      "center": [107.58, -7.052],
+      "zoom": 15.0,
+      "pitch": 32,
+      "bearing": 0
+    }
+  },
+  "authorities": {
+    "bpbdLabel": "BPBD Kab. Contoh",
+    "localOfficeId": "Kantor Kepala Desa & Kepala Dusun",
+    "localOfficeEn": "Village & Hamlet Office",
+    "localAuthorityShort": "Pemerintah Desa",
+    "defaultEditorName": "Relawan Desa"
+  },
+  "regionalOverlays": {
+    "enabled": false,
+    "providerName": "Pemda Setempat",
+    "rbiAvailable": false,
+    "sentinelChangeAvailable": false,
+    "localDemFilename": "demnas-region.tif",
+    "bigRbiZipName": "",
+    "bigRbiGdbName": "",
+    "bigDesaGdbName": "BATASWILAYAH_DESA_20260601.gdb",
+    "bigRbiDasName": ""
+  },
+  "repositoryUrl": "https://github.com/alghaziheru/gis-balingka"
+}

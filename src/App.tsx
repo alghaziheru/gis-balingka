@@ -24,6 +24,7 @@ import { TopHud } from './components/TopHud';
 import type { ActiveEditingJorong } from './components/JorongEditorPanel';
 import type { ActiveEditingStructure } from './components/StructureEditorPanel';
 import type { ActiveEditingWaterway } from './components/WaterwayEditorPanel';
+import { REGION } from './config/region';
 import { I18N } from './i18n/translations';
 import {
   createJorongBoundary,
@@ -102,8 +103,8 @@ const DEFAULT_LAYERS: LayerToggles = {
 };
 
 const DEFAULT_FLOW_DENSITY = 1;
-const DEFAULT_VIEW_CENTER: [number, number] = [100.324686, -0.336166];
-const DEFAULT_VIEW_ZOOM = 15.6;
+const DEFAULT_VIEW_CENTER: [number, number] = REGION.defaultView.center;
+const DEFAULT_VIEW_ZOOM = REGION.defaultView.zoom;
 
 const MAP_LAYER_KEYS: (keyof LayerToggles)[] = [
   'verifiedWaterways',
@@ -578,8 +579,8 @@ export function App() {
       setDataVersion(nextVer);
       notify(
         lang === 'en'
-          ? `DEM updated (${res.summary.burnedCellCount} cells) & flow/HAND maps recomputed.`
-          : `DEM berhasil diperbarui (${res.summary.burnedCellCount} sel) & peta aliran/HAND dihitung ulang.`
+          ? `DEM updated (${res.summary.burnedCellCount} cells adjusted) & flow/HAND maps recomputed.`
+          : `DEM berhasil diperbarui (${res.summary.burnedCellCount} sel disesuaikan) & peta aliran/HAND dihitung ulang.`
       );
     } catch (err) {
       notify(err instanceof Error ? err.message : 'Hydrology recompute failed');
@@ -590,15 +591,13 @@ export function App() {
 
   const handleCameraPreset = (preset: string) => {
     setCameraPreset(preset);
-    const presets: Record<string, { center: [number, number]; zoom: number; pitch: number; bearing: number }> = {
-      center: { center: datasets?.center ?? DEFAULT_VIEW_CENTER, zoom: DEFAULT_VIEW_ZOOM, pitch: is3D ? 36 : 0, bearing: is3D ? -12 : 0 },
-      subarang: { center: [100.326183, -0.326062], zoom: 15.5, pitch: is3D ? 34 : 0, bearing: is3D ? -12 : 0 },
-      hilalang: { center: [100.327863, -0.341817], zoom: 15.6, pitch: is3D ? 34 : 0, bearing: is3D ? -8 : 0 },
-      pahambatan: { center: [100.319315, -0.339606], zoom: 15.6, pitch: is3D ? 34 : 0, bearing: is3D ? -10 : 0 }
-    };
-    const p = presets[preset];
-    if (p) {
-      flyTo(p.center, { zoom: p.zoom, pitch: p.pitch, bearing: p.bearing });
+    const match = REGION.cameraPresets.find(p => p.id === preset);
+    if (match) {
+      flyTo(match.center, {
+        zoom: match.zoom,
+        pitch: is3D ? match.pitch3D : 0,
+        bearing: is3D ? match.bearing3D : 0
+      });
     }
   };
 
@@ -1095,15 +1094,18 @@ export function App() {
               onFocusHulu={() => {
                 setLayers(prev => ({ ...prev, slope: true }));
                 setIs3D(true);
-                flyTo([100.322, -0.346], { zoom: 14.4, pitch: 54, bearing: -20 });
+                const v = REGION.drainageFocus.upland;
+                flyTo(v.center, { zoom: v.zoom, pitch: v.pitch, bearing: v.bearing });
               }}
               onFocusDrainage={() => {
                 setDrainFilter('all');
-                flyTo([100.3248, -0.3365], { zoom: 15.0, pitch: 35, bearing: -10 });
+                const v = REGION.drainageFocus.culverts;
+                flyTo(v.center, { zoom: v.zoom, pitch: v.pitch, bearing: v.bearing });
               }}
               onFocusEvac={() => {
                 setLayers(prev => ({ ...prev, evac: true }));
-                flyTo([100.325, -0.337], { zoom: 15.0, pitch: 32, bearing: 0 });
+                const v = REGION.drainageFocus.facilities;
+                flyTo(v.center, { zoom: v.zoom, pitch: v.pitch, bearing: v.bearing });
               }}
             />
           )}
@@ -1406,7 +1408,10 @@ export function App() {
               auditLogs={auditLogs}
               onRevertAuditLog={async logId => {
                 try {
-                  await revertAuditLog(logId, { actor: actorName, reason: `Revert log #${logId}` });
+                  await revertAuditLog(logId, {
+                    actor: actorName,
+                    reason: lang === 'en' ? `Revert log #${logId}` : `Pulihkan perubahan #${logId}`
+                  });
                   setEditingWaterway(null);
                   setEditingStructure(null);
                   setEditingJorong(null);
@@ -1479,12 +1484,14 @@ export function App() {
 
         <ActiveMapLegend
           lang={lang}
+          viewMode={viewMode}
           tab={tab}
           basemap={basemap}
           layers={effectiveLayers}
           flowDensity={flowDensity}
           simProgress={simProgress}
           drainFilter={drainFilter}
+          elevRange={metadata ? [metadata.minElevM, metadata.maxElevM] : undefined}
           landCoverStats={metadata?.landCoverStats}
           scourStats={metadata?.scourStats}
         />
@@ -1591,6 +1598,7 @@ export function App() {
         flowDensity={flowDensity}
         simProgress={simProgress}
         drainFilter={drainFilter}
+        elevRange={metadata ? [metadata.minElevM, metadata.maxElevM] : undefined}
         landCoverStats={metadata?.landCoverStats}
         scourStats={metadata?.scourStats}
         mobileSheetMode={mobileSheetMode}
@@ -1634,9 +1642,7 @@ export function App() {
         initialTab={infoModalTab ?? 'guide'}
         lang={lang}
         metadata={metadata}
-        apiAvailable={apiAvailable}
         verifiedCount={verifiedWaterways.length}
-        onNotify={notify}
         onClose={() => setInfoModalTab(null)}
       />
 

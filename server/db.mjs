@@ -8,6 +8,28 @@ import { readVerifiedSeedFiles } from './seed-io.mjs';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
 
+function loadRegionConfig() {
+  const cfgPath = path.join(ROOT, 'region.config.json');
+  try {
+    if (fs.existsSync(cfgPath)) {
+      return JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
+    }
+  } catch {}
+  return {
+    name: 'Nagari Balingka',
+    bbox: { west: 100.278, south: -0.408, east: 100.345, north: -0.314 }
+  };
+}
+
+const REGION_CFG = loadRegionConfig();
+const SUGGESTION_BOUNDS = {
+  west: Number(REGION_CFG?.bbox?.west ?? 100.278) - 0.03,
+  east: Number(REGION_CFG?.bbox?.east ?? 100.345) + 0.03,
+  south: Number(REGION_CFG?.bbox?.south ?? -0.408) - 0.03,
+  north: Number(REGION_CFG?.bbox?.north ?? -0.314) + 0.03
+};
+const DEFAULT_REGION_NAME = String(REGION_CFG?.name || 'Nagari Balingka');
+
 export const DEFAULT_DB_PATH = path.join(ROOT, 'data', 'balingka.db');
 export const DEFAULT_SEED_PATH = path.join(ROOT, 'public', 'data', 'osm-context.geojson');
 
@@ -524,12 +546,12 @@ export function createStore(dbPath = DEFAULT_DB_PATH, seedGeoJsonPath = DEFAULT_
       if (seededSummary.length > 0) {
         appendAudit({
           createdAt: now,
-          actor: 'System (Git Seed)',
+          actor: 'Sistem (Data Awal)',
           action: 'seed',
           entityType: 'system',
           entityId: 'verified-seed',
-          entityName: `Seed ${seededSummary.length} Jalur${seededStructures ? ` & ${seededStructures} Titik` : ''} Terverifikasi`,
-          reason: 'Inisialisasi database SQLite dari snapshot GeoJSON terverifikasi di repo.',
+          entityName: `Data Awal ${seededSummary.length} Jalur${seededStructures ? ` & ${seededStructures} Titik` : ''} Terverifikasi`,
+          reason: 'Muat data awal basis data dari rekaman GeoJSON terverifikasi.',
           before: null,
           after: { seeded: seededSummary, structureCount: seededStructures, suppressedCount: seededSuppressed }
         });
@@ -559,20 +581,20 @@ export function createStore(dbPath = DEFAULT_DB_PATH, seedGeoJsonPath = DEFAULT_
       const kind = normalizeKind(f.properties?.waterway, 'stream');
       const lengthM = computeLineLengthMeters(coords);
       const sourceRef = String(f.properties?.id || id);
-      const notes = 'Seed awal dari jaringan sungai OpenStreetMap Nagari Balingka.';
-      insertWw.run(id, name, kind, 'normal', 'osm', sourceRef, notes, JSON.stringify(coords), lengthM, null, null, null, 'System (OSM Seed)', now);
+      const notes = 'Data awal dari jaringan sungai OpenStreetMap Nagari Balingka.';
+      insertWw.run(id, name, kind, 'normal', 'osm', sourceRef, notes, JSON.stringify(coords), lengthM, null, null, null, 'Sistem (Data Awal OSM)', now);
       seededSummary.push({ id, name, kind, length_m: lengthM });
     }
 
     if (seededSummary.length > 0) {
       appendAudit({
         createdAt: now,
-        actor: 'System (OSM Seed)',
+        actor: 'Sistem (Data Awal OSM)',
         action: 'seed',
         entityType: 'system',
         entityId: 'osm-seed',
-        entityName: `Seed ${seededSummary.length} Sungai OSM`,
-        reason: 'Inisialisasi database SQLite dari sungai terpetakan OpenStreetMap.',
+        entityName: `Data Awal ${seededSummary.length} Sungai OSM`,
+        reason: 'Muat data awal basis data dari jaringan sungai OpenStreetMap.',
         before: null,
         after: { seeded: seededSummary }
       });
@@ -867,7 +889,7 @@ export function createStore(dbPath = DEFAULT_DB_PATH, seedGeoJsonPath = DEFAULT_
       const sourceRef = payload?.source_ref ? String(payload.source_ref).trim() : null;
       const notes = String(payload?.notes || '').trim();
       const actor = String(payload?.actor || 'Editor').trim() || 'Editor';
-      const reason = String(payload?.reason || '').trim() || (source === 'dem_promoted' ? 'Promosi & koreksi segmen DEM' : 'Tambah jalur sungai/drainase');
+      const reason = String(payload?.reason || '').trim() || (source === 'dem_promoted' ? 'Verifikasi & koreksi segmen DEM' : 'Tambah jalur sungai/drainase');
       const id = `ww-${crypto.randomUUID().slice(0, 8)}`;
       const now = new Date().toISOString();
       const lengthM = computeLineLengthMeters(coords);
@@ -1381,8 +1403,8 @@ export function createStore(dbPath = DEFAULT_DB_PATH, seedGeoJsonPath = DEFAULT_
         action: 'recompute_hydrology',
         entityType: 'system',
         entityId: 'hydrology',
-        entityName: 'Stream-Burning & Hidrologi DEM',
-        reason: `Bakar ${verifiedWaterwayCount} sungai terverifikasi (${burnedCellCount} sel DEM) & hitung ulang peta aliran/banjir.`,
+        entityName: 'Penyisipan Jalur & Hidrologi DEM',
+        reason: `Sisipkan ${verifiedWaterwayCount} sungai terverifikasi (${burnedCellCount} sel DEM disesuaikan) & hitung ulang peta aliran/HAND.`,
         before: null,
         after: summary
       });
@@ -1405,8 +1427,15 @@ export function createStore(dbPath = DEFAULT_DB_PATH, seedGeoJsonPath = DEFAULT_
       let lng = payload?.lng !== undefined && payload?.lng !== null && payload?.lng !== '' ? Number(payload.lng) : null;
       let lat = payload?.lat !== undefined && payload?.lat !== null && payload?.lat !== '' ? Number(payload.lat) : null;
       if (lng !== null && lat !== null) {
-        if (!Number.isFinite(lng) || !Number.isFinite(lat) || lng < 100.28 || lng > 100.37 || lat < -0.38 || lat > -0.29) {
-          throw new Error('Suggestion coordinates must lie inside the Nagari Balingka block.');
+        if (
+          !Number.isFinite(lng) ||
+          !Number.isFinite(lat) ||
+          lng < SUGGESTION_BOUNDS.west ||
+          lng > SUGGESTION_BOUNDS.east ||
+          lat < SUGGESTION_BOUNDS.south ||
+          lat > SUGGESTION_BOUNDS.north
+        ) {
+          throw new Error(`Suggestion coordinates must lie inside the ${DEFAULT_REGION_NAME} region bounds.`);
         }
         lng = Number(lng.toFixed(6));
         lat = Number(lat.toFixed(6));
@@ -1425,7 +1454,7 @@ export function createStore(dbPath = DEFAULT_DB_PATH, seedGeoJsonPath = DEFAULT_
         reporterName.slice(0, 80),
         contact,
         category,
-        (locationName || 'Nagari Balingka').slice(0, 140),
+        (locationName || DEFAULT_REGION_NAME).slice(0, 140),
         message.slice(0, 1500),
         lng,
         lat
@@ -1603,7 +1632,7 @@ export function createStore(dbPath = DEFAULT_DB_PATH, seedGeoJsonPath = DEFAULT_
         action: 'import_seed',
         entityType: 'system',
         entityId: 'git-seed',
-        entityName: `Impor ${importedWaterways} Jalur & ${importedStructures} Titik dari Git`,
+        entityName: `Impor ${importedWaterways} Jalur & ${importedStructures} Titik Terverifikasi`,
         reason,
         before: null,
         after: { importedWaterways, importedStructures, importedSuppressed }

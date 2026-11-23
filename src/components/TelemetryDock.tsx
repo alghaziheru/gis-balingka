@@ -30,7 +30,7 @@ function getBasemapAttribution(basemap: BasemapId, isEn: boolean): string {
     return import.meta.env.VITE_CUSTOM_IMAGERY_URL
       ? isEn
         ? 'Custom Satellite / Drone Imagery'
-        : 'Citra Satelit / Drone Kustom'
+        : 'Citra Satelit / Drone Lokal'
       : 'Esri, Maxar, Earthstar Geographics';
   }
   if (basemap === 'osm') return '© OpenStreetMap contributors (ODbL)';
@@ -64,6 +64,7 @@ interface TelemetryDockProps {
   flowDensity: number;
   simProgress: number;
   drainFilter?: 'all' | DrainageStatus;
+  elevRange?: [number, number];
   landCoverStats?: LandCoverStats;
   scourStats?: ScourStats;
   mobileSheetMode: 'peek' | 'half' | 'full';
@@ -93,6 +94,7 @@ export function TelemetryDock({
   flowDensity,
   simProgress,
   drainFilter = 'all',
+  elevRange,
   landCoverStats,
   scourStats,
   mobileSheetMode,
@@ -187,7 +189,7 @@ export function TelemetryDock({
     });
     mobileToggleItems.push({
       id: 'flow',
-      label: t.lblFlowSimple,
+      label: isDetail ? t.lblFlowDetail : t.lblFlowSimple,
       icon: 'flow',
       checked: flowDensity > 0,
       onChange: v => onChangeFlowDensity(v ? 1 : 0)
@@ -436,11 +438,11 @@ export function TelemetryDock({
                 <div className="mb-2 flex flex-col gap-1 border-b border-[#161c1a]/10 pb-2 text-[12px]">
                   <div className="flex items-center gap-2 text-[#161c1a]">
                     <LegendIcon kind="flow" size={16} />
-                    <span>{isEn ? 'Modeled flow direction (DEM)' : 'Arah aliran model (DEM)'}</span>
+                    <span>{isEn ? 'Modeled flow direction (DEM)' : 'Arah aliran simulasi (DEM)'}</span>
                   </div>
                   <div className="flex items-center gap-2 text-[#161c1a]">
                     <span className="h-2.5 w-2.5 shrink-0 rounded-[2px] bg-[#0369a1]" />
-                    <span>{isEn ? 'Deep basin (>1.5m HAND)' : 'Cekungan utama (>1,5m HAND)'}</span>
+                    <span>{isEn ? 'Deep basin (>1.5m HAND)' : 'Cekungan utama (>1,5 m HAND)'}</span>
                   </div>
                   <div className="flex items-center gap-2 text-[#161c1a]">
                     <span className="h-2.5 w-2.5 shrink-0 rounded-[2px] bg-[#7dd3fc]" />
@@ -448,7 +450,7 @@ export function TelemetryDock({
                   </div>
                   <div className="flex items-center gap-2 text-[#161c1a]">
                     <span className="h-2.5 w-2.5 shrink-0 rounded-[2px] bg-[#ea580c]" />
-                    <span>{isEn ? 'Saturated steep slope (model)' : 'Lereng curam jenuh (model)'}</span>
+                    <span>{isEn ? 'Saturated steep slope (model)' : 'Lereng curam jenuh air'}</span>
                   </div>
                 </div>
               )}
@@ -494,7 +496,9 @@ export function TelemetryDock({
                     }}
                   />
                   <span>
-                    {basemap === 'elev' ? `${t.bmElev} (1.032–2.869m)` : `${t.bmSlope} (>15%)`}
+                    {basemap === 'elev'
+                      ? `${t.bmElev} (${Math.round((elevRange ?? [1032, 2869])[0]).toLocaleString(isEn ? 'en-US' : 'id-ID')}–${Math.round((elevRange ?? [1032, 2869])[1]).toLocaleString(isEn ? 'en-US' : 'id-ID')} mdpl)`
+                      : `${t.bmSlope} (>15%)`}
                   </span>
                 </div>
               )}

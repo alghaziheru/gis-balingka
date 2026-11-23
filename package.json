@@ -4,7 +4,30 @@
   "private": false,
   "license": "MIT",
   "type": "module",
-  "description": "Open-source public spatial data viewer for Nagari Balingka (Kab. Agam, West Sumatra) terrain, waterways, and drainage infrastructure.",
+  "description": "Open-source public spatial data viewer for Nagari Balingka (Kab. Agam, West Sumatra) and configurable Indonesian village/nagari terrain, hydrology, and drainage infrastructure.",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/alghaziheru/gis-balingka.git"
+  },
+  "homepage": "https://github.com/alghaziheru/gis-balingka#readme",
+  "bugs": {
+    "url": "https://github.com/alghaziheru/gis-balingka/issues"
+  },
+  "keywords": [
+    "gis",
+    "maplibre",
+    "hydrology",
+    "demnas",
+    "hand",
+    "open-data",
+    "indonesia",
+    "nagari",
+    "desa",
+    "civic-tech"
+  ],
   "scripts": {
     "dev": "vite",
     "server": "node server/index.mjs",

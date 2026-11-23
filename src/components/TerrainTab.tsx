@@ -1,5 +1,6 @@
 import { useId } from 'react';
 import { Droplets, MapPin, RotateCcw, SlidersHorizontal, TrendingUp, X } from 'lucide-react';
+import { REGION } from '../config/region';
 import { I18N } from '../i18n/translations';
 import type {
   ActiveTool,
@@ -133,12 +134,9 @@ export function TerrainTab({
     </div>
   );
 
-  const jorongPresets = [
-    { id: 'center', label: t.camCenter },
-    { id: 'subarang', label: t.camSubarang },
-    { id: 'hilalang', label: t.camHilalang },
-    { id: 'pahambatan', label: t.camPahambatan }
-  ];
+  const jorongPresets = REGION.cameraPresets.map(p => ({ id: p.id, label: p.label }));
+  const hasRegionalOverlays = REGION.regionalOverlays.enabled;
+  const hasSentinelChange = REGION.regionalOverlays.sentinelChangeAvailable;
 
   const detailLayerItems: {
     key: keyof LayerToggles;
@@ -268,38 +266,42 @@ export function TerrainTab({
               />
             </label>
 
-            <div className="flex min-h-[44px] items-center justify-between gap-3 py-1.5">
-              <div className="flex min-w-0 flex-1 items-center gap-1.5">
-                <label
-                  htmlFor={`${uid}-simple-scour`}
-                  className="flex min-w-0 cursor-pointer items-center gap-2.5 text-[13.5px] font-medium text-[#161c1a]"
-                >
-                  <LegendIcon kind="scourChange" />
-                  <span>{t.lblScourChange}</span>
-                </label>
-                <InfoTooltip text={t.infoScourChange} label={t.lblScourChange} />
+            {hasSentinelChange && (
+              <div className="flex min-h-[44px] items-center justify-between gap-3 py-1.5">
+                <div className="flex min-w-0 flex-1 items-center gap-1.5">
+                  <label
+                    htmlFor={`${uid}-simple-scour`}
+                    className="flex min-w-0 cursor-pointer items-center gap-2.5 text-[13.5px] font-medium text-[#161c1a]"
+                  >
+                    <LegendIcon kind="scourChange" />
+                    <span>{t.lblScourChange}</span>
+                  </label>
+                  <InfoTooltip text={t.infoScourChange} label={t.lblScourChange} />
+                </div>
+                <input
+                  id={`${uid}-simple-scour`}
+                  type="checkbox"
+                  checked={layers.scourChange}
+                  onChange={e => onToggleLayer('scourChange', e.target.checked)}
+                  className="h-4.5 w-4.5 shrink-0 cursor-pointer accent-[#0369a1]"
+                />
               </div>
-              <input
-                id={`${uid}-simple-scour`}
-                type="checkbox"
-                checked={layers.scourChange}
-                onChange={e => onToggleLayer('scourChange', e.target.checked)}
-                className="h-4.5 w-4.5 shrink-0 cursor-pointer accent-[#0369a1]"
-              />
-            </div>
+            )}
 
-            <label className="flex min-h-[44px] cursor-pointer items-center justify-between gap-3 py-1.5">
-              <span className="flex items-center gap-2.5 text-[13.5px] font-medium text-[#161c1a]">
-                <LegendIcon kind="agamLandslide" />
-                <span>{t.lblAgamLandslide}</span>
-              </span>
-              <input
-                type="checkbox"
-                checked={layers.agamLandslide}
-                onChange={e => onToggleLayer('agamLandslide', e.target.checked)}
-                className="h-4.5 w-4.5 cursor-pointer accent-[#0369a1]"
-              />
-            </label>
+            {hasRegionalOverlays && (
+              <label className="flex min-h-[44px] cursor-pointer items-center justify-between gap-3 py-1.5">
+                <span className="flex items-center gap-2.5 text-[13.5px] font-medium text-[#161c1a]">
+                  <LegendIcon kind="agamLandslide" />
+                  <span>{t.lblAgamLandslide}</span>
+                </span>
+                <input
+                  type="checkbox"
+                  checked={layers.agamLandslide}
+                  onChange={e => onToggleLayer('agamLandslide', e.target.checked)}
+                  className="h-4.5 w-4.5 cursor-pointer accent-[#0369a1]"
+                />
+              </label>
+            )}
 
             <div className="flex min-h-[44px] items-center justify-between gap-3 py-1.5">
               <div className="flex min-w-0 flex-1 items-center gap-1.5">
@@ -426,6 +428,7 @@ export function TerrainTab({
         </div>
       </section>
 
+      {hasRegionalOverlays && (
       <section className="rounded-xl border border-[#161c1a]/12 bg-white p-3.5">
         <div className="mb-2 flex items-center justify-between gap-2">
           <span className="flex min-w-0 items-center gap-1.5">
@@ -505,6 +508,7 @@ export function TerrainTab({
           </label>
         </div>
       </section>
+      )}
 
       <section className="rounded-xl border border-[#161c1a]/12 bg-white p-3.5">
         <div className="mb-2 flex items-center gap-2 text-[13px] font-bold text-[#161c1a]">

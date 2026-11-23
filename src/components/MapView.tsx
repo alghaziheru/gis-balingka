@@ -567,7 +567,7 @@ export function MapView(props: MapViewProps) {
         </div>
         ${desc ? `<p style="margin:0 0 8px;font-size:12.5px;line-height:1.45;color:#434d49;">${escapeHtml(desc)}</p>` : ''}
         <div style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#636f6a;">
-          ${isDetail ? `${lngLat[1].toFixed(5)}, ${lngLat[0].toFixed(5)} · ` : ''}~${elev} m dpl
+          ${isDetail ? `${lngLat[1].toFixed(5)}, ${lngLat[0].toFixed(5)} · ` : ''}~${elev} mdpl
         </div>
         ${actionBtnHtml}
       </div>
@@ -1732,7 +1732,7 @@ export function MapView(props: MapViewProps) {
               </button>`;
             } else if (!apiAvailableRef.current) {
               actionHtml = `<div style="margin-top:6px;padding:6px 8px;border-radius:6px;background:#f2f3ef;font-size:11px;color:#434d49;">
-                ${isEn ? 'Run `pnpm run server` to edit river alignment & burn into DEM.' : 'Jalankan `pnpm run server` untuk mengedit jalur sungai & bakar ke DEM.'}
+                ${isEn ? 'Read-only preview: editing waterways & embedding into DEM requires the application server.' : 'Mode baca saja: pengeditan jalur sungai & penyisipan ke DEM hanya aktif saat terhubung ke server aplikasi.'}
               </div>`;
             }
             const html = `
@@ -1795,16 +1795,16 @@ export function MapView(props: MapViewProps) {
               </button>`;
             } else if (!apiAvailableRef.current) {
               flowActionHtml = `<div style="margin-top:8px;padding:6px 8px;border-radius:6px;background:#f2f3ef;font-size:11px;color:#434d49;">
-                ${isEn ? 'Run `pnpm run server` to replace this estimate with the real river.' : 'Jalankan `pnpm run server` untuk mengganti garis perkiraan ini dengan sungai asli.'}
+                ${isEn ? 'Read-only preview: correcting this estimated path requires the application server.' : 'Mode baca saja: koreksi garis perkiraan ini hanya aktif saat terhubung ke server aplikasi.'}
               </div>`;
             }
             const html = `
               <div>
                 <span style="display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:700;margin-bottom:6px;background:rgba(180,83,9,0.14);color:#b45309;">
-                  ${escapeHtml(isEn ? 'DEMNAS Elevation Computation' : 'Komputasi Elevasi DEMNAS')}
+                  ${escapeHtml(isEn ? 'DEMNAS Elevation Computation' : 'Perkiraan Elevasi DEMNAS')}
                 </span>
                 <h4 style="margin:0 0 4px;font-size:13.5px;font-weight:700;color:#161c1a;">
-                  ${isDetail ? escapeHtml(segId) : escapeHtml(isEn ? 'Computed Slope-Flow Path' : 'Arah Kemiringan Elevasi (Komputasi)')}
+                  ${isDetail ? escapeHtml(segId) : escapeHtml(isEn ? 'Runoff Flow Path (DEM Estimate)' : 'Alur Limpasan Air (Perkiraan DEM)')}
                 </h4>
                 <p style="margin:0 0 6px;font-size:12.5px;line-height:1.45;color:#434d49;">
                   ${
@@ -2057,7 +2057,7 @@ export function MapView(props: MapViewProps) {
               ${isEn ? 'Pemkab Agam Open Map Attributes' : 'Atribut Peta Terbuka Pemkab Agam'}
             </div>
             <div style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#434d49;margin-bottom:6px;">
-              ${elev} m dpl · ${isEn ? 'Slope' : 'Lereng'} ${slope}%
+              ${elev} mdpl · ${isEn ? 'Slope' : 'Lereng'} ${slope}%
             </div>
             <div style="display:flex;justify-content:space-between;gap:10px;padding:3px 0;border-bottom:1px solid rgba(22,28,26,0.08);font-size:12px;">
               <span style="color:#636f6a;">${isEn ? 'Ground Movement Map' : 'Peta Gerakan Tanah'}</span>
@@ -2071,7 +2071,7 @@ export function MapView(props: MapViewProps) {
               ${escapeHtml(
                 isEn
                   ? 'Source: Pemkab Agam Open GIS (reference polygon attributes, not a house-level survey).'
-                  : 'Sumber: Pemkab Agam Open GIS (atribut poligon referensi, bukan pengukuran per-rumah).'
+                  : 'Sumber: Pemkab Agam Open GIS (atribut poligon referensi, bukan pengukuran per rumah).'
               )}
             </div>
           </div>
