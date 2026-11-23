@@ -1265,8 +1265,8 @@ async function main() {
         status: 'unverified',
         name_id: c.roadName ? `Perlintasan ${c.roadName}` : `Persilangan Jalan–Alur #${idx + 1}`,
         name_en: c.roadName ? `Crossing at ${c.roadName}` : `Road–Stream Crossing #${idx + 1}`,
-        desc_id: `Perkiraan persilangan jalan (${c.highway}) & alur air (belum dicek lapangan). Verifikasi lokasi & kapasitas gorong-gorong.`,
-        desc_en: `Estimated road (${c.highway}) & stream crossing (unverified). Field-check culvert presence and capacity.`
+        desc_id: `Titik silang jalan (${c.highway}) & alur komputasi DEM (belum diverifikasi lapangan).`,
+        desc_en: `DEM road (${c.highway}) & computed channel crossing (unverified in the field).`
       })),
     ...osm.bridgeFeatures
       .filter(
@@ -1298,29 +1298,7 @@ async function main() {
     fs.writeFileSync(path.join(OUT_DIR, `raster-hand-${k}.png`), buf);
   }
 
-  // Auto-seed mitigation & landslide candidates inside Balingka block
-  const checkDamFeatures = [];
-  for (const fp of flowPaths.features) {
-    if (fp.properties.tier === 2 && fp.properties.slope_pct >= 11 && checkDamFeatures.length < 4) {
-      const mid = fp.geometry.coordinates[Math.floor(fp.geometry.coordinates.length / 2)];
-      checkDamFeatures.push({
-        type: 'Feature',
-        properties: {
-          id: `cd-${checkDamFeatures.length + 1}`,
-          kind: 'bronjong',
-          status: 'normal',
-          verified: false,
-          name_id: `Kandidat Cekdam / Bronjong Hulu #${checkDamFeatures.length + 1}`,
-          name_en: `Candidate Check Dam / Gabion #${checkDamFeatures.length + 1}`,
-          desc_id: `Alur hulu curam (${fp.properties.slope_pct}% lereng, DAS ${fp.properties.catchment_ha} ha). Potensial penahan sedimen/kayu.`,
-          desc_en: `Steep upland channel (${fp.properties.slope_pct}% slope, ${fp.properties.catchment_ha} ha catchment). Potential debris-trap site.`
-        },
-        geometry: { type: 'Point', coordinates: mid }
-      });
-    }
-  }
-
-  // Pick top 3 steepest grid clusters (>38%) inside Nagari Balingka for landslide pin markers
+  // Pick top 3 steepest grid clusters (>38%) inside Nagari Balingka as pure DEM slope geometry points
   const landslideSeeds = [];
   const stepScan = Math.max(16, Math.round(16 * Math.sqrt(areaScale)));
   for (let r = 12; r < height - 12 && landslideSeeds.length < 3; r += stepScan) {
@@ -1335,12 +1313,12 @@ async function main() {
           properties: {
             id: `ls-${landslideSeeds.length + 1}`,
             kind: 'landslide',
-            status: 'critical',
+            status: 'normal',
             verified: false,
-            name_id: `Titik Lereng Terjal #${landslideSeeds.length + 1} (${Math.round(sl)}%)`,
+            name_id: `Titik Kemiringan Terjal #${landslideSeeds.length + 1} (${Math.round(sl)}%)`,
             name_en: `Steep Slope Point #${landslideSeeds.length + 1} (${Math.round(sl)}%)`,
-            desc_id: `Kemiringan ~${Math.round(sl)}% terdeteksi dari DEM; rawan luncuran tanah saat hujan berkepanjangan.`,
-            desc_en: `~${Math.round(sl)}% slope detected from DEM; susceptible to earthslides during heavy rain.`
+            desc_id: `Kemiringan lereng ~${Math.round(sl)}% dihitung dari elevasi BIG DEMNAS 8m (data geometri topografi).`,
+            desc_en: `~${Math.round(sl)}% terrain slope computed from BIG DEMNAS 8m elevation (pure geometry measurement).`
           },
           geometry: { type: 'Point', coordinates: [Number(lng.toFixed(6)), Number(lat.toFixed(6))] }
         });
@@ -1377,10 +1355,10 @@ async function main() {
         kind: 'evacuation',
         status: 'normal',
         verified: false,
-        name_id: `Kandidat Evakuasi: ${label}`,
-        name_en: `Evacuation Candidate: ${label}`,
-        desc_id: `Fasilitas publik resmi BIG RBI 50K (~${Math.round(hVal)}m di atas alur terdekat, di luar zona longsor Tinggi).`,
-        desc_en: `Official BIG RBI 50K public facility (~${Math.round(hVal)}m above nearest channel, outside High landslide zone).`
+        name_id: `Fasilitas Umum (BIG RBI): ${label}`,
+        name_en: `Public Facility (BIG RBI): ${label}`,
+        desc_id: `Fasilitas publik resmi BIG RBI 50K (~${Math.round(hVal)}m di atas alur terdekat menurut HAND). Informasi data elevasi — bukan penetapan titik evakuasi resmi.`,
+        desc_en: `Official BIG RBI 50K public facility (~${Math.round(hVal)}m above nearest channel via HAND). Elevation reference only — not an official evacuation designation.`
       },
       geometry: { type: 'Point', coordinates: [lng, lat] }
     });
@@ -1400,10 +1378,10 @@ async function main() {
           kind: 'evacuation',
           status: 'normal',
           verified: false,
-          name_id: `Kandidat Evakuasi: ${fac.properties.name}`,
-          name_en: `Evacuation Candidate: ${fac.properties.name}`,
-          desc_id: `Fasilitas publik OSM berada ~${Math.round(hVal)}m di atas dasar sungai terdekat.`,
-          desc_en: `OSM public facility situated ~${Math.round(hVal)}m above nearest drainage channel.`
+          name_id: `Fasilitas Umum (OSM): ${fac.properties.name}`,
+          name_en: `Public Facility (OSM): ${fac.properties.name}`,
+          desc_id: `Fasilitas publik OSM berada ~${Math.round(hVal)}m di atas dasar alur terdekat menurut HAND. Informasi data elevasi — bukan penetapan titik evakuasi resmi.`,
+          desc_en: `OSM public facility situated ~${Math.round(hVal)}m above nearest channel via HAND. Elevation reference only — not an official evacuation designation.`
         },
         geometry: { type: 'Point', coordinates: [lng, lat] }
       });
@@ -1424,10 +1402,10 @@ async function main() {
           kind: 'evacuation',
           status: 'normal',
           verified: false,
-          name_id: `Kandidat Titik Kumpul: ${pl.properties.name}`,
-          name_en: `Assembly Point Candidate: ${pl.properties.name}`,
-          desc_id: `Lahan tinggi (~${Math.round(hVal)}m di atas alur sungai terdekat) di sekitar ${pl.properties.name}.`,
-          desc_en: `Elevated ground (~${Math.round(hVal)}m above nearest channel) near ${pl.properties.name}.`
+          name_id: `Titik Elevasi Tinggi (OSM): ${pl.properties.name}`,
+          name_en: `Elevated Point (OSM): ${pl.properties.name}`,
+          desc_id: `Lokasi lahan tinggi (~${Math.round(hVal)}m di atas alur terdekat menurut HAND) di sekitar ${pl.properties.name}. Informasi data elevasi — bukan penetapan titik evakuasi resmi.`,
+          desc_en: `Elevated ground (~${Math.round(hVal)}m above nearest channel via HAND) near ${pl.properties.name}. Elevation reference only — not an official evacuation designation.`
         },
         geometry: { type: 'Point', coordinates: [lng, lat] }
       });
@@ -1451,7 +1429,6 @@ async function main() {
         },
         geometry: { type: 'Point', coordinates: b.coords }
       })),
-      ...checkDamFeatures,
       ...landslideSeeds,
       ...evacFeatures
     ]

@@ -1,5 +1,6 @@
 import { useId } from 'react';
-import { CHECKLIST_ITEMS, I18N } from '../i18n/translations';
+import { Building2, ExternalLink } from 'lucide-react';
+import { I18N } from '../i18n/translations';
 import type { DrainageStatus, Language, LayerToggles, ViewMode } from '../types/gis';
 import { InfoTooltip } from './InfoTooltip';
 import { LegendIcon, type LegendIconKind } from './LegendIcon';
@@ -10,13 +11,10 @@ interface DrainageTabProps {
   drainFilter: 'all' | DrainageStatus;
   counts: Record<'all' | DrainageStatus, number>;
   layers: LayerToggles;
-  checklist: Record<string, boolean>;
   onChangeFilter: (filter: 'all' | DrainageStatus) => void;
   onToggleLayer: (key: keyof LayerToggles, val: boolean) => void;
-  onToggleChecklist: (id: string, checked: boolean) => void;
   onFocusHulu: () => void;
   onFocusDrainage: () => void;
-  onJumpCompare: () => void;
   onFocusEvac: () => void;
 }
 
@@ -26,13 +24,10 @@ export function DrainageTab({
   drainFilter,
   counts,
   layers,
-  checklist,
   onChangeFilter,
   onToggleLayer,
-  onToggleChecklist,
   onFocusHulu,
   onFocusDrainage,
-  onJumpCompare,
   onFocusEvac
 }: DrainageTabProps) {
   const uid = useId();
@@ -49,20 +44,45 @@ export function DrainageTab({
     { id: 'critical', label: t.fCritical, color: '#b91c1c' }
   ];
 
-  const infraLayers: [keyof LayerToggles, string, LegendIconKind, string?][] = isDetail
-    ? [
-        ['evac', t.lblEvac, 'evacuation'],
-        ['landslide', t.lblLandslide, 'landslide', t.infoLandslideSlope],
-        ['bronjong', t.lblBronjong, 'bronjong', t.infoBronjong]
-      ]
-    : [
-        ['evac', t.lblEvac, 'evacuation'],
-        ['landslide', t.lblLandslide, 'landslide', t.infoLandslideSlope]
-      ];
+  const infraLayers: [keyof LayerToggles, string, LegendIconKind, string?][] = [
+    ['evac', t.lblEvac, 'evacuation', t.infoPublicHighGround],
+    ['landslide', t.lblLandslide, 'landslide', t.infoLandslideSlope]
+  ];
+
+  const officialAgencies = [
+    {
+      name: 'BMKG (Badan Meteorologi, Klimatologi, dan Geofisika)',
+      role: isEn
+        ? 'Official weather forecasts & extreme rainfall warnings'
+        : 'Prakiraan cuaca & peringatan dini cuaca ekstrem resmi',
+      href: 'https://www.bmkg.go.id'
+    },
+    {
+      name: 'BPBD Kab. Agam & BNPB',
+      role: isEn
+        ? 'Official disaster status declarations, early warnings & evacuation directives'
+        : 'Penetapan status bencana, informasi potensi bahaya & arahan evakuasi resmi',
+      href: 'https://bnpb.go.id'
+    },
+    {
+      name: 'PVMBG — Badan Geologi (ESDM)',
+      role: isEn
+        ? 'Official ground-movement / landslide susceptibility assessments'
+        : 'Kajian resmi zona gerakan tanah & geologi kebencanaan',
+      href: 'https://vsi.esdm.go.id'
+    },
+    {
+      name: isEn ? 'Wali Nagari Balingka Office & Wali Jorong' : 'Kantor Wali Nagari Balingka & Wali Jorong',
+      role: isEn
+        ? 'Local coordination, field infrastructure verification & community updates'
+        : 'Koordinasi lapangan, verifikasi saluran setempat & informasi resmi nagari',
+      href: null
+    }
+  ];
 
   return (
     <div className="flex flex-col gap-3.5">
-      {/* Unified Interactive Legend + Crossing Status Filters + Hazard Layers */}
+      {/* Unified Interactive Legend + Crossing Status Filters + Factual Reference Points */}
       <section className="rounded-xl border border-[#161c1a]/12 bg-white p-3.5">
         <div className="mb-2.5 flex items-center gap-1.5">
           <span className="text-[13px] font-bold text-[#161c1a]">{t.drainLegendTitle}</span>
@@ -135,81 +155,62 @@ export function DrainageTab({
         </div>
       </section>
 
+      {/* Quick Map Data Focus */}
       <section className="rounded-xl border border-[#161c1a]/12 bg-white p-3.5">
-        <div className="mb-2.5 text-[13px] font-bold text-[#161c1a]">{t.mitGuideTitle}</div>
+        <div className="mb-2.5 text-[13px] font-bold text-[#161c1a]">{t.quickNavTitle}</div>
+        <div className="grid grid-cols-3 gap-1.5">
+          <button
+            type="button"
+            onClick={onFocusDrainage}
+            className="min-h-[38px] rounded-lg border border-[#161c1a]/15 bg-[#fafaf8] px-2 py-1.5 text-[12px] font-semibold text-[#161c1a] transition hover:bg-[#f2f3ef]"
+          >
+            {t.quickFocusCulverts}
+          </button>
+          <button
+            type="button"
+            onClick={onFocusHulu}
+            className="min-h-[38px] rounded-lg border border-[#161c1a]/15 bg-[#fafaf8] px-2 py-1.5 text-[12px] font-semibold text-[#161c1a] transition hover:bg-[#f2f3ef]"
+          >
+            {t.quickFocusUpland}
+          </button>
+          <button
+            type="button"
+            onClick={onFocusEvac}
+            className="min-h-[38px] rounded-lg border border-[#161c1a]/15 bg-[#fafaf8] px-2 py-1.5 text-[12px] font-semibold text-[#161c1a] transition hover:bg-[#f2f3ef]"
+          >
+            {t.quickFocusFacilities}
+          </button>
+        </div>
+      </section>
 
-        <div className="flex flex-col divide-y divide-[#161c1a]/10">
-          <div className="pb-3">
-            <div className="mb-1 flex items-center justify-between gap-2">
-              <span className="text-[13.5px] font-bold text-[#161c1a]">{t.act1Title}</span>
-              <button
-                type="button"
-                onClick={onFocusHulu}
-                className="shrink-0 rounded-md border border-[#161c1a]/15 bg-[#fafaf8] px-2.5 py-1 text-[12px] font-semibold text-[#161c1a] hover:bg-[#f2f3ef]"
-              >
-                {t.viewMap}
-              </button>
-            </div>
-            <p className="m-0 text-[13px] leading-relaxed text-[#434d49]">{t.act1Desc}</p>
-          </div>
+      {/* Official References & Contacts */}
+      <section className="rounded-xl border border-[#161c1a]/12 bg-white p-3.5">
+        <div className="mb-1.5 flex items-center gap-2 text-[13px] font-bold text-[#161c1a]">
+          <Building2 className="h-4 w-4 shrink-0 text-[#0369a1]" />
+          <span>{t.officialRefTitle}</span>
+        </div>
+        <p className="m-0 mb-2.5 text-[12.5px] leading-relaxed text-[#434d49]">{t.officialRefIntro}</p>
 
-          <div className="py-3">
-            <div className="mb-1 flex items-center justify-between gap-2">
-              <span className="text-[13.5px] font-bold text-[#161c1a]">{t.act2Title}</span>
-              <button
-                type="button"
-                onClick={onFocusDrainage}
-                className="shrink-0 rounded-md border border-[#161c1a]/15 bg-[#fafaf8] px-2.5 py-1 text-[12px] font-semibold text-[#161c1a] hover:bg-[#f2f3ef]"
-              >
-                {t.viewMap}
-              </button>
+        <div className="divide-y divide-[#161c1a]/10 rounded-lg border border-[#161c1a]/10 bg-[#fafaf8]">
+          {officialAgencies.map(item => (
+            <div key={item.name} className="flex items-start justify-between gap-2 px-3 py-2">
+              <div className="min-w-0">
+                <div className="text-[12.5px] font-bold text-[#161c1a]">{item.name}</div>
+                <div className="mt-0.5 text-[11.5px] leading-snug text-[#434d49]">{item.role}</div>
+              </div>
+              {item.href && (
+                <a
+                  href={item.href}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  aria-label={item.name}
+                  className="mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-md border border-[#161c1a]/15 bg-white text-[#0369a1] hover:bg-[#f2f3ef]"
+                >
+                  <ExternalLink className="h-3.5 w-3.5" />
+                </a>
+              )}
             </div>
-            <p className="m-0 mb-2.5 text-[13px] leading-relaxed text-[#434d49]">{t.act2Desc}</p>
-            <button
-              type="button"
-              onClick={onJumpCompare}
-              className="min-h-[38px] w-full rounded-lg bg-[#047857] px-3 py-2 text-[12.5px] font-bold text-white transition hover:bg-[#065f46]"
-            >
-              {t.act2Cta}
-            </button>
-          </div>
-
-          <div className="pt-3">
-            <div className="mb-2 flex items-center justify-between gap-2">
-              <span className="flex min-w-0 items-center gap-1.5">
-                <span className="text-[13.5px] font-bold text-[#161c1a]">{t.act3Title}</span>
-                <InfoTooltip text={t.act3Desc} label={t.act3Title} />
-              </span>
-              <button
-                type="button"
-                onClick={onFocusEvac}
-                className="shrink-0 rounded-md border border-[#161c1a]/15 bg-[#fafaf8] px-2.5 py-1 text-[12px] font-semibold text-[#161c1a] hover:bg-[#f2f3ef]"
-              >
-                {t.viewMap}
-              </button>
-            </div>
-            <div className="flex flex-col divide-y divide-[#161c1a]/8">
-              {CHECKLIST_ITEMS.map(item => {
-                const checked = !!checklist[item.id];
-                return (
-                  <label key={item.id} className="flex min-h-[40px] cursor-pointer items-start gap-2.5 py-2 text-[13px] leading-snug">
-                    <input
-                      type="checkbox"
-                      checked={checked}
-                      onChange={e => onToggleChecklist(item.id, e.target.checked)}
-                      className="mt-0.5 h-4 w-4 shrink-0 accent-[#047857]"
-                    />
-                    <span className={checked ? 'text-[#636f6a] line-through' : 'text-[#161c1a]'}>
-                      {isEn ? item.enText : item.idText}
-                    </span>
-                  </label>
-                );
-              })}
-            </div>
-            <div className="mt-2.5 rounded-r-lg border-l-[3px] border-[#0369a1] bg-[#0369a1]/8 px-3 py-2 text-[12.5px] leading-snug text-[#161c1a]">
-              {t.emergencyNote}
-            </div>
-          </div>
+          ))}
         </div>
       </section>
     </div>

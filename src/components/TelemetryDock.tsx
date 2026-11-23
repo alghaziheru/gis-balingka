@@ -237,15 +237,6 @@ export function TelemetryDock({
       checked: layers.evac,
       onChange: v => onToggleLayer('evac', v)
     });
-    if (isDetail) {
-      mobileToggleItems.push({
-        id: 'bronjong',
-        label: t.lblBronjong,
-        icon: 'bronjong',
-        checked: layers.bronjong,
-        onChange: v => onToggleLayer('bronjong', v)
-      });
-    }
   } else {
     mobileToggleItems.push({
       id: 'evac',
@@ -261,15 +252,6 @@ export function TelemetryDock({
       checked: layers.landslide,
       onChange: v => onToggleLayer('landslide', v)
     });
-    if (isDetail) {
-      mobileToggleItems.push({
-        id: 'bronjong',
-        label: t.lblBronjong,
-        icon: 'bronjong',
-        checked: layers.bronjong,
-        onChange: v => onToggleLayer('bronjong', v)
-      });
-    }
   }
 
   return (
@@ -418,19 +400,19 @@ export function TelemetryDock({
                 <div className="mb-2 flex flex-col gap-1 border-b border-[#161c1a]/10 pb-2 text-[12px]">
                   <div className="flex items-center gap-2 text-[#161c1a]">
                     <LegendIcon kind="flow" size={16} />
-                    <span>{isEn ? 'Rain runoff wave (DEM)' : 'Gelombang air limpasan'}</span>
+                    <span>{isEn ? 'Modeled flow direction (DEM)' : 'Arah aliran model (DEM)'}</span>
                   </div>
                   <div className="flex items-center gap-2 text-[#161c1a]">
                     <span className="h-2.5 w-2.5 shrink-0 rounded-[2px] bg-[#0369a1]" />
-                    <span>{isEn ? 'Deep valley surge (>1.5m)' : 'Luapan koridor utama (>1,5m)'}</span>
+                    <span>{isEn ? 'Deep basin (>1.5m HAND)' : 'Cekungan utama (>1,5m HAND)'}</span>
                   </div>
                   <div className="flex items-center gap-2 text-[#161c1a]">
                     <span className="h-2.5 w-2.5 shrink-0 rounded-[2px] bg-[#7dd3fc]" />
-                    <span>{isEn ? 'Shallow low-ground overflow' : 'Genangan koridor rendah'}</span>
+                    <span>{isEn ? 'Shallow basin (HAND)' : 'Cekungan dangkal (HAND)'}</span>
                   </div>
                   <div className="flex items-center gap-2 text-[#161c1a]">
                     <span className="h-2.5 w-2.5 shrink-0 rounded-[2px] bg-[#ea580c]" />
-                    <span>{isEn ? 'Saturated steep slope (landslide)' : 'Lereng jenuh rawan longsor'}</span>
+                    <span>{isEn ? 'Saturated steep slope (model)' : 'Lereng curam jenuh (model)'}</span>
                   </div>
                 </div>
               )}

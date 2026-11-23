@@ -352,8 +352,8 @@ export function StructureEditorPanel({
         {structures.length === 0 ? (
           <p className="m-0 rounded-lg border border-dashed border-[#161c1a]/15 bg-[#fafaf8] px-3 py-4 text-center text-[12.5px] text-[#636f6a]">
             {isEn
-              ? 'No verified culverts or bridges yet. Click "Add Culvert / Bridge Point" or verify an unverified crossing in Siaga.'
-              : 'Belum ada gorong-gorong/jembatan terverifikasi. Tambah titik baru atau verifikasi titik abu-abu di tab Siaga.'}
+              ? 'No verified culverts or bridges yet. Click "Add Culvert / Bridge Point" or verify an unverified crossing in Drainage.'
+              : 'Belum ada gorong-gorong/jembatan terverifikasi. Tambah titik baru atau verifikasi titik abu-abu di tab Drainase.'}
           </p>
         ) : (
           <div className="flex flex-col divide-y divide-[#161c1a]/10">

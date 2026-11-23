@@ -275,7 +275,6 @@ export interface LayerToggles {
   contours: boolean;
   slope: boolean;
   osmContext: boolean;
-  bronjong: boolean;
   landslide: boolean;
   evac: boolean;
 }

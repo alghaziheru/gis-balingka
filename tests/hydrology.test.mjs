@@ -165,6 +165,15 @@ test('generated Balingka-only block assets, smooth PNGs, and mask.geojson are va
   for (const c of draftCrossings) {
     assert.equal(c.properties.status, 'unverified', `uninspected crossing ${c.properties.id} must be unverified`);
   }
+  assert.equal(
+    draft.features.some(f => f.properties?.kind === 'bronjong'),
+    false,
+    'drainage-draft.geojson must not include bronjong engineering recommendation points'
+  );
+  const draftRaw = JSON.stringify(draft);
+  for (const banned of ['Kandidat Evakuasi', 'Kandidat Cekdam', 'rawan luncuran']) {
+    assert.equal(draftRaw.includes(banned), false, `drainage-draft.geojson must not contain "${banned}"`);
+  }
 });
 
 test('filterOverlappingFlowPaths drops DEM reaches near verified waterways while preserving distant tributaries', () => {

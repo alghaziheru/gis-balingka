@@ -174,15 +174,15 @@ export function SimulationTab({
 
   const agamCalibrationTooltip = agamStats
     ? isEn
-      ? `${agamStats.andosolPct}% volcanic Andosol soil. ${
+      ? `Open Pemkab Agam polygon attributes used as model inputs (${agamStats.andosolPct}% Andosol soil). ${
           kpis.landslideAreaHa > 0
-            ? `${kpis.officialLandslideOverlapPct}% of high-risk modeled slopes match official BPBD Medium/High zones.`
-            : `Official zones: ${agamStats.officialHighPct}% High, ${agamStats.officialMedPct}% Medium.`
+            ? `${kpis.officialLandslideOverlapPct}% of modeled steep-slope cells overlap Pemkab Agam Medium/High ground-movement polygons.`
+            : `Pemkab Agam ground-movement polygons: ${agamStats.officialHighPct}% High, ${agamStats.officialMedPct}% Medium.`
         }`
-      : `${agamStats.andosolPct}% tanah vulkanik Andosol. ${
+      : `Atribut peta terbuka Pemkab Agam yang dipakai sebagai input model (${agamStats.andosolPct}% tanah Andosol). ${
           kpis.landslideAreaHa > 0
-            ? `${kpis.officialLandslideOverlapPct}% zona lereng kritis cocok dengan peta Rawan Gerakan Tanah Sedang/Tinggi Pemkab Agam.`
-            : `Zona resmi: ${agamStats.officialHighPct}% Tinggi, ${agamStats.officialMedPct}% Sedang.`
+            ? `${kpis.officialLandslideOverlapPct}% sel lereng curam pada luaran model beririsan dengan poligon Peta Gerakan Tanah Sedang/Tinggi Pemkab Agam.`
+            : `Poligon Peta Gerakan Tanah Pemkab Agam: ${agamStats.officialHighPct}% Tinggi, ${agamStats.officialMedPct}% Sedang.`
         }`
     : '';
 
@@ -262,14 +262,14 @@ export function SimulationTab({
           </div>
         </div>
 
-        <div className="mt-2 flex items-center justify-between gap-1.5 rounded-md bg-[#b45309]/8 px-2 py-1 text-[11px] font-medium text-[#78350f]">
-          <span className="flex min-w-0 items-center gap-1.5">
-            <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-[#b45309]" />
-            <span className="truncate">{t.simIndicativeShort}</span>
+        <div className="mt-2 flex items-start justify-between gap-1.5 rounded-md border border-[#b45309]/25 bg-[#b45309]/8 px-2.5 py-1.5 text-[11px] leading-snug font-semibold text-[#78350f]">
+          <span className="flex min-w-0 items-start gap-1.5">
+            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[#b45309]" />
+            <span>{t.simIndicativeShort}</span>
           </span>
           <InfoTooltip
             text={isDetail ? t.simDisclaimerDetail : t.simDisclaimer}
-            label={isEn ? 'Simulation disclaimer' : 'Penjelasan simulasi indikatif'}
+            label={isEn ? 'Model scope & disclaimer' : 'Penjelasan batas model'}
           />
         </div>
       </div>
@@ -471,22 +471,22 @@ export function SimulationTab({
         {verifiedIssueCount > 0 && progress > 0.02 && drainCondition !== 'cleared' && (
           <div className="mt-2.5 rounded-lg bg-[#b45309]/10 px-3 py-2 text-[12px] font-semibold text-[#92400e]">
             {isEn
-              ? `${verifiedIssueCount} field-confirmed clogged/critical culvert(s) highlighted on map.`
-              : `${verifiedIssueCount} gorong-gorong bermasalah di lapangan disorot terlebih dulu di peta.`}
+              ? `${verifiedIssueCount} field-recorded clogged/damaged culvert(s) highlighted on map.`
+              : `${verifiedIssueCount} titik gorong-gorong berstatus tersumbat/rusak di lapangan disorot pada peta.`}
           </div>
         )}
       </section>
 
-      {/* Indicative Cascade KPIs */}
+      {/* Model Output Summary */}
       <section className="rounded-xl border border-[#161c1a]/12 bg-white p-3.5">
         <div className="mb-2.5 flex flex-wrap items-center justify-between gap-1.5">
           <span className="text-[13px] font-bold text-[#161c1a]">
-            {isEn ? 'Indicative Cascade Impact' : 'Ringkasan Dampak Indikatif'}
+            {isEn ? 'Computed Model Outputs' : 'Ringkasan Luaran Model'}
           </span>
           <div className="flex items-center gap-1.5">
             {drainCondition === 'cleared' && progress > 0.03 && kpis.reductionPct > 0 && (
               <span className="font-mono-num rounded-md bg-[#047857]/12 px-2 py-0.5 text-[11px] font-bold text-[#047857]">
-                -{kpis.reductionPct}% {isEn ? 'overflow' : 'luapan'}
+                -{kpis.reductionPct}% {isEn ? 'HAND zone' : 'area model'}
               </span>
             )}
             {isDetail && agamStats && (
@@ -592,9 +592,9 @@ export function SimulationTab({
           soilMoisture
         });
 
-        const overflowLabel = isEn ? 'Bankfull overflow (Manning)' : 'Mulai meluap (Manning)';
-        const wideningLabel = isEn ? 'Bank widening (ω ≥ 300 W/m²)' : 'Pelebaran tebing (ω ≥ 300 W/m²)';
-        const scourLabel = isEn ? 'Severe galodo scour (ω ≥ 1000)' : 'Gerusan galodo berat (ω ≥ 1000)';
+        const overflowLabel = isEn ? 'Bankfull capacity (Manning)' : 'Kapasitas penuh tebing (Manning)';
+        const wideningLabel = isEn ? 'High stream power (ω ≥ 300 W/m²)' : 'Energi arus tinggi (ω ≥ 300 W/m²)';
+        const scourLabel = isEn ? 'Extreme stream power (ω ≥ 1000)' : 'Energi arus ekstrem (ω ≥ 1000)';
 
         return (
           <section className="rounded-xl border border-[#161c1a]/12 bg-white p-3.5">
@@ -681,7 +681,7 @@ export function SimulationTab({
         );
       })()}
 
-      {/* Compact Read-Only Cascade Legend */}
+      {/* Compact Read-Only Computed Output Legend */}
       <section className="rounded-xl border border-[#161c1a]/12 bg-white p-3.5">
         <div className="mb-2 text-[13px] font-bold text-[#161c1a]">{t.simLegendTitle}</div>
         <div className="grid grid-cols-2 gap-x-3 gap-y-2 text-[12px] leading-snug text-[#161c1a]">
@@ -689,29 +689,29 @@ export function SimulationTab({
             <span className="mt-0.5 shrink-0">
               <LegendIcon kind="flow" />
             </span>
-            <span>{isEn ? 'Runoff wave (upland → river)' : 'Gelombang limpasan'}</span>
+            <span>{isEn ? 'Modeled flow direction' : 'Arah aliran model'}</span>
           </div>
           <div className="flex items-start gap-2">
             <span className="mt-1 h-3 w-3 shrink-0 rounded-[3px] bg-[#0369a1]" />
             <span className="flex items-center gap-1">
-              <span>{isEn ? 'Deep surge (>1.5m)' : 'Luapan utama (>1,5m)'}</span>
+              <span>{isEn ? 'Deep basin (>1.5m HAND)' : 'Cekungan utama (>1,5m HAND)'}</span>
               <InfoTooltip
                 text={t.infoLegendDeep}
-                label={isEn ? 'Deep valley surge' : 'Luapan koridor utama'}
+                label={isEn ? 'Deep HAND basin' : 'Cekungan utama HAND'}
               />
             </span>
           </div>
           <div className="flex items-start gap-2">
             <span className="mt-1 h-3 w-3 shrink-0 rounded-[3px] bg-[#7dd3fc]" />
-            <span>{isEn ? 'Shallow overflow' : 'Genangan rendah'}</span>
+            <span>{isEn ? 'Shallow basin (HAND)' : 'Cekungan dangkal (HAND)'}</span>
           </div>
           <div className="flex items-start gap-2">
             <span className="mt-1 h-3 w-3 shrink-0 rounded-[3px] bg-[#ea580c]" />
             <span className="flex items-center gap-1">
-              <span>{isEn ? 'Landslide slope' : 'Lereng rawan longsor'}</span>
+              <span>{isEn ? 'Steep slope (model)' : 'Lereng curam jenuh (model)'}</span>
               <InfoTooltip
                 text={t.infoLegendLandslide}
-                label={isEn ? 'Saturated steep slope' : 'Lereng jenuh rawan longsor'}
+                label={isEn ? 'Saturated steep slope (model)' : 'Lereng curam terjenuhkan (model)'}
               />
             </span>
           </div>

@@ -186,6 +186,14 @@ export function WaterwayEditorPanel({
     critical: 'bg-[#b91c1c]/14 text-[#b91c1c]'
   };
 
+  const statusLabel: Record<DrainageStatus, string> = {
+    unverified: t.fUnverified,
+    normal: t.fNormal,
+    clogged: t.fClogged,
+    damaged: t.fDamaged,
+    critical: t.fCritical
+  };
+
   return (
     <div className="flex flex-col gap-3.5">
       <section className="rounded-xl border border-[#161c1a]/12 bg-white p-3.5">
@@ -580,7 +588,7 @@ export function WaterwayEditorPanel({
                       statusPill[w.properties.status] || statusPill.normal
                     }`}
                   >
-                    {w.properties.status}
+                    {statusLabel[w.properties.status] || w.properties.status}
                   </span>
                   <span className="font-mono-num text-[11.5px] text-[#636f6a]">
                     {w.properties.kind} · {w.properties.length_m}m

@@ -2,9 +2,9 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ChevronLeft,
   Droplets,
+  MapPin,
   Menu,
   Mountain,
-  ShieldAlert,
   Wrench
 } from 'lucide-react';
 import { DrainageTab } from './components/DrainageTab';
@@ -51,7 +51,6 @@ import {
 import { CascadeEngine, extractBuildingCentroids } from './lib/cascadeEngine';
 import { DemClient } from './lib/demClient';
 import { haversineMeters, orientCoordinatesDownhill } from './lib/geometry';
-import { loadChecklistState, saveChecklistState } from './lib/storage';
 import type {
   ActiveTool,
   AuditLogEntry,
@@ -110,7 +109,6 @@ export function App() {
     contours: false,
     slope: false,
     osmContext: false,
-    bronjong: true,
     landslide: true,
     evac: true
   });
@@ -139,7 +137,6 @@ export function App() {
   const [rainAnimEnabled, setRainAnimEnabled] = useState(true);
 
   const [drainFilter, setDrainFilter] = useState<'all' | DrainageStatus>('all');
-  const [checklist, setChecklist] = useState<Record<string, boolean>>(() => loadChecklistState());
   const [drawVertices, setDrawVertices] = useState<[number, number][]>([]);
 
   const [editorSubTab, setEditorSubTab] = useState<EditorSubTab>('waterways');
@@ -539,8 +536,8 @@ export function App() {
       setDataVersion(nextVer);
       notify(
         lang === 'en'
-          ? `DEM burned (${res.summary.burnedCellCount} cells) & flood/flow maps updated.`
-          : `DEM berhasil dibakar (${res.summary.burnedCellCount} sel) & peta aliran/banjir diperbarui.`
+          ? `DEM updated (${res.summary.burnedCellCount} cells) & flow/HAND maps recomputed.`
+          : `DEM berhasil diperbarui (${res.summary.burnedCellCount} sel) & peta aliran/HAND dihitung ulang.`
       );
     } catch (err) {
       notify(err instanceof Error ? err.message : 'Hydrology recompute failed');
@@ -579,13 +576,13 @@ export function App() {
       ? ([
           ['terrain', t.tabTerrain, Mountain],
           ['sim', t.tabSim, Droplets],
-          ['drainage', t.tabDrainage, ShieldAlert],
+          ['drainage', t.tabDrainage, MapPin],
           ['editor', t.tabEditor, Wrench]
         ] as const)
       : ([
           ['terrain', t.tabTerrain, Mountain],
           ['sim', t.tabSim, Droplets],
-          ['drainage', t.tabDrainage, ShieldAlert]
+          ['drainage', t.tabDrainage, MapPin]
         ] as const);
 
   const suppressedDemIds = useMemo(() => suppressedDem.map(s => s.seg_id), [suppressedDem]);
@@ -1011,14 +1008,8 @@ export function App() {
               drainFilter={drainFilter}
               counts={drainageCounts}
               layers={layers}
-              checklist={checklist}
               onChangeFilter={setDrainFilter}
               onToggleLayer={(key, val) => setLayers(prev => ({ ...prev, [key]: val }))}
-              onToggleChecklist={(id, val) => {
-                const next = { ...checklist, [id]: val };
-                setChecklist(next);
-                saveChecklistState(next);
-              }}
               onFocusHulu={() => {
                 setLayers(prev => ({ ...prev, slope: true }));
                 setIs3D(true);
@@ -1027,14 +1018,6 @@ export function App() {
               onFocusDrainage={() => {
                 setDrainFilter('all');
                 flyTo([100.3248, -0.3365], { zoom: 15.0, pitch: 35, bearing: -10 });
-              }}
-              onJumpCompare={() => {
-                setTab('sim');
-                setSimRain(65);
-                setSimDurationMin(120);
-                setSimProgress(0.7);
-                setDrainCondition('cleared');
-                setSimPlaying(false);
               }}
               onFocusEvac={() => {
                 setLayers(prev => ({ ...prev, evac: true }));
@@ -1373,6 +1356,20 @@ export function App() {
               }}
             />
           )}
+        </div>
+
+        <div
+          className={`shrink-0 border-t border-[#161c1a]/10 bg-[#fafaf8] px-3.5 py-2 text-[11px] leading-snug text-[#636f6a] ${
+            mobileSheetMode === 'peek' ? 'max-md:hidden' : ''
+          }`}
+        >
+          <button
+            type="button"
+            onClick={() => setInfoModalTab('guide')}
+            className="text-left transition hover:text-[#0369a1]"
+          >
+            {t.sidebarScopeFooter} →
+          </button>
         </div>
       </aside>
 

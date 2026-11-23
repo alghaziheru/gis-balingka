@@ -83,10 +83,10 @@ export function InfoDataModal({
     { name: 'BIG DEMNAS (~8.3m) & RBI 50K Agam (Dec 2022)', role: isEn ? 'High-resolution DEM, rivers, culverts, bridges & public shelters' : 'Elevasi tanah ~8,3m, sungai, gorong-gorong, jembatan & fasilitas umum resmi BIG', license: 'Public Gov Data (BIG)' },
     { name: 'BIG Batas Wilayah Desa/Nagari (June 2026)', role: isEn ? 'Official Nagari Balingka polygon (13.06.05.2003)' : 'Poligon resmi batas Nagari Balingka (13.06.05.2003)', license: 'Public Gov Data (BIG)' },
     { name: 'ESA WorldCover 10m v200', role: isEn ? '10m forest, cropland & built-up land cover' : 'Tutupan lahan hutan, kebun, sawah & terbangun (10m)', license: 'CC-BY-4.0' },
-    { name: 'Copernicus Sentinel-2 L2A (10m)', role: isEn ? 'Pre vs post disaster scour & vegetation loss change' : 'Deteksi koridor gerusan & kehilangan vegetasi pra vs pasca bencana (10m)', license: 'Copernicus Open License' },
+    { name: 'Copernicus Sentinel-2 L2A (10m)', role: isEn ? 'Pre vs post vegetation-index (NDVI) difference (Dec 2022 vs Jul 2024)' : 'Selisih indeks vegetasi (NDVI) satelit antara 24 Des 2022 dan 11 Jul 2024 (10m)', license: 'Copernicus Open License' },
     { name: 'OpenStreetMap & OpenTopoMap', role: isEn ? 'Buildings, roads, rivers, bridges & topo basemap' : 'Bangunan, jalan, sungai, jembatan & peta topografi', license: 'ODbL / CC-BY-SA' },
     { name: 'Google Open Buildings v3', role: isEn ? 'Rural building footprint supplement (confidence >= 0.75)' : 'Pelengkap tapak bangunan pedesaan (kepercayaan >= 0,75)', license: 'CC-BY-4.0' },
-    { name: 'Pemkab Agam Open GIS (ArcGIS Web Maps)', role: isEn ? 'Official landslide hazard, soil (Andosol), geology, BMKG rainfall & SK 35 forest' : 'Zona rawan longsor, jenis tanah (Andosol), geologi, curah hujan BMKG & hutan SK 35', license: 'Public Gov Data' },
+    { name: 'Pemkab Agam Open GIS (ArcGIS Web Maps)', role: isEn ? 'Ground-movement map, soil (Andosol), geology, BMKG rainfall & SK 35 forest' : 'Peta gerakan tanah, jenis tanah (Andosol), geologi, curah hujan BMKG & hutan SK 35', license: 'Public Gov Data' },
     { name: 'Esri World Imagery', role: isEn ? 'Satellite basemap (replaceable with drone tiles)' : 'Citra satelit (dapat diganti citra drone lokal)', license: 'Free w/ Attribution' }
   ];
 
@@ -156,8 +156,8 @@ export function InfoDataModal({
             <div className="flex flex-col gap-4">
               <p className="m-0 text-[#434d49]">
                 {isEn
-                  ? 'This open map helps residents and local authorities understand water flow from the southern slopes of Mount Singgalang, identify flood-prone lowlands, check culvert conditions, and report issues directly from the field.'
-                  : 'Peta terbuka ini membantu warga dan perangkat nagari melihat arah aliran air dari lereng selatan Gunung Singgalang, mengenali wilayah dataran rendah rawan genangan, memantau kondisi gorong-gorong, dan melaporkan temuan lapangan secara langsung.'}
+                  ? 'This open spatial data viewer displays geographic datasets from BIG, Pemkab Agam, ESA/Copernicus, and OpenStreetMap alongside field-verified river and culvert records in Nagari Balingka — without making disaster declarations or predictions.'
+                  : 'Portal data terbuka ini menampilkan kumpulan data geospasial resmi dan terbuka (BIG, Pemkab Agam, ESA/Copernicus, OpenStreetMap) serta catatan kondisi sungai dan gorong-gorong lapangan di Nagari Balingka — tanpa membuat kesimpulan atau pernyataan status bencana.'}
               </p>
 
               <div className="rounded-xl border border-[#161c1a]/12 bg-[#fafaf8] p-4">
@@ -168,20 +168,20 @@ export function InfoDataModal({
                   <li>
                     <strong className="text-[#161c1a]">{isEn ? 'Map tab:' : 'Tab Peta:'}</strong>{' '}
                     {isEn
-                      ? 'Jump straight to your Jorong (Pahambatan, Koto Hilalang, Subarang) and toggle verified streams vs. rainwater estimates.'
-                      : 'Pilih langsung Jorong Anda (Pahambatan, Koto Hilalang, Subarang) untuk melihat sungai terverifikasi dan perkiraan aliran air hujan.'}
+                      ? 'Jump to a Jorong (Pahambatan, Koto Hilalang, Subarang) and toggle verified rivers, vegetation-change layers, Pemkab Agam reference maps, or DEMNAS slope-flow lines.'
+                      : 'Pilih Jorong (Pahambatan, Koto Hilalang, Subarang) dan tampilkan data sungai terverifikasi, perubahan tutupan vegetasi, peta referensi Pemkab Agam, atau arah kemiringan elevasi DEMNAS.'}
                   </li>
                   <li>
                     <strong className="text-[#161c1a]">{isEn ? 'Simulation tab:' : 'Tab Simulasi:'}</strong>{' '}
                     {isEn
-                      ? 'Test rainfall intensity and storm duration with live falling rain and compare clogged vs. cleared culverts.'
-                      : 'Uji intensitas dan durasi curah hujan beserta animasi hujan turun, lalu bandingkan saluran tersumbat vs. normal.'}
+                      ? 'Explore a computational terrain flow model across rainfall and channel-state input parameters (educational visualization only, not a hazard prediction).'
+                      : 'Eksplorasi model visualisasi aliran topografi berdasarkan variasi parameter input hujan dan saluran (hanya untuk visualisasi komputasi, bukan prediksi bencana).'}
                   </li>
                   <li>
-                    <strong className="text-[#161c1a]">{isEn ? 'Preparedness tab:' : 'Tab Siaga:'}</strong>{' '}
+                    <strong className="text-[#161c1a]">{isEn ? 'Drainage tab:' : 'Tab Drainase:'}</strong>{' '}
                     {isEn
-                      ? 'View critical road crossings, evacuation points on higher ground, and keep a household readiness checklist.'
-                      : 'Cek titik persilangan jalan–sungai yang kritis, lokasi evakuasi tinggi, dan daftar siaga keluarga.'}
+                      ? 'Filter culverts and bridges by field physical condition, inspect steep DEM slope points or elevated BIG RBI facilities, and access official agency references.'
+                      : 'Saring gorong-gorong dan jembatan berdasarkan kondisi fisik lapangan, lihat titik kemiringan DEM maupun fasilitas umum BIG RBI, serta rujukan instansi berwenang.'}
                   </li>
                   <li>
                     <strong className="text-[#161c1a]">{isEn ? 'Feedback button:' : 'Tombol Feedback:'}</strong>{' '}
@@ -196,12 +196,12 @@ export function InfoDataModal({
                 <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-[#b45309]" />
                 <div>
                   <strong className="block font-bold">
-                    {isEn ? 'Important safety disclaimer' : 'Catatan penting & batas penggunaan'}
+                    {isEn ? 'Application Scope & Role Boundaries' : 'Ruang Lingkup & Batas Peran Aplikasi'}
                   </strong>
                   <span>
                     {isEn
-                      ? 'Flood zones and runoff lines are indicative terrain-based estimates from open satellite data — not certified engineering models. Always follow official instructions from Wali Nagari Balingka and BPBD Kab. Agam.'
-                      : 'Zona genangan dan garis aliran merupakan perkiraan indikatif berbasis topografi terbuka — bukan kajian hidrolika teknik bersertifikat. Saat cuaca ekstrem, selalu ikuti arahan resmi Wali Nagari Balingka dan BPBD Kab. Agam.'}
+                      ? 'This application strictly displays open spatial data, topographic computations (HAND / D8 / SCS-CN), and field infrastructure records. It does NOT issue disaster warnings, declare landslide/flood hazards, or designate official evacuation sites. Official hazard assessments, forecasts, and emergency directives belong exclusively to BNPB, BPBD Kab. Agam, BMKG, PVMBG, and Wali Nagari Balingka.'
+                      : 'Aplikasi ini hanya berfungsi sebagai media tampilan data spasial terbuka, komputasi topografi (HAND / D8 / SCS-CN), dan inventaris saluran lapangan. Aplikasi ini TIDAK menetapkan status bahaya, potensi longsor/banjir, maupun titik evakuasi resmi. Seluruh pernyataan potensi bahaya, peringatan dini cuaca, dan arahan evakuasi hanya bersumber dari BNPB, BPBD Kab. Agam, BMKG, PVMBG, peneliti berwenang, serta Pemerintah Nagari Balingka.'}
                   </span>
                 </div>
               </div>
@@ -264,14 +264,14 @@ export function InfoDataModal({
                 <p className="m-0 text-[13px] text-[#434d49]">
                   <strong className="text-[#161c1a]">2. D8 Flow & HAND Model:</strong>{' '}
                   {isEn
-                    ? 'Priority-Flood depression filling and D8 routing compute catchment drainage and HAND (Height Above Nearest Drainage) to estimate low-lying flood susceptibility.'
-                    : 'Pengisian cekungan Priority-Flood dan perutean D8 menghitung arah aliran serta indeks HAND (ketinggian relatif terhadap alur terdekat) untuk memetakan zona rendah rawan genangan.'}
+                    ? 'Priority-Flood depression filling and D8 routing compute topographic flow paths and HAND (Height Above Nearest Drainage) elevation-relative indices.'
+                    : 'Pengisian cekungan Priority-Flood dan perutean D8 menghitung arah kemiringan aliran topografi serta indeks HAND (ketinggian relatif terhadap alur terdekat).'}
                 </p>
                 <p className="m-0 text-[13px] text-[#434d49]">
                   <strong className="text-[#161c1a]">3. {isEn ? 'Known Accuracy Limits:' : 'Batas Akurasi:'}</strong>{' '}
                   {isEn
-                    ? 'Unverified DEMNAS 8m runoff lines (dashed) can still deviate around narrow roadside drains and culverts. Use Detailed mode → Waterways to verify or correct them.'
-                    : 'Garis perkiraan dari DEMNAS 8m (garis putus-putus) masih dapat meleset pada parit atau gorong-gorong sempit di lapangan. Gunakan mode Lengkap → Jalur Air untuk koreksi lapangan.'}
+                    ? 'Computed DEMNAS 8m D8 lines (dashed) can differ from narrow roadside drains and culverts in the field. Use Detailed mode → Waterways to verify or correct them.'
+                    : 'Garis komputasi dari DEMNAS 8m (garis putus-putus) dapat berbeda dari parit atau gorong-gorong sempit di lapangan. Gunakan mode Lengkap → Jalur Air untuk verifikasi data lapangan.'}
                 </p>
               </div>
             </div>

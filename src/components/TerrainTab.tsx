@@ -138,10 +138,12 @@ export function TerrainTab({
       </div>
       <div className="flex items-center gap-3">
         <span className="inline-flex items-center gap-1">
-          <span className="h-2.5 w-2.5 rounded-[2px] bg-[#991b1b]" /> {isEn ? 'Severe scour' : 'Gerusan berat'}
+          <span className="h-2.5 w-2.5 rounded-[2px] bg-[#991b1b]" />{' '}
+          {isEn ? 'Strong vegetation decrease' : 'Penurunan vegetasi tinggi'}
         </span>
         <span className="inline-flex items-center gap-1">
-          <span className="h-2.5 w-2.5 rounded-[2px] bg-[#d97706]" /> {isEn ? 'Moderate loss' : 'Terbuka sedang'}
+          <span className="h-2.5 w-2.5 rounded-[2px] bg-[#d97706]" />{' '}
+          {isEn ? 'Moderate vegetation decrease' : 'Penurunan vegetasi sedang'}
         </span>
       </div>
     </div>
@@ -150,7 +152,9 @@ export function TerrainTab({
   const agamLandslideKey = layers.agamLandslide && (
     <div className="rounded-lg bg-[#fafaf8] px-2.5 py-2 text-[11.5px] leading-snug text-[#434d49]">
       <div className="mb-1 font-semibold text-[#161c1a]">
-        {isEn ? 'BPBD / Pemkab Agam Official Zones' : 'Zona Resmi Pemkab Agam (Tap peta untuk detail)'}
+        {isEn
+          ? 'Ground Movement Classes — Source: Pemkab Agam / BPBD'
+          : 'Kelas Peta Gerakan Tanah — Sumber: Pemkab Agam / BPBD'}
       </div>
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
         <span className="inline-flex items-center gap-1">
@@ -162,6 +166,11 @@ export function TerrainTab({
         <span className="inline-flex items-center gap-1">
           <span className="h-2.5 w-2.5 rounded-[2px] bg-[#65a30d]" /> {isEn ? 'Low' : 'Rendah'}
         </span>
+      </div>
+      <div className="mt-1 text-[10.5px] text-[#636f6a]">
+        {isEn
+          ? 'Tap map to view open-map polygon attributes (reference layer, not a per-house survey).'
+          : 'Klik peta untuk melihat atribut poligon data terbuka (lapisan referensi, bukan pengukuran per-rumah).'}
       </div>
     </div>
   );

@@ -6,7 +6,6 @@ export type LegendIconKind =
   | 'structure'
   | 'crossing'
   | 'evacuation'
-  | 'bronjong'
   | 'landslide'
   | 'landCover'
   | 'scourChange'
@@ -191,23 +190,12 @@ export function LegendIcon({ kind, size = 18 }: LegendIconProps) {
     );
   }
 
-  if (kind === 'bronjong') {
-    return (
-      <svg width={size} height={size} viewBox="0 0 28 28" className="shrink-0" aria-hidden="true">
-        <rect x="2" y="2" width="24" height="24" rx="6" fill="#0369a1" stroke="#ffffff" strokeWidth="2" />
-        <rect x="7" y="16" width="14" height="4" rx="1" fill="#ffffff" />
-        <rect x="9" y="10.5" width="10" height="4" rx="1" fill="#ffffff" />
-      </svg>
-    );
-  }
-
   if (kind === 'landslide') {
     return (
       <svg width={size} height={size} viewBox="0 0 28 28" className="shrink-0" aria-hidden="true">
-        <rect x="2" y="2" width="24" height="24" rx="6" fill="#c2410c" stroke="#ffffff" strokeWidth="2" />
-        <path d="M14 7.5L21 19.5H7Z" fill="#ffffff" />
-        <line x1="14" y1="12" x2="14" y2="15.5" stroke="#c2410c" strokeWidth="2" strokeLinecap="round" />
-        <circle cx="14" cy="17.6" r="1.1" fill="#c2410c" />
+        <rect x="2" y="2" width="24" height="24" rx="6" fill="#b45309" stroke="#ffffff" strokeWidth="2" />
+        <path d="M7.5 19.5L13 9.5L20.5 19.5Z" fill="none" stroke="#ffffff" strokeWidth="2.1" strokeLinejoin="round" />
+        <line x1="16.5" y1="9" x2="21.5" y2="15.5" stroke="#ffffff" strokeWidth="1.9" strokeLinecap="round" />
       </svg>
     );
   }

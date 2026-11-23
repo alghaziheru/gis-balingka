@@ -357,37 +357,23 @@ function registerCartographicIcons(map: MapLibreMap): void {
     ctx.fill();
   });
 
-  // Gabion / check-dam candidate badge
-  addCanvasIcon('icon-bronjong', 28, (ctx, s) => {
-    drawBadgeFrame(ctx, s, '#0369a1');
-    ctx.fillStyle = '#ffffff';
-    ctx.beginPath();
-    ctx.roundRect(s * 0.25, s * 0.57, s * 0.5, s * 0.14, 1.5);
-    ctx.roundRect(s * 0.32, s * 0.37, s * 0.36, s * 0.14, 1.5);
-    ctx.fill();
-  });
-
-  // Steep slope / landslide hazard badge
+  // Steep slope (>38% DEMNAS) geometry badge
   addCanvasIcon('icon-landslide', 28, (ctx, s) => {
-    drawBadgeFrame(ctx, s, '#c2410c');
-    ctx.fillStyle = '#ffffff';
-    ctx.beginPath();
-    ctx.moveTo(s * 0.5, s * 0.27);
-    ctx.lineTo(s * 0.75, s * 0.7);
-    ctx.lineTo(s * 0.25, s * 0.7);
-    ctx.closePath();
-    ctx.fill();
-    ctx.strokeStyle = '#c2410c';
-    ctx.lineWidth = 2;
+    drawBadgeFrame(ctx, s, '#b45309');
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 2.1;
+    ctx.lineJoin = 'round';
     ctx.lineCap = 'round';
     ctx.beginPath();
-    ctx.moveTo(s * 0.5, s * 0.43);
-    ctx.lineTo(s * 0.5, s * 0.56);
+    ctx.moveTo(s * 0.27, s * 0.7);
+    ctx.lineTo(s * 0.46, s * 0.34);
+    ctx.lineTo(s * 0.73, s * 0.7);
+    ctx.closePath();
     ctx.stroke();
-    ctx.fillStyle = '#c2410c';
     ctx.beginPath();
-    ctx.arc(s * 0.5, s * 0.63, 1.2, 0, Math.PI * 2);
-    ctx.fill();
+    ctx.moveTo(s * 0.59, s * 0.32);
+    ctx.lineTo(s * 0.77, s * 0.55);
+    ctx.stroke();
   });
 }
 
@@ -506,19 +492,45 @@ export function MapView(props: MapViewProps) {
       normal: { id: 'Normal', en: 'Normal' },
       clogged: { id: 'Tersumbat', en: 'Clogged' },
       damaged: { id: 'Rusak', en: 'Damaged' },
-      critical: { id: 'Kritis', en: 'Critical' }
+      critical: { id: 'Rusak Berat', en: 'Severe' }
     };
+    const isSteepSlopePoint = p.kind === 'landslide';
+    const isElevatedFacility = p.kind === 'evacuation';
     const st = statusNames[status] || statusNames.unverified;
+    const badgeStyle = isSteepSlopePoint
+      ? 'background:rgba(180,83,9,0.14);color:#b45309'
+      : isElevatedFacility
+      ? 'background:rgba(4,120,87,0.12);color:#047857'
+      : badgeColors[status] || badgeColors.unverified;
+    const badgeText = isSteepSlopePoint
+      ? isEn
+        ? 'DEMNAS Slope Data'
+        : 'Data Kemiringan DEMNAS'
+      : isElevatedFacility
+      ? isEn
+        ? 'Official BIG RBI 50K'
+        : 'Data Resmi BIG RBI 50K'
+      : isEn
+      ? st.en
+      : st.id;
     const tagText = isCommunity
       ? isEn
         ? 'Resident Note (Local)'
         : 'Catatan Warga (Lokal)'
+      : isSteepSlopePoint
+      ? isEn
+        ? 'Terrain Geometry Point · BIG DEMNAS 8m'
+        : 'Titik Geometri Elevasi · BIG DEMNAS 8m'
+      : isElevatedFacility
+      ? isEn
+        ? 'Elevated Public Facility · Not an Official Evacuation Designation'
+        : 'Fasilitas Umum Elevasi Tinggi · Bukan Penetapan Evakuasi Resmi'
       : status === 'unverified'
       ? isEn
-        ? 'Auto-detected Road–Stream Crossing (Unverified)'
-        : 'Perkiraan Persilangan Jalan–Alur (Belum Dicek)'
+        ? 'DEM Road–Channel Crossing / Reference Point (Unverified)'
+        : 'Titik Silang Jalan–Alur DEM / Data Referensi (Belum Dicek)'
       : isEn
-      ? 'Field Estimate / Monitored Point'
+      ? 'Field Survey / Monitored Point'
       : 'Titik Pantau Lapangan';
     const elev = Math.round(demRef.current.getElevation(lngLat[0], lngLat[1]));
 
@@ -546,8 +558,8 @@ export function MapView(props: MapViewProps) {
 
     const html = `
       <div>
-        <span style="display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:700;margin-bottom:6px;${badgeColors[status] || badgeColors.unverified}">
-          ${escapeHtml(isEn ? st.en : st.id)}
+        <span style="display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:700;margin-bottom:6px;${badgeStyle}">
+          ${escapeHtml(badgeText)}
         </span>
         <h4 style="margin:0 0 4px;font-size:14px;font-weight:700;color:#161c1a;">${escapeHtml(name)}</h4>
         <div style="margin-bottom:6px;font-size:11.5px;font-weight:600;color:#636f6a;">
@@ -1367,8 +1379,6 @@ export function MapView(props: MapViewProps) {
             ['get', 'kind'],
             'evacuation',
             'icon-evacuation',
-            'bronjong',
-            'icon-bronjong',
             'landslide',
             'icon-landslide',
             'icon-crossing-unverified'
@@ -1646,7 +1656,7 @@ export function MapView(props: MapViewProps) {
               normal: { id: 'Normal', en: 'Normal', color: '#047857', bg: 'rgba(4,120,87,0.12)' },
               clogged: { id: 'Tersumbat', en: 'Clogged', color: '#b45309', bg: 'rgba(180,83,9,0.14)' },
               damaged: { id: 'Rusak', en: 'Damaged', color: '#c2410c', bg: 'rgba(194,65,12,0.14)' },
-              critical: { id: 'Kritis', en: 'Critical', color: '#b91c1c', bg: 'rgba(185,28,28,0.14)' }
+              critical: { id: 'Rusak Berat', en: 'Severe', color: '#b91c1c', bg: 'rgba(185,28,28,0.14)' }
             };
             const stInfo = statusLabels[String(propsObj.status)] || statusLabels.normal;
             let actionHtml = '';
@@ -1707,7 +1717,7 @@ export function MapView(props: MapViewProps) {
               normal: { id: 'Normal', en: 'Normal' },
               clogged: { id: 'Tersumbat', en: 'Clogged' },
               damaged: { id: 'Rusak', en: 'Damaged' },
-              critical: { id: 'Kritis', en: 'Critical' }
+              critical: { id: 'Rusak Berat', en: 'Severe' }
             };
             const kLabel = kindLabels[String(propsObj.kind)]?.[isEn ? 'en' : 'id'] || String(propsObj.kind || '');
             const sLabel = statusLabels[String(propsObj.status)]?.[isEn ? 'en' : 'id'] || String(propsObj.status || '');
@@ -1791,16 +1801,16 @@ export function MapView(props: MapViewProps) {
             const html = `
               <div>
                 <span style="display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:700;margin-bottom:6px;background:rgba(180,83,9,0.14);color:#b45309;">
-                  ${escapeHtml(isEn ? 'Estimated Rainwater Path' : 'Perkiraan Aliran Air Hujan')}
+                  ${escapeHtml(isEn ? 'DEMNAS Elevation Computation' : 'Komputasi Elevasi DEMNAS')}
                 </span>
                 <h4 style="margin:0 0 4px;font-size:13.5px;font-weight:700;color:#161c1a;">
-                  ${isDetail ? escapeHtml(segId) : escapeHtml(isEn ? 'Estimated Slope Runoff' : 'Aliran Lereng (Perkiraan)')}
+                  ${isDetail ? escapeHtml(segId) : escapeHtml(isEn ? 'Computed Slope-Flow Path' : 'Arah Kemiringan Elevasi (Komputasi)')}
                 </h4>
                 <p style="margin:0 0 6px;font-size:12.5px;line-height:1.45;color:#434d49;">
                   ${
                     isEn
-                      ? 'Estimated automatically from BIG DEMNAS 8m elevation; narrow village drains may still differ in the field.'
-                      : 'Dihitung otomatis dari elevasi BIG DEMNAS 8m; posisi parit atau gorong-gorong sempit di lapangan masih bisa berbeda.'
+                      ? 'Mathematically computed (D8) from BIG DEMNAS 8m elevation — not a permanent river or field survey.'
+                      : 'Dihitung otomatis secara matematis (D8) dari elevasi BIG DEMNAS 8m — bukan sungai permanen maupun survei lapangan.'
                   }
                 </p>
                 ${
@@ -2021,7 +2031,10 @@ export function MapView(props: MapViewProps) {
         const elev = Math.round(demRef.current.getElevation(pt[0], pt[1]));
         const slope = Math.round(demRef.current.getSlopePercent(pt[0], pt[1]));
         const lsLevel =
-          prof.landslideLevel || (isEn ? 'Not mapped high-risk' : 'Tidak tercatat rawan');
+          prof.landslideLevel ||
+          (isEn
+            ? 'Outside mapped polygon (not a safety guarantee)'
+            : 'Tidak termasuk poligon peta (bukan jaminan aman)');
         const lsColor =
           prof.landslideLevel === 'Tinggi'
             ? '#b91c1c'
@@ -2041,19 +2054,26 @@ export function MapView(props: MapViewProps) {
         const html = `
           <div style="min-width:220px;">
             <div style="font-size:11px;font-weight:700;color:#0369a1;margin-bottom:4px;">
-              ${isEn ? 'Pemkab Agam Site Profile' : 'Profil Titik Resmi Pemkab Agam'}
+              ${isEn ? 'Pemkab Agam Open Map Attributes' : 'Atribut Peta Terbuka Pemkab Agam'}
             </div>
             <div style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#434d49;margin-bottom:6px;">
               ${elev} m dpl · ${isEn ? 'Slope' : 'Lereng'} ${slope}%
             </div>
             <div style="display:flex;justify-content:space-between;gap:10px;padding:3px 0;border-bottom:1px solid rgba(22,28,26,0.08);font-size:12px;">
-              <span style="color:#636f6a;">${isEn ? 'Landslide Zone' : 'Rawan Longsor'}</span>
-              <strong style="color:${lsColor};">${escapeHtml(lsLevel)}</strong>
+              <span style="color:#636f6a;">${isEn ? 'Ground Movement Map' : 'Peta Gerakan Tanah'}</span>
+              <strong style="color:${lsColor};text-align:right;">${escapeHtml(lsLevel)}</strong>
             </div>
             ${row(isEn ? 'Soil Type' : 'Jenis Tanah', prof.soilType ? `${prof.soilType}${prof.soilSensitivity ? ` (${prof.soilSensitivity})` : ''}` : null)}
             ${row(isEn ? 'Geology' : 'Geologi', prof.geology)}
             ${row(isEn ? 'Forest SK 35' : 'Kawasan Hutan', prof.forestLabel ? `${prof.forestStatus} · ${prof.forestLabel}` : prof.forestStatus)}
             ${row(isEn ? 'BMKG Rainfall' : 'Curah Hujan', prof.rainfallAnnualMm)}
+            <div style="margin-top:6px;font-size:10.5px;line-height:1.35;color:#636f6a;">
+              ${escapeHtml(
+                isEn
+                  ? 'Source: Pemkab Agam Open GIS (reference polygon attributes, not a house-level survey).'
+                  : 'Sumber: Pemkab Agam Open GIS (atribut poligon referensi, bukan pengukuran per-rumah).'
+              )}
+            </div>
           </div>
         `;
         popupRef.current = new Popup({ offset: 10 }).setLngLat(pt).setHTML(html).addTo(map);
@@ -2466,7 +2486,6 @@ export function MapView(props: MapViewProps) {
         anyClauses.push(['==', ['get', 'kind'], 'drainage']);
       } else if (props.tab === 'sim') {
         anyClauses.push(['==', ['get', 'kind'], 'drainage']);
-        if (props.layers.bronjong) anyClauses.push(['==', ['get', 'kind'], 'bronjong']);
         if (props.layers.evac) anyClauses.push(['==', ['get', 'kind'], 'evacuation']);
       } else {
         if (props.drainFilter === 'all') {
@@ -2474,7 +2493,6 @@ export function MapView(props: MapViewProps) {
         } else {
           anyClauses.push(['all', ['==', ['get', 'kind'], 'drainage'], ['==', ['get', 'status'], props.drainFilter]]);
         }
-        if (props.layers.bronjong) anyClauses.push(['==', ['get', 'kind'], 'bronjong']);
         if (props.layers.landslide) anyClauses.push(['==', ['get', 'kind'], 'landslide']);
         if (props.layers.evac) anyClauses.push(['==', ['get', 'kind'], 'evacuation']);
       }

@@ -2,27 +2,29 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-0284c7.svg)](./LICENSE)
 
-Open-source (**MIT**) interactive 2D/3D terrain explorer, hydrology & drainage inventory, physics-based *galodo* / flash-flood cascade simulator, and collaborative waterway & Jorong editor focused exclusively on **Nagari Balingka** (`29.89 km²`, `1,032–2,869 m dpl`, Kec. IV Koto, Kab. Agam, West Sumatra).
+Open-source (**MIT**) public spatial data viewer, terrain & drainage inventory, computational terrain-flow visualizer, and collaborative waterway & Jorong editor focused exclusively on **Nagari Balingka** (`29.89 km²`, `1,032–2,869 m dpl`, Kec. IV Koto, Kab. Agam, West Sumatra).
 
-Clipped strictly to the official **Badan Informasi Geospasial (BIG) June 2026** Nagari Balingka perimeter (`KDEPUM 13.06.05.2003`) while computing hydrology on a padded catchment box behind the scenes, the app combines **BIG DEMNAS (`542×760`, ~13.8 m)** terrain rasters (*Elevasi*, *Relief*, *Lereng*), official **Pemkab Agam & BIG RBI 50K** hazard/soil/river layers, **ESA WorldCover 10m** forest cover, **Copernicus Sentinel-2 L2A** scour change, **Google Open Buildings v3 + OSM** settlement footprints (`2,175` buildings), and an immutable **SQLite Audit Trail** in a clean `Ringkas` / `Lengkap` interface.
+> **Scope & Role Boundary:** This application displays open geospatial datasets (BIG, Pemkab Agam, ESA/Copernicus, OpenStreetMap) and field-recorded infrastructure data alongside computational terrain visualizations — it **does not** issue disaster predictions, hazard declarations, or official evacuation designations. Official hazard assessments and emergency directives belong exclusively to **BNPB**, **BPBD Kab. Agam**, **BMKG**, **PVMBG**, and **Wali Nagari Balingka**.
+
+Clipped strictly to the official **Badan Informasi Geospasial (BIG) June 2026** Nagari Balingka perimeter (`KDEPUM 13.06.05.2003`) while computing hydrology on a padded catchment box behind the scenes, the app combines **BIG DEMNAS (`542×760`, ~13.8 m)** terrain rasters (*Elevasi*, *Relief*, *Lereng*), official **Pemkab Agam & BIG RBI 50K** reference layers, **ESA WorldCover 10m** forest cover, **Copernicus Sentinel-2 L2A** NDVI vegetation-cover difference, **Google Open Buildings v3 + OSM** settlement footprints (`2,175` buildings), and an immutable **SQLite Audit Trail** in a clean `Ringkas` / `Lengkap` interface.
 
 ---
 
 ## Key Capabilities
 
 1. **Two-Tier Interface (`Ringkas` & `Lengkap`) + Standardized Cartographic Legend**
-   - **Ringkas (default)**: Plain-language citizen mode with 3 tabs (**Peta**, **Simulasi**, **Siaga**), one-tap area focus chips (*Pusat Balingka*, *Jorong Pahambatan*, *Jorong Koto Hilalang*, *Jorong Subarang*, *Lereng Selatan Hulu*), unified **Legenda & Lapisan Peta** with matching cartographic badge icons (`LegendIcon`), and mobile **Legenda** popover.
-   - **Lengkap**: Adds 2D/3D toggle, 6 surface modes (**Satelit**, **Elevasi**, **Relief**, **Lereng**, **Topo**, **Jalan**), 3D vertical exaggeration, **BIG RBI 50K** rivers, **KLHK SK 35** protected forest, **Andosol/Kambisol** soil & geology overlays, **Drop Raindrop (*Cek Arah Air*)**, **Elevation Profile (*Ukur Tanjakan*)**, live telemetry dock, tap-to-inspect **Official Pemkab Agam Site Profile**, and the **Editor** tab.
-   - **Info & Data Drawer**: Bilingual (`ID` / `EN`) 3-tab modal covering a 30-second public guide, terrain/hydrology methodology, and public API + GeoJSON bundle downloads.
+   - **Ringkas (default)**: Plain-language public mode with 3 tabs (**Peta**, **Simulasi**, **Drainase**), Jorong quick-jump dropdown (*Balingka*, *Subarang*, *Koto Hilalang*, *Pahambatan*), unified **Legenda & Lapisan Peta** with matching cartographic badge icons (`LegendIcon`), and mobile **Legenda** popover.
+   - **Lengkap**: Adds 2D/3D toggle, 6 surface modes (**Satelit**, **Elevasi**, **Relief**, **Lereng**, **Topo**, **Jalan**), 3D vertical exaggeration, **BIG RBI 50K** rivers, **KLHK SK 35** protected forest, **Andosol/Kambisol** soil & geology overlays, **Drop Raindrop (*Cek Arah Air*)**, **Elevation Profile (*Ukur Tanjakan*)**, live telemetry dock, tap-to-inspect **Pemkab Agam Open Map Attributes**, and the **Editor** tab.
+   - **Info & Data Drawer**: Bilingual (`ID` / `EN`) 3-tab modal covering a 30-second public guide + explicit role boundaries, terrain/hydrology methodology, and public API + GeoJSON bundle downloads.
 
-2. **Physics-Based *Galodo* & Rainfall Cascade Simulator (`Simulasi`)**
-   - Driven by interactive **Rainfall Intensity** (`10–150 mm/jam`) × **Storm Duration** (`15 mnt – 6 jam`) controls, timeline playback, and intensity-scaled canvas rainfall (`RainOverlay`).
-   - Evaluates a 4-stage cascade via `CascadeEngine`: **SCS-CN** runoff from ESA WorldCover 10m → **D8 headwater-to-valley travel wave** (`~88 min` across Gunung Singgalang catchments) → **HAND** corridor inundation (clogged vs. cleared culverts) → **slope instability calibrated with Pemkab Agam Andosol & landslide hazard zones**.
-   - **Anti-misinformation design**: Displays clear indicative corridor disclaimers and aggregate counts (e.g., `~X buildings` inside the active corridor) without claiming house-by-house engineering predictions.
-   - **Channel Width & Widening Rain Thresholds (`Lengkap`)**: Evaluates measured pre/post channel widths (`Manning` + *Specific Stream Power* `ω ≥ 300 / 1000 W/m²` with `±25%` uncertainty ranges) to estimate rainfall intensities that risk bank widening or severe *galodo* scour.
+2. **Computational Terrain Flow Model Visualizer (`Simulasi`)**
+   - Driven by interactive **Rainfall Intensity** (`10–150 mm/jam`) × **Storm Duration** (`15 mnt – 6 jam`) input sliders, timeline playback, and intensity-scaled visual rainfall overlay (`RainOverlay`).
+   - Evaluates a 4-stage computational model via `CascadeEngine`: **SCS-CN** theoretical runoff from ESA WorldCover 10m → **D8 headwater-to-valley travel wave** (`~88 min` across Gunung Singgalang catchments) → **HAND** low-terrain basin index (clogged vs. cleared crossing parameters) → **steep-slope saturation model with Pemkab Agam open-map inputs**.
+   - **Clear non-authority framing**: Displays explicit computational-model disclaimers (`BUKAN prediksi/peringatan resmi BNPB/BPBD/BMKG`), neutral model-level badges (`Intensitas Rendah / Sedang / Tinggi / Sangat Tinggi`), and polygon intersection counts (`Bangunan di poligon model`) without claiming house-level predictions.
+   - **Theoretical Channel Capacity Calculator (Manning, `Lengkap`)**: Evaluates measured pre/post channel widths (`Manning` + *Specific Stream Power* `ω ≥ 300 / 1000 W/m²` with `±25%` ranges) as theoretical open-channel hydraulic reference equations.
 
-3. **Drainage Readiness & Evacuation Planning (`Siaga`)**
-   - Inspects **`27` road–stream crossings (`4` bridges)** plus **BIG RBI 50K** culverts/bridges/weirs filtered by field status, paired with **`8` elevated evacuation candidate points** inside Nagari Balingka and a persistent household readiness checklist.
+3. **Drainage Inventory & Official Agency References (`Drainase`)**
+   - Inspects **`27` DEM road–channel crossings (`4` bridges)** plus **BIG RBI 50K** culverts/bridges/weirs filtered by field physical status (`Normal`, `Tersumbat`, `Rusak`, `Rusak Berat`), paired with **`8` elevated public facilities (BIG RBI 50K)**, **`3` steep DEM slope points (>38%)**, quick map focus buttons, and an **Official References & Contacts** directory (**BMKG**, **BPBD Kab. Agam & BNPB**, **PVMBG**, **Kantor Wali Nagari & Wali Jorong**).
 
 4. **2-Layer Waterway, Structure & Jorong Editor + SQLite Audit Trail (`Editor` in `Lengkap` mode)**
    - **Waterways (`Jalur Air`)**: Edit verified solid streams (drag vertices, `+` midpoint insertion, flow-direction markers, pre/post cross-section width & depth fields), draw new channels, or **1-click Promote / Suppress** misaligned **BIG RBI 50K** and **DEMNAS** dashed reaches.
@@ -87,7 +89,7 @@ gis-balingka/
 | DEM & Vector Pipeline | `geotiff` + Pure-Node Hydrology & PNG Encoder (`scripts/extract-big-ref.py` uses `pyogrio` + `shapely` for BIG `.gdb`) | MIT |
 | Elevation, Boundary & Base Hydrology | **BIG DEMNAS (`0715-62_v1.0`)**, **BIG RBI 50K Kab. Agam (Dec 2022)**, **BIG Batas Wilayah Desa/Nagari (June 2026)** (Copernicus DEM GLO-30 fallback) | Public Government Data (BIG) |
 | Provincial Reference Layers | **Pemkab Agam Open GIS** (BPBD Landslide, BBSDLP Soil, PSG Geology, KLHK SK 35 Forest, BMKG Rainfall) | Public Government Data (Pemkab Agam) |
-| Land Cover & Scour Satellite | **ESA WorldCover 10m v200** & **Copernicus Sentinel-2 L2A (10m)** | **CC-BY-4.0** / **Copernicus Open License** |
+| Land Cover & Satellite NDVI | **ESA WorldCover 10m v200** & **Copernicus Sentinel-2 L2A (10m)** | **CC-BY-4.0** / **Copernicus Open License** |
 | Buildings & Streets | **Google Open Buildings v3** & **OpenStreetMap / OpenTopoMap** | **CC-BY-4.0** / **ODbL** / **CC-BY-SA** |
 | Satellite Imagery | Esri World Imagery (overridable via `VITE_CUSTOM_IMAGERY_URL`) | Free w/ Attribution (No API Key) |
 
@@ -119,7 +121,7 @@ pnpm run build            # Typechecks & builds production bundle into dist/
 pnpm start                # Serves dist/ and /api/* together on PORT (default 8787)
 ```
 
-- **Public access without login**: Anyone can inspect the map, run rainfall simulations, check preparedness guides, and submit general feedback.
+- **Public access without login**: Anyone can inspect the map, explore computational rainfall models, check drainage inventory & official references, and submit general feedback.
 - **Protected editing**: Setting `ADMIN_PASSPHRASE` locks all waterway/structure/Jorong writes, DEM suppressions, offline hydrology recomputes, feedback moderation, and audit reverts behind timing-safe `X-Admin-Passphrase` verification in **Lengkap → Editor**.
 - **Database backup**: Back up the single SQLite file at `data/balingka.db` (or set `BALINGKA_DB_PATH`).
 
@@ -171,4 +173,4 @@ pnpm run build     # Production client bundle
 
 Source code is licensed under **[MIT](./LICENSE)**. Geospatial reference data is used with public attribution to **Badan Informasi Geospasial (BIG)**, **Pemerintah Kabupaten Agam**, **ESA WorldCover / Copernicus Sentinel-2**, **Google Open Buildings v3**, and **OpenStreetMap contributors**.
 
-Flood inundation zones (*HAND*), simulated cascade waves, and channel widening rain estimates are indicative community decision-support indicators — **not** certified hydraulic engineering models. Always follow official instructions from **Wali Nagari Balingka** and **BPBD Kab. Agam** during severe weather.
+Computational terrain-flow visualizations, HAND basin indices, and theoretical Manning equations are exploratory open-data tools — **not** certified hydraulic engineering designs or official disaster warnings. Always follow official announcements and instructions from **BNPB**, **BPBD Kab. Agam**, **BMKG**, **PVMBG**, and **Wali Nagari Balingka**.
