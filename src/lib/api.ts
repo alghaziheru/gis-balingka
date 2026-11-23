@@ -59,6 +59,10 @@ async function apiFetch<T>(url: string, init: RequestInit = {}, passphrase?: str
   if (pass) headers.set('X-Admin-Passphrase', pass);
 
   const res = await fetch(url, { ...init, headers });
+  const contentType = res.headers.get('content-type') || '';
+  if (contentType && !contentType.toLowerCase().includes('application/json')) {
+    throw new Error(`HTTP ${res.status}`);
+  }
   const text = await res.text();
   let json: Record<string, unknown> = {};
   if (text) {
@@ -135,7 +139,8 @@ export async function fetchStaticVerifiedSeed(osmContext: GeoFeatureCollection):
 
 export async function fetchEditorStatus(): Promise<EditorStatus | null> {
   try {
-    return await apiFetch<EditorStatus>('/api/editor/status');
+    const status = await apiFetch<EditorStatus>('/api/editor/status');
+    return typeof status?.requiresPassphrase === 'boolean' ? status : null;
   } catch {
     return null;
   }

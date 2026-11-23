@@ -179,6 +179,26 @@ pnpm start                # Serves dist/ and /api/* together on PORT (default 87
 - **Protected editing**: Setting `ADMIN_PASSPHRASE` locks all waterway/structure/Jorong writes, DEM suppressions, offline hydrology recomputes, feedback moderation, and audit reverts behind timing-safe `X-Admin-Passphrase` verification in **Lengkap → Editor**.
 - **Database backup**: Back up the single SQLite file at `data/balingka.db` (or set `BALINGKA_DB_PATH`).
 
+### Static Deployment on Cloudflare Pages (Free)
+
+You can also host the entire read-only public atlas (~13 MB in `dist/`) on **Cloudflare Pages** with zero server cost:
+
+- **What works statically:** All map layers, 2D/3D terrain, `DemClient` cursor telemetry, client-side rainfall-flow modeling (`Simulasi`), drainage inventory (`Drainase`), and `Lengkap → Editor` in read-only preview mode.
+- **Citizen feedback without SQLite:** Set `VITE_FEEDBACK_URL` in `.env` (e.g. a Google Form or Tally link) before building so **Feedback** opens your zero-login form alongside a GitHub Issues link.
+- **Security & cache headers:** [`public/_headers`](./public/_headers) automatically copies into `dist/_headers` with standard security headers and cache rules for `/assets/*` and `/data/*`.
+
+```bash
+# 1. Sync any local SQLite edits & recompute hydrology rasters if waterways changed
+pnpm run sync-seed
+# pnpm run prepare-data   # Run when verified waterways changed
+
+# 2. Set optional VITE_FEEDBACK_URL in .env, verify & build
+pnpm run verify
+
+# 3. Deploy dist/ to Cloudflare Pages from your local machine
+npx wrangler pages deploy dist --project-name=gis-balingka
+```
+
 ---
 
 ## Hydro-Conditioning (Stream Burning) & Custom Data

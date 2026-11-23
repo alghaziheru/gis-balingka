@@ -1,7 +1,20 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { MessageSquare, X } from 'lucide-react';
+import { ExternalLink, MessageSquare, X } from 'lucide-react';
 import { I18N } from '../i18n/translations';
 import type { Language } from '../types/gis';
+
+const GITHUB_ISSUES_URL = 'https://github.com/alghaziheru/gis-balingka/issues/new/choose';
+
+function getSafeExternalUrl(raw: string | undefined): string {
+  const trimmed = String(raw || '').trim();
+  if (!trimmed) return '';
+  try {
+    const parsed = new URL(trimmed);
+    return parsed.protocol === 'https:' || parsed.protocol === 'http:' ? parsed.toString() : '';
+  } catch {
+    return '';
+  }
+}
 
 interface FeedbackModalProps {
   open: boolean;
@@ -29,6 +42,7 @@ export function FeedbackModal({ open, lang, apiAvailable, onSubmit, onClose }: F
   if (!open) return null;
   const t = I18N[lang];
   const isEn = lang === 'en';
+  const feedbackFormUrl = getSafeExternalUrl(import.meta.env.VITE_FEEDBACK_URL);
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -79,82 +93,120 @@ export function FeedbackModal({ open, lang, apiAvailable, onSubmit, onClose }: F
 
         <p className="mt-0 mb-3.5 text-[13px] leading-relaxed text-[#434d49]">{t.feedbackSubtitle}</p>
 
-        {!apiAvailable && (
-          <div className="mb-3 rounded-lg border border-[#b45309]/25 bg-[#b45309]/8 px-3 py-2 text-[12.5px] text-[#78350f]">
-            {isEn
-              ? 'Read-only preview mode: submitting feedback is only active when connected to the application server.'
-              : 'Mode pratinjau baca saja: pengiriman masukan hanya aktif saat terhubung ke server aplikasi.'}
+        {!apiAvailable ? (
+          <div className="flex flex-col gap-3">
+            <div className="rounded-lg border border-[#0369a1]/20 bg-[#f2f3ef] px-3 py-2.5 text-[12.5px] leading-relaxed text-[#434d49]">
+              {feedbackFormUrl ? t.feedbackStaticHint : t.feedbackStaticNoFormHint}
+            </div>
+
+            <div className="flex flex-col gap-2">
+              {feedbackFormUrl && (
+                <a
+                  href={feedbackFormUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex min-h-[42px] w-full items-center justify-center gap-2 rounded-lg bg-[#0369a1] px-4 py-2 text-[13.5px] font-bold text-white no-underline transition hover:bg-[#075985]"
+                >
+                  <span>{t.feedbackOpenFormBtn}</span>
+                  <ExternalLink className="h-4 w-4" />
+                </a>
+              )}
+
+              <a
+                href={GITHUB_ISSUES_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                className={`inline-flex min-h-[42px] w-full items-center justify-center gap-2 rounded-lg px-4 py-2 text-[13px] font-bold no-underline transition ${
+                  feedbackFormUrl
+                    ? 'border border-[#161c1a]/15 bg-[#fafaf8] text-[#161c1a] hover:bg-[#f2f3ef]'
+                    : 'bg-[#0369a1] text-white hover:bg-[#075985]'
+                }`}
+              >
+                <span>{t.feedbackOpenGithubBtn}</span>
+                <ExternalLink className="h-4 w-4" />
+              </a>
+            </div>
+
+            <div className="mt-1 flex justify-end">
+              <button
+                type="button"
+                onClick={onClose}
+                className="min-h-[40px] rounded-lg border border-[#161c1a]/15 bg-white px-3.5 py-2 text-[13px] font-semibold text-[#434d49] hover:bg-[#f2f3ef]"
+              >
+                {t.close}
+              </button>
+            </div>
           </div>
+        ) : (
+          <form onSubmit={handleSubmit} className="flex flex-col gap-3">
+            <div>
+              <label className="mb-1 block text-[12.5px] font-semibold text-[#434d49]" htmlFor="fb-name">
+                {isEn ? 'Your name (optional)' : 'Nama Anda (opsional)'}
+              </label>
+              <input
+                id="fb-name"
+                type="text"
+                value={name}
+                onChange={e => setName(e.target.value)}
+                placeholder={isEn ? 'e.g. Budi' : 'cth. Budi'}
+                className="min-h-[42px] w-full rounded-lg border border-[#161c1a]/20 bg-white px-3 py-2 text-[14px] text-[#161c1a] outline-none focus:border-[#0369a1]"
+              />
+            </div>
+
+            <div>
+              <label className="mb-1 block text-[12.5px] font-semibold text-[#434d49]" htmlFor="fb-topic">
+                {isEn ? 'Topic' : 'Topik masukan'}
+              </label>
+              <select
+                id="fb-topic"
+                value={topic}
+                onChange={e => setTopic(e.target.value)}
+                className="min-h-[42px] w-full rounded-lg border border-[#161c1a]/20 bg-white px-2.5 py-2 text-[13.5px] text-[#161c1a]"
+              >
+                <option value="feature_idea">{isEn ? 'Feature suggestion / UI' : 'Saran fitur / Tampilan'}</option>
+                <option value="data_clarity">{isEn ? 'Map data & clarity' : 'Kejelasan data & peta'}</option>
+                <option value="bug_report">{isEn ? 'Technical issue' : 'Kendala teknis'}</option>
+                <option value="general">{isEn ? 'General feedback' : 'Umum / Lainnya'}</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="mb-1 block text-[12.5px] font-semibold text-[#434d49]" htmlFor="fb-msg">
+                {isEn ? 'Message' : 'Pesan'}
+              </label>
+              <textarea
+                id="fb-msg"
+                required
+                rows={4}
+                value={message}
+                onChange={e => setMessage(e.target.value)}
+                placeholder={
+                  isEn
+                    ? 'Share your thoughts on usability, clarity, or features you would like to see...'
+                    : 'Tuliskan saran, masukan tampilan, atau fitur yang ingin Anda lihat di aplikasi ini...'
+                }
+                className="w-full rounded-lg border border-[#161c1a]/20 bg-white px-3 py-2 text-[14px] text-[#161c1a] outline-none focus:border-[#0369a1]"
+              />
+            </div>
+
+            <div className="mt-1 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={onClose}
+                className="min-h-[42px] rounded-lg border border-[#161c1a]/15 bg-white px-3.5 py-2 text-[13px] font-semibold text-[#434d49] hover:bg-[#f2f3ef]"
+              >
+                {t.close}
+              </button>
+              <button
+                type="submit"
+                disabled={busy}
+                className="min-h-[42px] rounded-lg bg-[#0369a1] px-4 py-2 text-[13.5px] font-bold text-white transition hover:bg-[#075985] disabled:opacity-50"
+              >
+                {busy ? '...' : t.feedbackSubmitBtn}
+              </button>
+            </div>
+          </form>
         )}
-
-        <form onSubmit={handleSubmit} className="flex flex-col gap-3">
-          <div>
-            <label className="mb-1 block text-[12.5px] font-semibold text-[#434d49]" htmlFor="fb-name">
-              {isEn ? 'Your name (optional)' : 'Nama Anda (opsional)'}
-            </label>
-            <input
-              id="fb-name"
-              type="text"
-              value={name}
-              onChange={e => setName(e.target.value)}
-              placeholder={isEn ? 'e.g. Budi' : 'cth. Budi'}
-              className="min-h-[42px] w-full rounded-lg border border-[#161c1a]/20 bg-white px-3 py-2 text-[14px] text-[#161c1a] outline-none focus:border-[#0369a1]"
-            />
-          </div>
-
-          <div>
-            <label className="mb-1 block text-[12.5px] font-semibold text-[#434d49]" htmlFor="fb-topic">
-              {isEn ? 'Topic' : 'Topik masukan'}
-            </label>
-            <select
-              id="fb-topic"
-              value={topic}
-              onChange={e => setTopic(e.target.value)}
-              className="min-h-[42px] w-full rounded-lg border border-[#161c1a]/20 bg-white px-2.5 py-2 text-[13.5px] text-[#161c1a]"
-            >
-              <option value="feature_idea">{isEn ? 'Feature suggestion / UI' : 'Saran fitur / Tampilan'}</option>
-              <option value="data_clarity">{isEn ? 'Map data & clarity' : 'Kejelasan data & peta'}</option>
-              <option value="bug_report">{isEn ? 'Technical issue' : 'Kendala teknis'}</option>
-              <option value="general">{isEn ? 'General feedback' : 'Umum / Lainnya'}</option>
-            </select>
-          </div>
-
-          <div>
-            <label className="mb-1 block text-[12.5px] font-semibold text-[#434d49]" htmlFor="fb-msg">
-              {isEn ? 'Message' : 'Pesan'}
-            </label>
-            <textarea
-              id="fb-msg"
-              required
-              rows={4}
-              value={message}
-              onChange={e => setMessage(e.target.value)}
-              placeholder={
-                isEn
-                  ? 'Share your thoughts on usability, clarity, or features you would like to see...'
-                  : 'Tuliskan saran, masukan tampilan, atau fitur yang ingin Anda lihat di aplikasi ini...'
-              }
-              className="w-full rounded-lg border border-[#161c1a]/20 bg-white px-3 py-2 text-[14px] text-[#161c1a] outline-none focus:border-[#0369a1]"
-            />
-          </div>
-
-          <div className="mt-1 flex justify-end gap-2">
-            <button
-              type="button"
-              onClick={onClose}
-              className="min-h-[42px] rounded-lg border border-[#161c1a]/15 bg-white px-3.5 py-2 text-[13px] font-semibold text-[#434d49] hover:bg-[#f2f3ef]"
-            >
-              {t.close}
-            </button>
-            <button
-              type="submit"
-              disabled={busy || !apiAvailable}
-              className="min-h-[42px] rounded-lg bg-[#0369a1] px-4 py-2 text-[13.5px] font-bold text-white transition hover:bg-[#075985] disabled:opacity-50"
-            >
-              {busy ? '...' : t.feedbackSubmitBtn}
-            </button>
-          </div>
-        </form>
       </div>
     </div>
   );
