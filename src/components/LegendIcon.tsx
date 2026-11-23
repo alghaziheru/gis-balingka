@@ -30,18 +30,32 @@ interface LegendIconProps {
 export function LegendIcon({ kind, size = 18 }: LegendIconProps) {
   if (kind === 'waterway') {
     return (
-      <span
-        className="inline-block h-[4px] w-4 shrink-0 rounded-full bg-[#0369a1] ring-1 ring-black/10"
-        aria-hidden="true"
-      />
+      <svg width={18} height={14} viewBox="0 0 18 14" className="shrink-0" aria-hidden="true">
+        <line x1="1" y1="7" x2="17" y2="7" stroke="#0369a1" strokeWidth="4" strokeLinecap="round" />
+        <path
+          d="M7.5 4.5L11 7L7.5 9.5"
+          fill="none"
+          stroke="#ffffff"
+          strokeWidth="1.6"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </svg>
     );
   }
   if (kind === 'canal') {
     return (
-      <span
-        className="inline-block h-[3px] w-4 shrink-0 rounded-full bg-[#0d9488]"
-        aria-hidden="true"
-      />
+      <svg width={18} height={14} viewBox="0 0 18 14" className="shrink-0" aria-hidden="true">
+        <line x1="1" y1="7" x2="17" y2="7" stroke="#0d9488" strokeWidth="3.2" strokeLinecap="round" />
+        <path
+          d="M7.5 4.7L10.7 7L7.5 9.3"
+          fill="none"
+          stroke="#ffffff"
+          strokeWidth="1.5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </svg>
     );
   }
   if (kind === 'flow') {
@@ -77,7 +91,24 @@ export function LegendIcon({ kind, size = 18 }: LegendIconProps) {
     );
   }
   if (kind === 'contour') {
-    return <span className="inline-block h-[2px] w-4 shrink-0 rounded-full bg-[#b45309]" aria-hidden="true" />;
+    return (
+      <svg width={18} height={14} viewBox="0 0 18 14" className="shrink-0" aria-hidden="true">
+        <path
+          d="M1 4.5Q5.5 1.5 9.5 4T17 3.5"
+          fill="none"
+          stroke="#78350f"
+          strokeWidth="1.8"
+          strokeLinecap="round"
+        />
+        <path
+          d="M1 10Q5.5 7 9.5 9.5T17 9"
+          fill="none"
+          stroke="#b45309"
+          strokeWidth="1.1"
+          strokeLinecap="round"
+        />
+      </svg>
+    );
   }
   if (kind === 'slope') {
     return (
@@ -89,7 +120,13 @@ export function LegendIcon({ kind, size = 18 }: LegendIconProps) {
     );
   }
   if (kind === 'osm') {
-    return <span className="inline-block h-[2.5px] w-4 shrink-0 rounded-full bg-[#475569]" aria-hidden="true" />;
+    return (
+      <svg width={18} height={14} viewBox="0 0 18 14" className="shrink-0" aria-hidden="true">
+        <line x1="1" y1="7" x2="17" y2="7" stroke="#161c1a" strokeWidth="5.4" strokeLinecap="round" />
+        <line x1="2" y1="7" x2="10" y2="7" stroke="#fde047" strokeWidth="2.4" strokeLinecap="round" />
+        <line x1="10" y1="7" x2="16" y2="7" stroke="#ffffff" strokeWidth="2.0" strokeLinecap="round" />
+      </svg>
+    );
   }
   if (kind === 'hillshade') {
     return (
@@ -217,9 +254,18 @@ export function LegendIcon({ kind, size = 18 }: LegendIconProps) {
           y1="7"
           x2="17"
           y2="7"
-          stroke="#0e7490"
-          strokeWidth="2.4"
-          strokeDasharray="4 2.5"
+          stroke="#082f49"
+          strokeWidth="4.6"
+          strokeLinecap="round"
+        />
+        <line
+          x1="1.5"
+          y1="7"
+          x2="16.5"
+          y2="7"
+          stroke="#22d3ee"
+          strokeWidth="2.2"
+          strokeDasharray="3.5 2.2"
           strokeLinecap="round"
         />
       </svg>
@@ -229,7 +275,7 @@ export function LegendIcon({ kind, size = 18 }: LegendIconProps) {
   if (kind === 'agamForest') {
     return (
       <span
-        className="inline-block h-3.5 w-4 shrink-0 rounded-[3px] border border-[#166534] bg-[#166534]/25"
+        className="inline-block h-3.5 w-4 shrink-0 rounded-[3px] border-[1.5px] border-dashed border-[#15803d] bg-[#22c55e]/25"
         aria-hidden="true"
       />
     );
@@ -238,7 +284,7 @@ export function LegendIcon({ kind, size = 18 }: LegendIconProps) {
   if (kind === 'agamSoil') {
     return (
       <span
-        className="inline-block h-3.5 w-4 shrink-0 rounded-[3px] border border-[#b45309] bg-[#b45309]/25"
+        className="inline-block h-3.5 w-4 shrink-0 rounded-[3px] border-[1.5px] border-[#92400e] bg-[#f59e0b]/28"
         aria-hidden="true"
       />
     );

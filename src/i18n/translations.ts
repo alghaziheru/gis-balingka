@@ -45,7 +45,7 @@ export const I18N = {
     lcBuiltup: 'Terbangun',
     lblContours: 'Garis ketinggian (Kontur 25m)',
     lblSlope: 'Peta kemiringan lereng (%)',
-    lblOsmContext: 'Jalan & bangunan sekitar',
+    lblOsmContext: 'Jaringan jalan (OSM)',
     lblFlowSimple: 'Perkiraan arah air limpasan hujan (DEMNAS 8m)',
     lblExag: 'Tinggi relief 3D (Vertical Exag.)',
     flowDensityTitle: 'Perkiraan Air Limpasan Hujan (DEMNAS 8m)',
@@ -54,7 +54,7 @@ export const I18N = {
     densNormal: 'Normal',
     densDetail: 'Detail',
     flowDensityHint:
-      'Garis putus-putus jingga adalah perkiraan arah air hujan dari BIG DEMNAS 8m (bukan sungai permanen). Sungai & parit asli ditampilkan dengan garis tegas biru/hijau.',
+      'Garis putus-putus jingga adalah perkiraan arah air hujan dari BIG DEMNAS 8m (bukan sungai permanen). Saat bertemu sungai/parit biru terverifikasi, titik pertemuan, pendar aliran, dan partikel berlanjut ke hilir.',
     terrainToolsTitle: 'Alat Ukur Lapangan',
     btnRaindrop: 'Cek Arah Air',
     btnProfile: 'Ukur Tanjakan',
@@ -70,9 +70,11 @@ export const I18N = {
       'Simulasi Kaskade Indikatif (DEM + tutupan hutan 10m + bangunan) untuk melihat urutan aliran hulu→hilir & zona lereng — BUKAN prediksi per-rumah atau peringatan dini resmi BMKG/BPBD.',
     simDisclaimerDetail:
       'Model fisika indikatif: SCS-CN tutupan lahan + tanah Andosol + waktu tempuh D8 + koridor HAND + stabilitas lereng dari BIG DEMNAS ~8,3m (bukan peringatan resmi).',
+    simIndicativeShort: 'Simulasi indikatif · bukan peringatan resmi',
     simPlaybackTitle: 'Simulasi Kaskade Hujan → Galodo',
     simControlTitle: 'Parameter Hujan, Tanah & Saluran',
     play: 'Putar Simulasi Hujan',
+    simReplay: 'Putar Ulang',
     pause: 'Jeda',
     simReset: 'Reset ke 00:00',
     lblTimeline: 'Waktu simulasi',
@@ -88,24 +90,82 @@ export const I18N = {
     rainHeavy: 'Lebat (80)',
     rainExtreme: 'Ekstrem (150)',
     lblDrainState: 'Kondisi gorong-gorong & sumbatan',
+    lblDrainShort: 'Kondisi saluran',
     scClogged: 'Tersumbat',
     scCleared: 'Lancar',
     scSurge: 'Lonjakan Hulu',
     lblSoilMoisture: 'Kondisi tanah (hujan 3–5 hari terakhir)',
+    lblSoilShort: 'Kondisi tanah',
     soilDry: 'Kering',
     soilMoist: 'Lembap',
     soilSaturated: 'Jenuh',
     lblRainPattern: 'Sebaran hujan',
+    lblRainUplandCheck: 'Fokus hujan di hulu gunung',
     rainUniform: 'Merata',
     rainUpland: 'Fokus Hulu Gunung',
     lblForestScenario: 'Uji skenario hutan hulu',
+    lblForestShort: 'Hutan hulu',
     forestActual: 'Aktual (74%)',
     forestDeg30: '-30% Hutan',
     forestDeg50: '-50% Hutan',
     presetQuickTitle: 'Skenario cepat',
+    presetCustom: 'Kustom (manual)',
     presetNormal: 'Hujan Biasa',
     presetUpland: 'Hujan Hulu Gunung',
     presetExtreme: 'Galodo Ekstrem',
+    agamCalibrationBadge: 'Kalibrasi Pemkab Agam',
+    infoScenario:
+      'Pilih skenario cepat untuk langsung memuat parameter & memutar simulasi, atau ubah parameter manual di bawah (otomatis menjadi Kustom).',
+    infoRainIntensity:
+      'Laju curah hujan per jam. Acuan BMKG: Ringan (<20), Sedang (20–50), Lebat (50–100), dan Ekstrem (>100 mm/jam).',
+    infoDuration:
+      'Lama hujan berlangsung. Durasi lebih panjang memperbesar total akumulasi hujan dan memberi waktu gelombang air hulu mencapai hilir.',
+    infoSoilMoisture:
+      'Kelembapan tanah akibat hujan 3–5 hari sebelumnya. Tanah jenuh tidak lagi mampu menyerap air sehingga limpasan & risiko longsor melonjak.',
+    infoDrainState:
+      'Lancar: gorong-gorong bersih mengurangi luapan lokal. Tersumbat: sampah/sedimen memicu luapan ke jalan. Lonjakan Hulu (Lengkap): simulasi jebolnya bendungan alami debris di hulu.',
+    infoForestScenario:
+      'Uji skenario penurunan tutupan hutan di lereng hulu Singgalang. Pengurangan pohon menaikkan nilai Curve Number (SCS-CN) dan melemahkan ikatan akar tanah.',
+    infoRainPattern:
+      'Saat aktif, curah hujan difokuskan lebih deras di lereng hulu Gunung Singgalang dibanding wilayah lembah; saat nonaktif, hujan tersebar merata.',
+    infoRainAnim:
+      'Menampilkan efek visual jatuhan hujan di atas peta selama simulasi berjalan (tidak memengaruhi perhitungan hidrologi).',
+    infoKpiFlood:
+      'Perkiraan luas koridor lembah rendah (berdasarkan indeks HAND) di dalam batas resmi Nagari Balingka yang berpotensi tergenang.',
+    infoKpiLandslide:
+      'Perkiraan luas lereng curam bertanah vulkanik Andosol yang mencapai ambang jenuh dan rawan gerakan tanah.',
+    infoKpiBuildings:
+      'Perkiraan agregat tapak bangunan (dari 2.175 bangunan terpetakan) yang berada di koridor luapan (+ lereng rawan). Bersifat indikatif, bukan klaim per-rumah.',
+    infoKpiCrossings:
+      'Jumlah titik persilangan jalan–sungai dan gorong-gorong yang menerima tekanan debit tinggi atau potensi luapan.',
+    infoKpiRunoff:
+      'Kedalaman air limpasan permukaan efektif (mm) setelah memperhitungkan serapan tanah dan tutupan lahan melalui metode SCS Curve Number.',
+    infoKpiTravelTime:
+      'Estimasi waktu tempuh gelombang limpasan puncak dari hulu lereng Singgalang ke koridor hilir berdasarkan rute aliran D8.',
+    infoChannelCalc:
+      'Rentang ±25% dihitung dari rumus Manning (n=0,045) & Specific Stream Power pada kondisi tanah aktif. Masukkan lebar asli di Editor → Jalur Air agar lebih presisi.',
+    infoThresholdOverflow:
+      'Intensitas hujan saat debit diperkirakan melampaui kapasitas penuh tebing sungai (bankfull) menurut rumus Manning.',
+    infoThresholdWidening:
+      'Ambang Specific Stream Power ω ≥ 300 W/m² — energi arus mulai cukup kuat untuk menggerus dan melebarkan tebing sungai.',
+    infoThresholdScour:
+      'Ambang ω ≥ 1000 W/m² — energi arus ekstrem yang mampu memicu gerusan galodo berat dan mengangkut bongkahan batu/kayu.',
+    infoLegendDeep:
+      'Koridor sungai utama dengan kedalaman indikatif >1,5 m berdasarkan Height Above Nearest Drainage (HAND).',
+    infoLegendLandslide:
+      'Lereng terjal bertanah Andosol yang jenuh air sehingga berisiko meluncurkan lumpur dan material ke alur sungai.',
+    agamClickHint:
+      'Klik titik mana pun di peta untuk melihat jenis tanah, geologi, zona rawan longsor & status hutan SK 35 resmi.',
+    infoExag:
+      'Skala pengali visual tinggi relief 3D pada peta (hanya untuk memperjelas kontur bukit, tidak mengubah nilai elevasi sebenarnya).',
+    infoScourChange:
+      'Deteksi bukaan lahan/gerusan baru dari perbandingan citra satelit Sentinel-2 (resolusi 10 m) sebelum dan sesudah kejadian.',
+    infoFlowSimple:
+      'Garis putus-putus jingga adalah perkiraan arah limpasan air hujan dari elevasi BIG DEMNAS 8 m. Saat masuk ke sungai terverifikasi, pendar & partikel aliran melanjutkan arahnya ke hilir.',
+    infoBronjong:
+      'Lokasi usulan cekdam/bronjong batu di hulu untuk meredam kecepatan arus dan menahan material batu/kayu.',
+    infoLandslideSlope:
+      'Area tebing dan lereng curam (>38% kemiringan) hasil perhitungan elevasi BIG DEMNAS 8 m.',
     alertNormal: 'Normal',
     alertWaspada: 'Waspada Indikatif',
     alertSiaga: 'Siaga Indikatif',
@@ -291,7 +351,7 @@ export const I18N = {
     lcBuiltup: 'Built-up',
     lblContours: 'Elevation lines (25m contours)',
     lblSlope: 'Slope steepness overlay (%)',
-    lblOsmContext: 'Surrounding roads & buildings',
+    lblOsmContext: 'Road network (OSM)',
     lblFlowSimple: 'Estimated rainwater runoff paths (DEMNAS 8m)',
     lblExag: '3D Relief Height (Vertical Exag.)',
     flowDensityTitle: 'Rainwater Runoff Estimate (DEMNAS 8m)',
@@ -300,7 +360,7 @@ export const I18N = {
     densNormal: 'Normal',
     densDetail: 'Detail',
     flowDensityHint:
-      'Amber dashed arrows are rainwater runoff estimates from BIG DEMNAS 8m (not permanent rivers). Solid blue/teal lines are verified channels.',
+      'Amber dashed arrows are rainwater runoff estimates from BIG DEMNAS 8m (not permanent rivers). Where they meet verified blue channels, confluence rings, channel glow, and flow particles continue downstream.',
     terrainToolsTitle: 'Field Measurement Tools',
     btnRaindrop: 'Trace Water Flow',
     btnProfile: 'Elevation Profile',
@@ -316,9 +376,11 @@ export const I18N = {
       'Indicative Cascade Simulation (DEM + 10m forest + buildings) showing upstream→downstream surge & slope hazards — NOT a per-house prediction or official BMKG/BPBD warning.',
     simDisclaimerDetail:
       'Indicative physical cascade: SCS-CN land cover + Andosol soil + D8 wave travel time + HAND corridors + slope stability on BIG DEMNAS ~8.3m (not an official early warning).',
+    simIndicativeShort: 'Indicative model · not an official warning',
     simPlaybackTitle: 'Live Rain → Galodo Cascade',
     simControlTitle: 'Rain, Soil & Channel Parameters',
     play: 'Play Rain Simulation',
+    simReplay: 'Replay',
     pause: 'Pause',
     simReset: 'Reset to 00:00',
     lblTimeline: 'Simulation time',
@@ -334,24 +396,82 @@ export const I18N = {
     rainHeavy: 'Heavy (80)',
     rainExtreme: 'Extreme (150)',
     lblDrainState: 'Culvert & debris blockage state',
+    lblDrainShort: 'Channel state',
     scClogged: 'Clogged',
     scCleared: 'Cleared',
     scSurge: 'Upland Surge',
     lblSoilMoisture: 'Soil moisture (past 3–5 days)',
+    lblSoilShort: 'Soil moisture',
     soilDry: 'Dry',
     soilMoist: 'Moist',
     soilSaturated: 'Saturated',
     lblRainPattern: 'Rainfall pattern',
+    lblRainUplandCheck: 'Focus rain on upland slopes',
     rainUniform: 'Uniform',
     rainUpland: 'Upland Focus',
     lblForestScenario: 'Upland forest what-if',
+    lblForestShort: 'Upland forest',
     forestActual: 'Actual (74%)',
     forestDeg30: '-30% Forest',
     forestDeg50: '-50% Forest',
     presetQuickTitle: 'Quick scenarios',
+    presetCustom: 'Custom (manual)',
     presetNormal: 'Normal Rain',
     presetUpland: 'Upland Storm',
     presetExtreme: 'Extreme Galodo',
+    agamCalibrationBadge: 'Pemkab Agam Calibration',
+    infoScenario:
+      'Choose a quick preset to load parameters and start playback immediately, or tweak controls below (switches to Custom).',
+    infoRainIntensity:
+      'Hourly rainfall rate. BMKG scale: Light (<20), Moderate (20–50), Heavy (50–100), and Extreme (>100 mm/hr).',
+    infoDuration:
+      'Total storm duration. Longer rain builds accumulated depth and lets upland runoff waves reach downstream valleys.',
+    infoSoilMoisture:
+      'Antecedent soil wetness from the past 3–5 days of rain. Saturated soils cannot absorb water, sharply increasing runoff and landslide risk.',
+    infoDrainState:
+      'Cleared: clean culverts reduce backwater overflow. Clogged: sediment/debris blocks crossings. Upland Surge (Detailed): models a sudden upstream debris-dam burst.',
+    infoForestScenario:
+      'What-if reduction in upland Singgalang tree cover. Less forest raises the SCS Curve Number and weakens root cohesion on steep slopes.',
+    infoRainPattern:
+      'When checked, rainfall concentrates more intensely on upper Mount Singgalang slopes; when unchecked, rainfall is uniform across the Nagari.',
+    infoRainAnim:
+      'Displays an animated falling-rain visual overlay on the map during playback (does not alter hydrology calculations).',
+    infoKpiFlood:
+      'Estimated low-lying valley corridor area (HAND proxy) inside official Nagari Balingka bounds experiencing overflow.',
+    infoKpiLandslide:
+      'Estimated steep volcanic Andosol slope area reaching saturation thresholds for landslide susceptibility.',
+    infoKpiBuildings:
+      'Indicative aggregate count of mapped buildings (out of 2,175) inside modeled flood (+ landslide) corridors — not a house-level prediction.',
+    infoKpiCrossings:
+      'Count of road–stream crossings and culverts experiencing high flow pressure or backwater overflow.',
+    infoKpiRunoff:
+      'Effective surface runoff depth (mm) after soil and land-cover infiltration using the SCS Curve Number method.',
+    infoKpiTravelTime:
+      'Estimated D8 flow travel time for peak runoff wave to move from upland Singgalang slopes to downstream corridors.',
+    infoChannelCalc:
+      '±25% range using Manning (n=0.045) & Specific Stream Power under active soil moisture. Enter field-measured widths in Editor → Waterways for higher precision.',
+    infoThresholdOverflow:
+      'Rainfall intensity where discharge is estimated to exceed bankfull channel capacity via Manning equation.',
+    infoThresholdWidening:
+      'Specific Stream Power threshold ω ≥ 300 W/m² — flow energy begins eroding and widening river banks.',
+    infoThresholdScour:
+      'Threshold ω ≥ 1000 W/m² — extreme stream power capable of severe galodo bed/bank scour and boulder/log transport.',
+    infoLegendDeep:
+      'Primary valley channel corridors with >1.5 m indicative depth proxy based on Height Above Nearest Drainage (HAND).',
+    infoLegendLandslide:
+      'Steep saturated Andosol slopes susceptible to shallow failures supplying sediment into streams.',
+    agamClickHint:
+      'Click any location on the map for official Pemkab Agam soil, geology, landslide zone, and SK 35 forest status.',
+    infoExag:
+      'Visual vertical scaling factor for 3D terrain relief (improves slope readability without altering actual elevation values).',
+    infoScourChange:
+      'Surface scour and vegetation-loss detection comparing pre- and post-event Sentinel-2 satellite imagery (10 m resolution).',
+    infoFlowSimple:
+      'Dashed amber paths are estimated rainwater runoff directions derived from BIG DEMNAS 8 m elevation. Where they merge into a verified stream, the glow and flow particles continue downstream.',
+    infoBronjong:
+      'Candidate upstream check-dam and gabion sites to slow peak surges and trap boulders/logs.',
+    infoLandslideSlope:
+      'Steep slopes and cliffs (>38% gradient) calculated from BIG DEMNAS 8 m terrain elevation.',
     alertNormal: 'Normal',
     alertWaspada: 'Indicative Watch',
     alertSiaga: 'Indicative Alert',

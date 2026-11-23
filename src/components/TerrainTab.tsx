@@ -1,3 +1,4 @@
+import { useId } from 'react';
 import { Droplets, MapPin, SlidersHorizontal, TrendingUp } from 'lucide-react';
 import { I18N } from '../i18n/translations';
 import type {
@@ -11,6 +12,7 @@ import type {
   ScourStats,
   ViewMode
 } from '../types/gis';
+import { InfoTooltip } from './InfoTooltip';
 import { LegendIcon, type LegendIconKind } from './LegendIcon';
 
 interface TerrainTabProps {
@@ -60,6 +62,7 @@ export function TerrainTab({
   onClearRaindrop,
   onSwitchToDetail
 }: TerrainTabProps) {
+  const uid = useId();
   const t = I18N[lang];
   const isEn = lang === 'en';
   const isDetail = viewMode === 'detail';
@@ -77,6 +80,7 @@ export function TerrainTab({
     label: string;
     glyph: LegendIconKind;
     badge?: string;
+    info?: string;
   }[] = [
     { key: 'verifiedWaterways', label: t.lblVerifiedWaterways, glyph: 'waterway' },
     { key: 'structures', label: t.lblStructures, glyph: 'bridge' },
@@ -87,10 +91,10 @@ export function TerrainTab({
       badge: buildingCount ? buildingCount.toLocaleString(isEn ? 'en-US' : 'id-ID') : undefined
     },
     { key: 'landCover', label: t.lblLandCover, glyph: 'landCover' },
-    { key: 'scourChange', label: t.lblScourChange, glyph: 'scourChange' },
+    { key: 'scourChange', label: t.lblScourChange, glyph: 'scourChange', info: t.infoScourChange },
     { key: 'unverifiedCrossings', label: t.lblUnverifiedCrossings, glyph: 'crossing' },
     { key: 'hillshade', label: t.lblHillshade, glyph: 'hillshade' },
-    { key: 'das', label: t.lblDas, glyph: 'das' },
+    { key: 'das', label: t.lblDas, glyph: 'das', info: t.jorongBoundaryNote },
     { key: 'contours', label: t.lblContours, glyph: 'contour' },
     { key: 'slope', label: t.lblSlope, glyph: 'slope' },
     { key: 'osmContext', label: t.lblOsmContext, glyph: 'osm' }
@@ -194,14 +198,15 @@ export function TerrainTab({
   if (!isDetail) {
     return (
       <div className="flex flex-col gap-3.5">
-        <p className="m-0 text-[13.5px] leading-relaxed text-[#434d49]">{t.mapSimpleIntro}</p>
-
         {jorongCard}
 
         <section className="rounded-xl border border-[#161c1a]/12 bg-white p-3.5">
-          <div className="mb-2 flex items-center justify-between">
-            <span className="text-[13px] font-bold text-[#161c1a]">{t.terrainLayersTitle}</span>
-            <span className="font-mono-num text-[12px] font-semibold text-[#636f6a]">
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <span className="flex min-w-0 items-center gap-1.5">
+              <span className="text-[13px] font-bold text-[#161c1a]">{t.terrainLayersTitle}</span>
+              <InfoTooltip text={t.mapSimpleIntro} label={t.terrainLayersTitle} />
+            </span>
+            <span className="font-mono-num shrink-0 text-[12px] font-semibold text-[#636f6a]">
               {studyAreaKm2.toFixed(1)} km²
             </span>
           </div>
@@ -273,18 +278,25 @@ export function TerrainTab({
             </div>
 
             <div className="py-1.5">
-              <label className="flex min-h-[40px] cursor-pointer items-center justify-between gap-3">
-                <span className="flex items-center gap-2.5 text-[13.5px] font-medium text-[#161c1a]">
-                  <LegendIcon kind="scourChange" />
-                  <span>{t.lblScourChange}</span>
-                </span>
+              <div className="flex min-h-[40px] items-center justify-between gap-3">
+                <div className="flex min-w-0 flex-1 items-center gap-1.5">
+                  <label
+                    htmlFor={`${uid}-simple-scour`}
+                    className="flex min-w-0 cursor-pointer items-center gap-2.5 text-[13.5px] font-medium text-[#161c1a]"
+                  >
+                    <LegendIcon kind="scourChange" />
+                    <span>{t.lblScourChange}</span>
+                  </label>
+                  <InfoTooltip text={t.infoScourChange} label={t.lblScourChange} />
+                </div>
                 <input
+                  id={`${uid}-simple-scour`}
                   type="checkbox"
                   checked={layers.scourChange}
                   onChange={e => onToggleLayer('scourChange', e.target.checked)}
-                  className="h-4.5 w-4.5 cursor-pointer accent-[#0369a1]"
+                  className="h-4.5 w-4.5 shrink-0 cursor-pointer accent-[#0369a1]"
                 />
-              </label>
+              </div>
               {scourKey && <div className="mt-1.5">{scourKey}</div>}
             </div>
 
@@ -304,35 +316,46 @@ export function TerrainTab({
               {agamLandslideKey && <div className="mt-1.5">{agamLandslideKey}</div>}
             </div>
 
-            <label className="flex min-h-[44px] cursor-pointer items-center justify-between gap-3 py-1.5">
-              <span className="flex items-center gap-2.5 text-[13.5px] font-medium text-[#161c1a]">
-                <LegendIcon kind="flow" />
-                <span>{t.lblFlowSimple}</span>
-              </span>
+            <div className="flex min-h-[44px] items-center justify-between gap-3 py-1.5">
+              <div className="flex min-w-0 flex-1 items-center gap-1.5">
+                <label
+                  htmlFor={`${uid}-simple-flow`}
+                  className="flex min-w-0 cursor-pointer items-center gap-2.5 text-[13.5px] font-medium text-[#161c1a]"
+                >
+                  <LegendIcon kind="flow" />
+                  <span>{t.lblFlowSimple}</span>
+                </label>
+                <InfoTooltip text={t.infoFlowSimple} label={t.lblFlowSimple} />
+              </div>
               <input
+                id={`${uid}-simple-flow`}
                 type="checkbox"
                 checked={flowDensity > 0}
                 onChange={e => onChangeFlowDensity(e.target.checked ? 1 : 0)}
-                className="h-4.5 w-4.5 cursor-pointer accent-[#0369a1]"
+                className="h-4.5 w-4.5 shrink-0 cursor-pointer accent-[#0369a1]"
               />
-            </label>
+            </div>
 
             <div className="py-1.5">
-              <label className="flex min-h-[40px] cursor-pointer items-center justify-between gap-3">
-                <span className="flex items-center gap-2.5 text-[13.5px] font-medium text-[#161c1a]">
-                  <LegendIcon kind="das" />
-                  <span>{t.lblDas}</span>
-                </span>
+              <div className="flex min-h-[40px] items-center justify-between gap-3">
+                <div className="flex min-w-0 flex-1 items-center gap-1.5">
+                  <label
+                    htmlFor={`${uid}-simple-das`}
+                    className="flex min-w-0 cursor-pointer items-center gap-2.5 text-[13.5px] font-medium text-[#161c1a]"
+                  >
+                    <LegendIcon kind="das" />
+                    <span>{t.lblDas}</span>
+                  </label>
+                  <InfoTooltip text={t.jorongBoundaryNote} label={t.lblDas} />
+                </div>
                 <input
+                  id={`${uid}-simple-das`}
                   type="checkbox"
                   checked={layers.das}
                   onChange={e => onToggleLayer('das', e.target.checked)}
-                  className="h-4.5 w-4.5 cursor-pointer accent-[#0369a1]"
+                  className="h-4.5 w-4.5 shrink-0 cursor-pointer accent-[#0369a1]"
                 />
-              </label>
-              <p className="mt-1 mb-0 pl-6.5 text-[11.5px] leading-snug text-[#636f6a]">
-                {t.jorongBoundaryNote}
-              </p>
+              </div>
             </div>
           </div>
         </section>
@@ -390,42 +413,48 @@ export function TerrainTab({
         <div className="divide-y divide-[#161c1a]/10">
           {detailLayerItems.map(item => (
             <div key={item.key} className="py-1.5">
-              <label className="flex min-h-[38px] cursor-pointer items-center justify-between gap-2.5">
-                <span className="flex items-center gap-2.5 text-[13px] font-medium text-[#161c1a]">
-                  <LegendIcon kind={item.glyph} />
-                  <span>{item.label}</span>
-                  {item.badge ? (
-                    <span className="font-mono-num rounded bg-[#f2f3ef] px-1.5 py-0.5 text-[11px] font-semibold text-[#434d49]">
-                      {item.badge}
-                    </span>
-                  ) : null}
-                </span>
+              <div className="flex min-h-[38px] items-center justify-between gap-2.5">
+                <div className="flex min-w-0 flex-1 items-center gap-1.5">
+                  <label
+                    htmlFor={`${uid}-detail-${item.key}`}
+                    className="flex min-w-0 cursor-pointer items-center gap-2.5 text-[13px] font-medium text-[#161c1a]"
+                  >
+                    <LegendIcon kind={item.glyph} />
+                    <span>{item.label}</span>
+                    {item.badge ? (
+                      <span className="font-mono-num rounded bg-[#f2f3ef] px-1.5 py-0.5 text-[11px] font-semibold text-[#434d49]">
+                        {item.badge}
+                      </span>
+                    ) : null}
+                  </label>
+                  {item.info && <InfoTooltip text={item.info} label={item.label} />}
+                </div>
                 <input
+                  id={`${uid}-detail-${item.key}`}
                   type="checkbox"
                   checked={layers[item.key]}
                   onChange={e => onToggleLayer(item.key, e.target.checked)}
-                  className="h-4.5 w-4.5 cursor-pointer accent-[#0369a1]"
+                  className="h-4.5 w-4.5 shrink-0 cursor-pointer accent-[#0369a1]"
                 />
-              </label>
+              </div>
               {item.key === 'landCover' && landCoverKey && <div className="mt-1.5">{landCoverKey}</div>}
               {item.key === 'scourChange' && scourKey && <div className="mt-1.5">{scourKey}</div>}
-              {item.key === 'das' && (
-                <p className="mt-1 mb-0 pl-6.5 text-[11.5px] leading-snug text-[#636f6a]">
-                  {t.jorongBoundaryNote}
-                </p>
-              )}
             </div>
           ))}
         </div>
 
         <div className="mt-3 flex flex-col gap-1.5 border-t border-[#161c1a]/10 pt-3">
-          <div className="flex items-center justify-between text-[13px] font-semibold text-[#434d49]">
-            <span>{t.lblExag}</span>
+          <div className="flex items-center justify-between gap-2 text-[13px] font-semibold text-[#434d49]">
+            <span className="flex items-center gap-1.5">
+              <label htmlFor={`${uid}-exag`}>{t.lblExag}</label>
+              <InfoTooltip text={t.infoExag} label={t.lblExag} />
+            </span>
             <span className="font-mono-num text-[12.5px] font-bold text-[#161c1a]">
               {exaggeration.toFixed(1)}×
             </span>
           </div>
           <input
+            id={`${uid}-exag`}
             type="range"
             min={1.0}
             max={2.2}
@@ -439,9 +468,12 @@ export function TerrainTab({
 
       <section className="rounded-xl border border-[#161c1a]/12 bg-white p-3.5">
         <div className="mb-2 flex items-center justify-between gap-2">
-          <span className="text-[13px] font-bold text-[#161c1a]">{t.agamRefTitle}</span>
+          <span className="flex min-w-0 items-center gap-1.5">
+            <span className="text-[13px] font-bold text-[#161c1a]">{t.agamRefTitle}</span>
+            <InfoTooltip text={t.agamClickHint} label={t.agamRefTitle} />
+          </span>
           {agamStats?.rbiRiversCount ? (
-            <span className="font-mono-num text-[11px] font-semibold text-[#636f6a]">
+            <span className="font-mono-num shrink-0 text-[11px] font-semibold text-[#636f6a]">
               RBI {agamStats.rbiRiversCount} {isEn ? 'reaches' : 'ruas'}
             </span>
           ) : null}
@@ -502,17 +534,13 @@ export function TerrainTab({
             />
           </label>
         </div>
-        <p className="mt-2 mb-0 text-[11.5px] leading-snug text-[#636f6a]">
-          {isEn
-            ? 'Click any location on the map for official Pemkab Agam soil, geology, landslide zone, and SK 35 forest status.'
-            : 'Klik titik mana pun di peta untuk melihat jenis tanah, geologi, zona rawan longsor & status hutan SK 35 resmi.'}
-        </p>
       </section>
 
       <section className="rounded-xl border border-[#161c1a]/12 bg-white p-3.5">
         <div className="mb-2 flex items-center gap-2 text-[13px] font-bold text-[#161c1a]">
           <LegendIcon kind="flow" />
           <span>{t.flowDensityTitle}</span>
+          <InfoTooltip text={t.flowDensityHint} label={t.flowDensityTitle} />
         </div>
         <div className="grid grid-cols-4 gap-1 rounded-lg border border-[#161c1a]/12 bg-[#f2f3ef] p-1">
           {[
@@ -536,7 +564,6 @@ export function TerrainTab({
             );
           })}
         </div>
-        <p className="mt-2.5 mb-0 text-[12.5px] leading-relaxed text-[#434d49]">{t.flowDensityHint}</p>
       </section>
 
       <section className="rounded-xl border border-[#161c1a]/12 bg-white p-3.5">

@@ -1,5 +1,7 @@
+import { useId } from 'react';
 import { CHECKLIST_ITEMS, I18N } from '../i18n/translations';
 import type { DrainageStatus, Language, LayerToggles, ViewMode } from '../types/gis';
+import { InfoTooltip } from './InfoTooltip';
 import { LegendIcon, type LegendIconKind } from './LegendIcon';
 
 interface DrainageTabProps {
@@ -33,6 +35,7 @@ export function DrainageTab({
   onJumpCompare,
   onFocusEvac
 }: DrainageTabProps) {
+  const uid = useId();
   const t = I18N[lang];
   const isEn = lang === 'en';
   const isDetail = viewMode === 'detail';
@@ -46,25 +49,28 @@ export function DrainageTab({
     { id: 'critical', label: t.fCritical, color: '#b91c1c' }
   ];
 
-  const infraLayers: [keyof LayerToggles, string, LegendIconKind][] = isDetail
+  const infraLayers: [keyof LayerToggles, string, LegendIconKind, string?][] = isDetail
     ? [
         ['evac', t.lblEvac, 'evacuation'],
-        ['landslide', t.lblLandslide, 'landslide'],
-        ['bronjong', t.lblBronjong, 'bronjong']
+        ['landslide', t.lblLandslide, 'landslide', t.infoLandslideSlope],
+        ['bronjong', t.lblBronjong, 'bronjong', t.infoBronjong]
       ]
     : [
         ['evac', t.lblEvac, 'evacuation'],
-        ['landslide', t.lblLandslide, 'landslide']
+        ['landslide', t.lblLandslide, 'landslide', t.infoLandslideSlope]
       ];
 
   return (
     <div className="flex flex-col gap-3.5">
       {/* Unified Interactive Legend + Crossing Status Filters + Hazard Layers */}
       <section className="rounded-xl border border-[#161c1a]/12 bg-white p-3.5">
-        <div className="mb-1 text-[13px] font-bold text-[#161c1a]">{t.drainLegendTitle}</div>
-        <p className="mt-0 mb-2.5 text-[12.5px] text-[#636f6a]">
-          {isDetail ? t.drainFilterTitle : t.drainSimpleHint}
-        </p>
+        <div className="mb-2.5 flex items-center gap-1.5">
+          <span className="text-[13px] font-bold text-[#161c1a]">{t.drainLegendTitle}</span>
+          <InfoTooltip
+            text={isDetail ? t.drainFilterTitle : t.drainSimpleHint}
+            label={t.drainLegendTitle}
+          />
+        </div>
 
         <div className="mb-2.5 flex flex-wrap items-center gap-3 border-b border-[#161c1a]/10 pb-2.5 text-[12px] text-[#434d49]">
           <span className="inline-flex items-center gap-1.5">
@@ -105,19 +111,26 @@ export function DrainageTab({
         </div>
 
         <div className="divide-y divide-[#161c1a]/10 pt-1.5">
-          {infraLayers.map(([key, label, iconKind]) => (
-            <label key={key} className="flex min-h-[42px] cursor-pointer items-center justify-between gap-2.5 py-1">
-              <span className="flex items-center gap-2.5 text-[13px] font-medium text-[#161c1a]">
-                <LegendIcon kind={iconKind} />
-                <span>{label}</span>
-              </span>
+          {infraLayers.map(([key, label, iconKind, info]) => (
+            <div key={key} className="flex min-h-[42px] items-center justify-between gap-2.5 py-1">
+              <div className="flex min-w-0 flex-1 items-center gap-1.5">
+                <label
+                  htmlFor={`${uid}-${key}`}
+                  className="flex min-w-0 cursor-pointer items-center gap-2.5 text-[13px] font-medium text-[#161c1a]"
+                >
+                  <LegendIcon kind={iconKind} />
+                  <span>{label}</span>
+                </label>
+                {info && <InfoTooltip text={info} label={label} />}
+              </div>
               <input
+                id={`${uid}-${key}`}
                 type="checkbox"
                 checked={layers[key]}
                 onChange={e => onToggleLayer(key, e.target.checked)}
-                className="h-4.5 w-4.5 cursor-pointer accent-[#0369a1]"
+                className="h-4.5 w-4.5 shrink-0 cursor-pointer accent-[#0369a1]"
               />
-            </label>
+            </div>
           ))}
         </div>
       </section>
@@ -162,8 +175,11 @@ export function DrainageTab({
           </div>
 
           <div className="pt-3">
-            <div className="mb-1 flex items-center justify-between gap-2">
-              <span className="text-[13.5px] font-bold text-[#161c1a]">{t.act3Title}</span>
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <span className="flex min-w-0 items-center gap-1.5">
+                <span className="text-[13.5px] font-bold text-[#161c1a]">{t.act3Title}</span>
+                <InfoTooltip text={t.act3Desc} label={t.act3Title} />
+              </span>
               <button
                 type="button"
                 onClick={onFocusEvac}
@@ -172,7 +188,6 @@ export function DrainageTab({
                 {t.viewMap}
               </button>
             </div>
-            <p className="m-0 mb-2 text-[13px] text-[#434d49]">{t.act3Desc}</p>
             <div className="flex flex-col divide-y divide-[#161c1a]/8">
               {CHECKLIST_ITEMS.map(item => {
                 const checked = !!checklist[item.id];

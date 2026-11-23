@@ -140,6 +140,13 @@ export function TelemetryDock({
         checked: layers.slope,
         onChange: v => onToggleLayer('slope', v)
       });
+      mobileToggleItems.push({
+        id: 'osm',
+        label: t.lblOsmContext,
+        icon: 'osm',
+        checked: layers.osmContext,
+        onChange: v => onToggleLayer('osmContext', v)
+      });
     }
   } else if (tab === 'sim') {
     mobileToggleItems.push({

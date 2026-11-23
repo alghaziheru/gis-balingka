@@ -21,6 +21,8 @@ import {
 } from '../scripts/lib/hydrology.mjs';
 import { CascadeEngine, extractBuildingCentroids } from '../src/lib/cascadeEngine.ts';
 import { estimateChannelThresholds } from '../src/lib/channelHydraulics.ts';
+import { computeRunoffMergeNetwork } from '../src/lib/geometry.ts';
+import { getOverlayContrastPalette, isDarkBasemap } from '../src/lib/mapPalette.ts';
 import { lookupAgamAtPoint } from '../src/lib/agamLookup.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -515,4 +517,147 @@ test('Pemkab Agam GIS context, merged Google Open Buildings v3, and soil calibra
     forestScenario: 'actual'
   });
   assert.ok(peak.officialLandslideOverlapPct >= 20, `Expected official overlap >=20%, got ${peak.officialLandslideOverlapPct}`);
+});
+
+test('computeRunoffMergeNetwork slices downstream tributary reach, propagates to receiving river, and handles cyclic touchpoints', () => {
+  const flows = [
+    {
+      type: 'Feature',
+      properties: { id: 'f-trib', tier: 1 },
+      geometry: {
+        type: 'LineString',
+        coordinates: [
+          [100.312, -0.348],
+          [100.312, -0.346] // hits mid-segment of tributary-1 (~halfway along segment 0->1)
+        ]
+      }
+    }
+  ];
+
+  const waterways = [
+    {
+      type: 'Feature',
+      properties: {
+        id: 'trib-1',
+        name: 'Anak Sungai Uji',
+        kind: 'stream',
+        status: 'normal',
+        source: 'manual',
+        source_ref: null,
+        notes: '',
+        length_m: 600,
+        updated_by: 'test',
+        updated_at: '2026-01-01T00:00:00Z'
+      },
+      geometry: {
+        type: 'LineString',
+        coordinates: [
+          [100.310, -0.346], // upstream start (should be omitted from sliced downstream reach)
+          [100.314, -0.346],
+          [100.314, -0.344] // outlet touches river-main at its midpoint
+        ]
+      }
+    },
+    {
+      type: 'Feature',
+      properties: {
+        id: 'river-main',
+        name: 'Sungai Utama Uji',
+        kind: 'river',
+        status: 'normal',
+        source: 'manual',
+        source_ref: null,
+        notes: '',
+        length_m: 800,
+        updated_by: 'test',
+        updated_at: '2026-01-01T00:00:00Z'
+      },
+      geometry: {
+        type: 'LineString',
+        coordinates: [
+          [100.312, -0.344],
+          [100.316, -0.344],
+          [100.318, -0.344]
+        ]
+      }
+    },
+    {
+      // Cyclic touchpoint back toward trib-1 to confirm termination without infinite loops
+      type: 'Feature',
+      properties: {
+        id: 'loop-drain',
+        name: 'Saluran Uji',
+        kind: 'drain',
+        status: 'normal',
+        source: 'manual',
+        source_ref: null,
+        notes: '',
+        length_m: 400,
+        updated_by: 'test',
+        updated_at: '2026-01-01T00:00:00Z'
+      },
+      geometry: {
+        type: 'LineString',
+        coordinates: [
+          [100.318, -0.344],
+          [100.310, -0.346]
+        ]
+      }
+    }
+  ];
+
+  const net = computeRunoffMergeNetwork(flows, waterways, 45);
+  assert.equal(net.mergingFlowIds.has('f-trib'), true);
+  assert.equal(net.confluences.length, 1);
+  assert.equal(net.confluences[0].waterwayId, 'trib-1');
+  assert.ok(Math.abs(net.confluences[0].coordinates[0] - 100.312) < 1e-4);
+
+  const tribReach = net.mergedReaches.find(r => r.waterwayId === 'trib-1');
+  assert.ok(tribReach, 'Tributary downstream reach should be included');
+  assert.equal(tribReach.directRunoff, true);
+  assert.ok(tribReach.coordinates[0][0] > 100.311, 'Upstream half of tributary before merge must be omitted');
+
+  const mainReach = net.mergedReaches.find(r => r.waterwayId === 'river-main');
+  assert.ok(mainReach, 'Receiving main river reach should inherit merged flow downstream');
+  assert.equal(mainReach.directRunoff, false);
+  assert.ok(mainReach.coordinates[0][0] >= 100.3139, 'Main river reach should begin at tributary junction');
+});
+
+test('computeRunoffMergeNetwork detects real Balingka confluences and downstream propagation', () => {
+  const dataDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'public', 'data');
+  const flowPaths = JSON.parse(fs.readFileSync(path.join(dataDir, 'flow-paths.geojson'), 'utf8'));
+  const verifiedWaterways = JSON.parse(fs.readFileSync(path.join(dataDir, 'verified-waterways.geojson'), 'utf8'));
+
+  const net = computeRunoffMergeNetwork(flowPaths.features, verifiedWaterways.features, 45);
+  assert.ok(net.confluences.length > 0, 'Expected at least one runoff-to-waterway confluence');
+  assert.ok(net.mergingFlowIds.size > 0, 'Expected merging flow path IDs');
+
+  const names = new Set(net.mergedReaches.map(r => r.waterwayName));
+  assert.ok(names.has('Anak Sungai #001'), `Expected Anak Sungai #001 in mergedReaches, got ${Array.from(names).join(', ')}`);
+  assert.ok(names.has('Batang Ngalai'), `Expected Batang Ngalai in mergedReaches, got ${Array.from(names).join(', ')}`);
+});
+
+test('getOverlayContrastPalette adapts overlay colors for dark Satellite vs light daylight basemaps', () => {
+  assert.equal(isDarkBasemap('sat'), true);
+  assert.equal(isDarkBasemap('osm'), false);
+  assert.equal(isDarkBasemap('topo'), false);
+  assert.equal(isDarkBasemap('relief'), false);
+
+  const sat = getOverlayContrastPalette('sat');
+  const osm = getOverlayContrastPalette('osm');
+  const topo = getOverlayContrastPalette('topo');
+
+  assert.equal(sat.roads.casingColor, '#161c1a');
+  assert.equal(sat.roads.secondaryCoreColor, '#fde047');
+  assert.equal(sat.roads.localCoreColor, '#f8fafc');
+  assert.equal(sat.contours.majorColor, '#fef3c7');
+  assert.ok(sat.contours.majorCasingOpacity > 0);
+  assert.equal(sat.agamForest.lineColor, '#86efac');
+  assert.equal(sat.agamRbi.lineColor, '#22d3ee');
+
+  assert.equal(osm.contours.majorColor, '#78350f');
+  assert.equal(osm.contours.majorCasingOpacity, 0);
+  assert.equal(osm.agamRbi.lineColor, '#0e7490');
+  assert.equal(osm.agamForest.lineColor, '#15803d');
+  assert.deepEqual(osm, topo);
 });

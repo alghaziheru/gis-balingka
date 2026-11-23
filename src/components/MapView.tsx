@@ -18,7 +18,8 @@ import maplibreWorkerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url';
 import { isPointInNagari, lookupAgamAtPoint } from '../lib/agamLookup';
 import type { CascadeEngine } from '../lib/cascadeEngine';
 import type { DemClient } from '../lib/demClient';
-import { haversineMeters, snapPointToWaterways } from '../lib/geometry';
+import { computeRunoffMergeNetwork, haversineMeters, snapPointToWaterways, type MergedWaterwayReach } from '../lib/geometry';
+import { getOverlayContrastPalette } from '../lib/mapPalette';
 import type {
   ActiveTool,
   AgamContextData,
@@ -203,12 +204,33 @@ function registerCartographicIcons(map: MapLibreMap): void {
     ctx.lineTo(s * 0.3, s * 0.78);
     ctx.stroke();
 
-    ctx.strokeStyle = '#b45309';
+    ctx.strokeStyle = '#d97706';
     ctx.lineWidth = 2.0;
     ctx.beginPath();
     ctx.moveTo(s * 0.3, s * 0.22);
     ctx.lineTo(s * 0.72, s * 0.5);
     ctx.lineTo(s * 0.3, s * 0.78);
+    ctx.stroke();
+  });
+
+  // Directional white/navy chevron for verified waterways
+  addCanvasIcon('icon-waterway-arrow', 20, (ctx, s) => {
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.strokeStyle = '#0c4a6e';
+    ctx.lineWidth = 4.0;
+    ctx.beginPath();
+    ctx.moveTo(s * 0.3, s * 0.24);
+    ctx.lineTo(s * 0.72, s * 0.5);
+    ctx.lineTo(s * 0.3, s * 0.76);
+    ctx.stroke();
+
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 2.1;
+    ctx.beginPath();
+    ctx.moveTo(s * 0.3, s * 0.24);
+    ctx.lineTo(s * 0.72, s * 0.5);
+    ctx.lineTo(s * 0.3, s * 0.76);
     ctx.stroke();
   });
 
@@ -435,6 +457,10 @@ export function MapView(props: MapViewProps) {
   const onSnapFeedbackRef = useRef(props.onSnapFeedback);
   onSnapFeedbackRef.current = props.onSnapFeedback;
   const animPathsRef = useRef<GeoFeature[]>([]);
+  const flowAnimActiveRef = useRef(false);
+  const mergedReachesRef = useRef<MergedWaterwayReach[]>([]);
+  const mergingFlowIdsRef = useRef<Set<string>>(new Set());
+  const particlesClearedRef = useRef(true);
   const isDraggingVertexRef = useRef(false);
 
   const openPopup = (lngLat: [number, number], p: GeoProperties | undefined, isCommunity = false) => {
@@ -680,6 +706,7 @@ export function MapView(props: MapViewProps) {
 
     map.on('load', () => {
       const ds = props.datasets;
+      const p = getOverlayContrastPalette(props.basemap);
       registerCartographicIcons(map);
 
       // 10m ESA WorldCover forest & land-cover overlay
@@ -766,32 +793,52 @@ export function MapView(props: MapViewProps) {
 
       map.addSource('src-osm-context', { type: 'geojson', data: asGeoInput(ds.osmContext) });
       map.addLayer({
+        id: 'osm-roads-casing',
+        type: 'line',
+        source: 'src-osm-context',
+        filter: ['==', ['get', 'kind'], 'road'],
+        layout: { visibility: 'none', 'line-cap': 'round', 'line-join': 'round' },
+        paint: {
+          'line-color': p.roads.casingColor,
+          'line-width': ['case', ['==', ['get', 'highway'], 'secondary'], p.roads.secondaryCasingWidth, p.roads.localCasingWidth],
+          'line-opacity': p.roads.casingOpacity
+        }
+      });
+      map.addLayer({
         id: 'osm-roads',
         type: 'line',
         source: 'src-osm-context',
         filter: ['==', ['get', 'kind'], 'road'],
         layout: { visibility: 'none', 'line-cap': 'round', 'line-join': 'round' },
-        paint: { 'line-color': '#475569', 'line-width': 1.5, 'line-opacity': 0.78 }
-      });
-      map.addLayer({
-        id: 'osm-waterways',
-        type: 'line',
-        source: 'src-osm-context',
-        filter: ['==', ['get', 'kind'], 'waterway'],
-        layout: { visibility: 'none', 'line-cap': 'round', 'line-join': 'round' },
-        paint: { 'line-color': '#0ea5e9', 'line-width': 2.5, 'line-opacity': 0.88 }
+        paint: {
+          'line-color': ['case', ['==', ['get', 'highway'], 'secondary'], p.roads.secondaryCoreColor, p.roads.localCoreColor],
+          'line-width': ['case', ['==', ['get', 'highway'], 'secondary'], p.roads.secondaryCoreWidth, p.roads.localCoreWidth],
+          'line-opacity': 0.96
+        }
       });
 
       map.addSource('src-contours', { type: 'geojson', data: asGeoInput(ds.contours) });
+      map.addLayer({
+        id: 'contours-casing',
+        type: 'line',
+        source: 'src-contours',
+        filter: ['==', ['get', 'major'], true],
+        layout: { visibility: 'none', 'line-cap': 'round', 'line-join': 'round' },
+        paint: {
+          'line-color': '#161c1a',
+          'line-width': 3.0,
+          'line-opacity': p.contours.majorCasingOpacity
+        }
+      });
       map.addLayer({
         id: 'contours-line',
         type: 'line',
         source: 'src-contours',
         layout: { visibility: 'none', 'line-cap': 'round', 'line-join': 'round' },
         paint: {
-          'line-color': ['case', ['==', ['get', 'major'], true], '#78350f', '#b45309'],
-          'line-width': ['case', ['==', ['get', 'major'], true], 1.6, 0.85],
-          'line-opacity': ['case', ['==', ['get', 'major'], true], 0.82, 0.45]
+          'line-color': ['case', ['==', ['get', 'major'], true], p.contours.majorColor, p.contours.minorColor],
+          'line-width': ['case', ['==', ['get', 'major'], true], 1.65, 1.0],
+          'line-opacity': ['case', ['==', ['get', 'major'], true], p.contours.majorOpacity, p.contours.minorOpacity]
         }
       });
 
@@ -802,9 +849,9 @@ export function MapView(props: MapViewProps) {
         source: 'src-flows',
         layout: { visibility: 'none', 'line-cap': 'round', 'line-join': 'round' },
         paint: {
-          'line-color': '#d97706',
-          'line-width': ['match', ['get', 'tier'], 1, 4.2, 2, 3.0, 2.0],
-          'line-opacity': 0.1
+          'line-color': p.flows.backingColor,
+          'line-width': ['match', ['get', 'tier'], 1, 4.8, 2, 3.6, 2.6],
+          'line-opacity': p.flows.backingOpacity
         }
       });
       map.addLayer({
@@ -813,10 +860,10 @@ export function MapView(props: MapViewProps) {
         source: 'src-flows',
         layout: { visibility: 'none', 'line-cap': 'round', 'line-join': 'round' },
         paint: {
-          'line-color': '#b45309',
-          'line-width': ['match', ['get', 'tier'], 1, 2.1, 2, 1.45, 1.0],
-          'line-dasharray': [2.2, 2.6],
-          'line-opacity': 0.68
+          'line-color': p.flows.lineColor,
+          'line-width': ['match', ['get', 'tier'], 1, 2.4, 2, 1.7, 1.25],
+          'line-dasharray': [2.2, 2.2],
+          'line-opacity': p.flows.lineOpacity
         }
       });
       map.addLayer({
@@ -830,7 +877,22 @@ export function MapView(props: MapViewProps) {
           'icon-image': 'icon-flow-arrow',
           'icon-size': 0.78,
           'icon-allow-overlap': false,
-          'icon-rotation-alignment': 'map'
+          'icon-rotation-alignment': 'map',
+          'icon-keep-upright': false
+        }
+      });
+
+      map.addSource('src-verified-merged-flow', { type: 'geojson', data: asGeoInput(EMPTY_FC) });
+      map.addLayer({
+        id: 'verified-waterways-merged-glow',
+        type: 'line',
+        source: 'src-verified-merged-flow',
+        layout: { visibility: 'none', 'line-cap': 'round', 'line-join': 'round' },
+        paint: {
+          'line-color': '#38bdf8',
+          'line-width': ['match', ['get', 'kind'], 'river', 13.5, 'stream', 11.5, 9.5],
+          'line-opacity': 0.42,
+          'line-blur': 1.5
         }
       });
 
@@ -891,6 +953,49 @@ export function MapView(props: MapViewProps) {
         }
       });
 
+      map.addLayer({
+        id: 'verified-waterways-arrows',
+        type: 'symbol',
+        source: 'src-verified-waterways',
+        layout: {
+          visibility: 'visible',
+          'symbol-placement': 'line',
+          'symbol-spacing': 82,
+          'icon-image': 'icon-waterway-arrow',
+          'icon-size': ['match', ['get', 'kind'], 'river', 0.92, 'stream', 0.84, 0.78],
+          'icon-allow-overlap': false,
+          'icon-rotation-alignment': 'map',
+          'icon-keep-upright': false
+        },
+        paint: { 'icon-opacity': 0.96 }
+      });
+
+      map.addSource('src-runoff-confluences', { type: 'geojson', data: asGeoInput(EMPTY_FC) });
+      map.addLayer({
+        id: 'runoff-confluences-ring',
+        type: 'circle',
+        source: 'src-runoff-confluences',
+        layout: { visibility: 'none' },
+        paint: {
+          'circle-radius': 8.5,
+          'circle-color': 'rgba(56, 189, 248, 0.24)',
+          'circle-stroke-color': '#0369a1',
+          'circle-stroke-width': 1.5
+        }
+      });
+      map.addLayer({
+        id: 'runoff-confluences-dot',
+        type: 'circle',
+        source: 'src-runoff-confluences',
+        layout: { visibility: 'none' },
+        paint: {
+          'circle-radius': 4.2,
+          'circle-color': '#f59e0b',
+          'circle-stroke-color': '#ffffff',
+          'circle-stroke-width': 1.6
+        }
+      });
+
       map.addSource('src-flow-particles', { type: 'geojson', data: asGeoInput(EMPTY_FC) });
       map.addLayer({
         id: 'flow-particles',
@@ -899,9 +1004,45 @@ export function MapView(props: MapViewProps) {
         layout: { visibility: 'none' },
         paint: {
           'circle-radius': ['get', 'radius'],
-          'circle-color': ['case', ['==', ['get', 'kind'], 'verified'], '#e0f2fe', '#fef3c7'],
-          'circle-stroke-color': ['case', ['==', ['get', 'kind'], 'verified'], '#0369a1', '#b45309'],
-          'circle-stroke-width': ['case', ['==', ['get', 'kind'], 'verified'], 1.7, 1.5],
+          'circle-color': [
+            'match',
+            ['get', 'kind'],
+            'dem',
+            '#fef3c7',
+            'merged',
+            [
+              'interpolate',
+              ['linear'],
+              ['coalesce', ['get', 'mix'], 1],
+              0,
+              '#fde68a',
+              0.16,
+              '#7dd3fc',
+              0.48,
+              '#e0f2fe'
+            ],
+            '#e0f2fe'
+          ],
+          'circle-stroke-color': [
+            'match',
+            ['get', 'kind'],
+            'dem',
+            '#b45309',
+            'merged',
+            [
+              'interpolate',
+              ['linear'],
+              ['coalesce', ['get', 'mix'], 1],
+              0,
+              '#b45309',
+              0.18,
+              '#0284c7',
+              1,
+              '#0369a1'
+            ],
+            '#0369a1'
+          ],
+          'circle-stroke-width': ['match', ['get', 'kind'], 'dem', 1.5, 'merged', 1.8, 1.6],
           'circle-opacity': 0.94
         }
       });
@@ -930,30 +1071,41 @@ export function MapView(props: MapViewProps) {
             'match',
             ['get', 'level'],
             'Tinggi',
-            '#dc2626',
+            p.agamLandslide.highFill,
             'Sedang',
-            '#d97706',
-            '#65a30d'
+            p.agamLandslide.medFill,
+            p.agamLandslide.lowFill
           ],
-          'fill-opacity': 0.24
+          'fill-opacity': p.agamLandslide.fillOpacity
+        }
+      });
+      map.addLayer({
+        id: 'agam-landslide-casing',
+        type: 'line',
+        source: 'src-agam-landslide',
+        layout: { visibility: 'none', 'line-cap': 'round', 'line-join': 'round' },
+        paint: {
+          'line-color': p.agamLandslide.casingColor,
+          'line-width': 3.0,
+          'line-opacity': p.agamLandslide.casingOpacity
         }
       });
       map.addLayer({
         id: 'agam-landslide-line',
         type: 'line',
         source: 'src-agam-landslide',
-        layout: { visibility: 'none' },
+        layout: { visibility: 'none', 'line-cap': 'round', 'line-join': 'round' },
         paint: {
           'line-color': [
             'match',
             ['get', 'level'],
             'Tinggi',
-            '#991b1b',
+            p.agamLandslide.highLine,
             'Sedang',
-            '#b45309',
-            '#3f6212'
+            p.agamLandslide.medLine,
+            p.agamLandslide.lowLine
           ],
-          'line-width': 1.2
+          'line-width': p.agamLandslide.lineWidth
         }
       });
 
@@ -971,20 +1123,35 @@ export function MapView(props: MapViewProps) {
             'match',
             ['get', 'fungsi'],
             'HL',
-            '#166534',
+            p.agamForest.hlFill,
             'KSA/KPA',
-            '#0f766e',
-            '#cbd5e1'
+            p.agamForest.ksaFill,
+            p.agamForest.aplFill
           ],
-          'fill-opacity': ['match', ['get', 'fungsi'], 'APL', 0.05, 0.22]
+          'fill-opacity': ['match', ['get', 'fungsi'], 'APL', 0.05, p.agamForest.fillOpacity]
+        }
+      });
+      map.addLayer({
+        id: 'agam-forest-casing',
+        type: 'line',
+        source: 'src-agam-forest',
+        layout: { visibility: 'none', 'line-cap': 'round', 'line-join': 'round' },
+        paint: {
+          'line-color': p.agamForest.casingColor,
+          'line-width': 3.4,
+          'line-opacity': p.agamForest.casingOpacity
         }
       });
       map.addLayer({
         id: 'agam-forest-line',
         type: 'line',
         source: 'src-agam-forest',
-        layout: { visibility: 'none' },
-        paint: { 'line-color': '#14532d', 'line-width': 1.3, 'line-dasharray': [4, 2] }
+        layout: { visibility: 'none', 'line-cap': 'round', 'line-join': 'round' },
+        paint: {
+          'line-color': p.agamForest.lineColor,
+          'line-width': p.agamForest.lineWidth,
+          'line-dasharray': [4, 2]
+        }
       });
 
       map.addSource('src-agam-soil', {
@@ -1001,31 +1168,56 @@ export function MapView(props: MapViewProps) {
             'match',
             ['get', 'soilType'],
             'Andosol',
-            '#b45309',
-            '#57534e'
+            p.agamSoil.andosolFill,
+            p.agamSoil.otherFill
           ],
-          'fill-opacity': 0.22
+          'fill-opacity': p.agamSoil.fillOpacity
+        }
+      });
+      map.addLayer({
+        id: 'agam-soil-casing',
+        type: 'line',
+        source: 'src-agam-soil',
+        layout: { visibility: 'none', 'line-cap': 'round', 'line-join': 'round' },
+        paint: {
+          'line-color': p.agamSoil.casingColor,
+          'line-width': 3.0,
+          'line-opacity': p.agamSoil.casingOpacity
         }
       });
       map.addLayer({
         id: 'agam-soil-line',
         type: 'line',
         source: 'src-agam-soil',
-        layout: { visibility: 'none' },
-        paint: { 'line-color': '#78350f', 'line-width': 1.1 }
+        layout: { visibility: 'none', 'line-cap': 'round', 'line-join': 'round' },
+        paint: {
+          'line-color': p.agamSoil.lineColor,
+          'line-width': p.agamSoil.lineWidth
+        }
       });
 
       map.addSource('src-agam-rbi', { type: 'geojson', data: asGeoInput(ds.agamRbiRivers || EMPTY_FC) });
+      map.addLayer({
+        id: 'agam-rbi-casing',
+        type: 'line',
+        source: 'src-agam-rbi',
+        layout: { visibility: 'none', 'line-cap': 'round', 'line-join': 'round' },
+        paint: {
+          'line-color': p.agamRbi.casingColor,
+          'line-width': ['match', ['get', 'kind'], 'river', 5.2, 3.8],
+          'line-opacity': p.agamRbi.casingOpacity
+        }
+      });
       map.addLayer({
         id: 'agam-rbi-line',
         type: 'line',
         source: 'src-agam-rbi',
         layout: { visibility: 'none', 'line-cap': 'round', 'line-join': 'round' },
         paint: {
-          'line-color': '#0e7490',
-          'line-width': ['match', ['get', 'kind'], 'river', 3.0, 2.0],
-          'line-dasharray': [4, 2.5],
-          'line-opacity': 0.9
+          'line-color': p.agamRbi.lineColor,
+          'line-width': ['match', ['get', 'kind'], 'river', 3.0, 2.1],
+          'line-dasharray': [4, 2.2],
+          'line-opacity': p.agamRbi.lineOpacity
         }
       });
 
@@ -1062,6 +1254,17 @@ export function MapView(props: MapViewProps) {
         paint: {
           'fill-color': ['case', ['==', ['get', 'status'], 'verified'], '#0f766e', '#64748b'],
           'fill-opacity': 0.1
+        }
+      });
+      map.addLayer({
+        id: 'jorong-casing',
+        type: 'line',
+        source: 'src-jorong-boundaries',
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        paint: {
+          'line-color': '#ffffff',
+          'line-width': ['case', ['==', ['get', 'status'], 'verified'], 4.4, 3.6],
+          'line-opacity': 0.85
         }
       });
       map.addLayer({
@@ -1142,6 +1345,13 @@ export function MapView(props: MapViewProps) {
       });
 
       map.addSource('src-profile', { type: 'geojson', data: asGeoInput(EMPTY_FC) });
+      map.addLayer({
+        id: 'profile-casing',
+        type: 'line',
+        source: 'src-profile',
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        paint: { 'line-color': '#ffffff', 'line-width': 5.5, 'line-opacity': 0.92 }
+      });
       map.addLayer({
         id: 'profile-line',
         type: 'line',
@@ -1306,7 +1516,6 @@ export function MapView(props: MapViewProps) {
         'draft-points',
         'community-points',
         'community-lines',
-        'osm-waterways',
         'verified-waterways-line',
         'verified-culverts-line',
         'flows-line',
@@ -1594,28 +1803,81 @@ export function MapView(props: MapViewProps) {
           const dt = Math.min(0.1, (ts - lastTs) / 1000 || 0.05);
           lastTs = ts;
           const isRaining = tabRef.current === 'sim' && simProgressRef.current > 0.03;
+          const animActive = flowAnimActiveRef.current;
           const src = map.getSource('src-flow-particles') as GeoJSONSource | undefined;
 
-          if (!isRaining) {
-            if (src) src.setData(asGeoInput(EMPTY_FC));
+          if (!animActive) {
+            if (src && !particlesClearedRef.current) {
+              src.setData(asGeoInput(EMPTY_FC));
+              particlesClearedRef.current = true;
+            }
           } else {
-            const speed = 0.14 + (simRainRef.current / 150) * (0.12 + simProgressRef.current * 0.24);
+            particlesClearedRef.current = false;
+            const prog = simProgressRef.current;
+            const speed = isRaining
+              ? 0.14 + (simRainRef.current / 150) * (0.12 + prog * 0.24)
+              : 0.16;
             particlePhase = (particlePhase + dt * speed) % 1;
 
             if (src) {
-              const prog = simProgressRef.current;
-              const minDemTier = prog <= 0.25 ? 2 : 1;
-              const maxDemTier = prog <= 0.25 ? 3 : 2;
-              const showVerified = layersRef.current.verifiedWaterways && prog > 0.22;
               const features: GeoFeature[] = [];
-              if (showVerified) {
+              const animPaths = animPathsRef.current;
+              for (let i = 0; i < animPaths.length; i++) {
+                const f = animPaths[i];
+                if (f.geometry.type !== 'LineString') continue;
+                const segId = String(f.properties?.id || '');
+                if (suppressedDemSetRef.current.has(segId)) continue;
+                const tier = Number(f.properties?.tier || 2);
+                const lenM = Number(f.properties?.length_m || 0);
+                const isMerging = mergingFlowIdsRef.current.has(segId);
+                const coords = f.geometry.coordinates;
+                const count = tier === 1 || (isMerging && lenM >= 150) ? 2 : 1;
+                for (let k = 0; k < count; k++) {
+                  const frac = (particlePhase + k / count + i * 0.17) % 1;
+                  features.push({
+                    type: 'Feature',
+                    properties: { kind: 'dem', radius: tier === 1 ? 3.2 : 2.5 },
+                    geometry: { type: 'Point', coordinates: interpolateLine(coords, frac) }
+                  });
+                }
+              }
+
+              if (layersRef.current.verifiedWaterways) {
+                const mergedReaches = mergedReachesRef.current;
+                const mergedWwIds = new Set<string>();
+                for (let i = 0; i < mergedReaches.length; i++) {
+                  const reach = mergedReaches[i];
+                  mergedWwIds.add(reach.waterwayId);
+                  const coords = reach.coordinates;
+                  if (!coords || coords.length < 2) continue;
+                  const count = Math.max(2, Math.min(12, Math.round(reach.lengthM / 220)));
+                  const radius =
+                    reach.kind === 'river'
+                      ? isRaining && prog > 0.6
+                        ? 4.3
+                        : 3.7
+                      : isRaining && prog > 0.5
+                        ? 3.5
+                        : 3.2;
+                  for (let k = 0; k < count; k++) {
+                    const frac = (particlePhase + k / count + i * 0.11) % 1;
+                    features.push({
+                      type: 'Feature',
+                      properties: { kind: 'merged', radius, mix: frac },
+                      geometry: { type: 'Point', coordinates: interpolateLine(coords, frac) }
+                    });
+                  }
+                }
+
                 for (let i = 0; i < verifiedWaterwaysRef.current.length; i++) {
                   const ww = verifiedWaterwaysRef.current[i];
-                  if (prog <= 0.45 && ww.properties.kind === 'river') continue;
+                  if (mergedWwIds.has(ww.properties.id)) continue;
+                  const isRiver = ww.properties.kind === 'river';
+                  if (isRaining && (isRiver ? prog <= 0.35 : prog <= 0.15)) continue;
                   const coords = ww.geometry.coordinates;
                   if (!coords || coords.length < 2) continue;
                   const count = Math.max(1, Math.min(8, Math.round((ww.properties.length_m || 400) / 320)));
-                  const radius = ww.properties.kind === 'river' ? (prog > 0.65 ? 4.0 : 3.4) : 2.8;
+                  const radius = isRiver ? 3.0 : 2.5;
                   for (let k = 0; k < count; k++) {
                     const frac = (particlePhase + k / count + i * 0.13) % 1;
                     features.push({
@@ -1626,24 +1888,7 @@ export function MapView(props: MapViewProps) {
                   }
                 }
               }
-              const animPaths = animPathsRef.current;
-              for (let i = 0; i < animPaths.length; i++) {
-                const f = animPaths[i];
-                if (f.geometry.type !== 'LineString') continue;
-                if (suppressedDemSetRef.current.has(String(f.properties?.id || ''))) continue;
-                const tier = Number(f.properties?.tier || 2);
-                if (tier < minDemTier || tier > maxDemTier) continue;
-                const coords = f.geometry.coordinates;
-                const count = tier === 1 ? 2 : 1;
-                for (let k = 0; k < count; k++) {
-                  const frac = (particlePhase + k / count + i * 0.17) % 1;
-                  features.push({
-                    type: 'Feature',
-                    properties: { kind: 'dem', radius: tier === 1 ? 3.2 : 2.5 },
-                    geometry: { type: 'Point', coordinates: interpolateLine(coords, frac) }
-                  });
-                }
-              }
+
               src.setData(asGeoInput({ type: 'FeatureCollection', features }));
             }
           }
@@ -1665,7 +1910,6 @@ export function MapView(props: MapViewProps) {
           'draft-points',
           'community-points',
           'community-lines',
-          'osm-waterways',
           'verified-waterways-line',
           'verified-culverts-line',
           'flows-line',
@@ -1813,6 +2057,7 @@ export function MapView(props: MapViewProps) {
     map.setLayoutProperty('nagari-boundary-casing', 'visibility', vis(props.layers.das));
     map.setLayoutProperty('nagari-boundary-line', 'visibility', vis(props.layers.das));
     map.setLayoutProperty('jorong-fill', 'visibility', vis(props.layers.das));
+    map.setLayoutProperty('jorong-casing', 'visibility', vis(props.layers.das));
     map.setLayoutProperty('jorong-line', 'visibility', vis(props.layers.das));
     map.setLayoutProperty('settlements-residential-fill', 'visibility', vis(props.layers.settlements));
     map.setLayoutProperty('settlements-buildings-fill', 'visibility', vis(props.layers.settlements));
@@ -1820,12 +2065,17 @@ export function MapView(props: MapViewProps) {
     map.setLayoutProperty('landcover-overlay', 'visibility', vis(props.layers.landCover));
     map.setLayoutProperty('scour-change-overlay', 'visibility', vis(props.layers.scourChange));
     map.setLayoutProperty('agam-landslide-fill', 'visibility', vis(props.layers.agamLandslide));
+    map.setLayoutProperty('agam-landslide-casing', 'visibility', vis(props.layers.agamLandslide));
     map.setLayoutProperty('agam-landslide-line', 'visibility', vis(props.layers.agamLandslide));
     map.setLayoutProperty('agam-forest-fill', 'visibility', vis(props.layers.agamForestStatus));
+    map.setLayoutProperty('agam-forest-casing', 'visibility', vis(props.layers.agamForestStatus));
     map.setLayoutProperty('agam-forest-line', 'visibility', vis(props.layers.agamForestStatus));
     map.setLayoutProperty('agam-soil-fill', 'visibility', vis(props.layers.agamSoilGeology));
+    map.setLayoutProperty('agam-soil-casing', 'visibility', vis(props.layers.agamSoilGeology));
     map.setLayoutProperty('agam-soil-line', 'visibility', vis(props.layers.agamSoilGeology));
+    map.setLayoutProperty('agam-rbi-casing', 'visibility', vis(props.layers.agamRbiRivers));
     map.setLayoutProperty('agam-rbi-line', 'visibility', vis(props.layers.agamRbiRivers));
+    map.setLayoutProperty('contours-casing', 'visibility', vis(props.layers.contours));
     map.setLayoutProperty('contours-line', 'visibility', vis(props.layers.contours));
 
     const jbSrc = map.getSource('src-jorong-boundaries') as GeoJSONSource | undefined;
@@ -1841,11 +2091,12 @@ export function MapView(props: MapViewProps) {
       c.el.style.display = props.layers.contours ? 'block' : 'none';
     });
     map.setLayoutProperty('slope-overlay', 'visibility', vis(props.layers.slope && props.basemap !== 'slope'));
+    map.setLayoutProperty('osm-roads-casing', 'visibility', vis(props.layers.osmContext));
     map.setLayoutProperty('osm-roads', 'visibility', vis(props.layers.osmContext));
-    map.setLayoutProperty('osm-waterways', 'visibility', vis(props.layers.osmContext));
     map.setLayoutProperty('verified-waterways-casing', 'visibility', vis(props.layers.verifiedWaterways));
     map.setLayoutProperty('verified-waterways-line', 'visibility', vis(props.layers.verifiedWaterways));
     map.setLayoutProperty('verified-culverts-line', 'visibility', vis(props.layers.verifiedWaterways));
+    map.setLayoutProperty('verified-waterways-arrows', 'visibility', vis(props.layers.verifiedWaterways));
 
     const wwSrc = map.getSource('src-verified-waterways') as GeoJSONSource | undefined;
     if (wwSrc) {
@@ -1898,10 +2149,13 @@ export function MapView(props: MapViewProps) {
           : 0
         : props.flowDensity;
     const flowVis = maxTier > 0;
+    const flowAnimActive = isRaining || (props.tab !== 'sim' && props.flowDensity > 0);
+    flowAnimActiveRef.current = flowAnimActive;
+
     map.setLayoutProperty('flows-glow', 'visibility', vis(flowVis));
     map.setLayoutProperty('flows-line', 'visibility', vis(flowVis));
     map.setLayoutProperty('flows-arrows', 'visibility', vis(flowVis));
-    map.setLayoutProperty('flow-particles', 'visibility', vis(isRaining));
+    map.setLayoutProperty('flow-particles', 'visibility', vis(flowAnimActive));
     if (flowVis) {
       const tierExpr: ExpressionSpecification = ['<=', ['get', 'tier'], maxTier];
       const flowFilter: FilterSpecification =
@@ -1912,6 +2166,84 @@ export function MapView(props: MapViewProps) {
       map.setFilter('flows-line', flowFilter);
       map.setFilter('flows-arrows', flowFilter);
     }
+
+    const suppressedSet = new Set(props.suppressedDemIds);
+    const visibleFlows = flowVis
+      ? props.datasets.flowPaths.features.filter(
+          f =>
+            f.geometry.type === 'LineString' &&
+            Number(f.properties?.tier || 2) <= maxTier &&
+            !suppressedSet.has(String(f.properties?.id || ''))
+        )
+      : [];
+
+    const mergedSrc = map.getSource('src-verified-merged-flow') as GeoJSONSource | undefined;
+    const confSrc = map.getSource('src-runoff-confluences') as GeoJSONSource | undefined;
+
+    if (flowVis && props.layers.verifiedWaterways) {
+      const mergeNet = computeRunoffMergeNetwork(visibleFlows, props.verifiedWaterways, 45);
+      mergedReachesRef.current = mergeNet.mergedReaches;
+      mergingFlowIdsRef.current = mergeNet.mergingFlowIds;
+      if (mergedSrc) {
+        mergedSrc.setData(
+          asGeoInput({
+            type: 'FeatureCollection',
+            features: mergeNet.mergedReaches.map(r => ({
+              type: 'Feature',
+              properties: {
+                kind: r.kind,
+                status: r.status,
+                waterwayId: r.waterwayId,
+                directRunoff: r.directRunoff
+              },
+              geometry: { type: 'LineString', coordinates: r.coordinates }
+            }))
+          })
+        );
+      }
+      if (confSrc) {
+        confSrc.setData(
+          asGeoInput({
+            type: 'FeatureCollection',
+            features: mergeNet.confluences.map(c => ({
+              type: 'Feature',
+              properties: {
+                waterwayId: c.waterwayId,
+                waterwayName: c.waterwayName,
+                maxTier: c.maxTier
+              },
+              geometry: { type: 'Point', coordinates: c.coordinates }
+            }))
+          })
+        );
+      }
+      map.setLayoutProperty('verified-waterways-merged-glow', 'visibility', 'visible');
+      map.setLayoutProperty('runoff-confluences-ring', 'visibility', 'visible');
+      map.setLayoutProperty('runoff-confluences-dot', 'visibility', 'visible');
+      map.setPaintProperty(
+        'verified-waterways-merged-glow',
+        'line-opacity',
+        isRaining ? Math.min(0.64, 0.34 + props.simProgress * 0.24 + (props.simRain / 150) * 0.1) : 0.42
+      );
+    } else {
+      mergedReachesRef.current = [];
+      mergingFlowIdsRef.current = new Set();
+      if (mergedSrc) mergedSrc.setData(asGeoInput(EMPTY_FC));
+      if (confSrc) confSrc.setData(asGeoInput(EMPTY_FC));
+      map.setLayoutProperty('verified-waterways-merged-glow', 'visibility', 'none');
+      map.setLayoutProperty('runoff-confluences-ring', 'visibility', 'none');
+      map.setLayoutProperty('runoff-confluences-dot', 'visibility', 'none');
+    }
+
+    const mergingSet = mergingFlowIdsRef.current;
+    animPathsRef.current = [...visibleFlows]
+      .sort((a, b) => {
+        const am = mergingSet.has(String(a.properties?.id || '')) ? 1 : 0;
+        const bm = mergingSet.has(String(b.properties?.id || '')) ? 1 : 0;
+        if (am !== bm) return bm - am;
+        return Number(b.properties?.length_m || 0) - Number(a.properties?.length_m || 0);
+      })
+      .slice(0, 60);
 
     // Physical Cascade Flood & Landslide Overlays (falling back to static HAND if cascadeEngine unavailable)
     const showFlood = isRaining;
@@ -2075,8 +2407,117 @@ export function MapView(props: MapViewProps) {
     props.verifiedStructures,
     props.jorongBoundaries,
     props.datasets.drainageDraft,
+    props.datasets.flowPaths,
     props.suppressedDemIds
   ]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapLoadedRef.current) return;
+    const pal = getOverlayContrastPalette(props.basemap);
+
+    map.setPaintProperty('osm-roads-casing', 'line-color', pal.roads.casingColor);
+    map.setPaintProperty('osm-roads-casing', 'line-opacity', pal.roads.casingOpacity);
+    map.setPaintProperty('osm-roads-casing', 'line-width', [
+      'case',
+      ['==', ['get', 'highway'], 'secondary'],
+      pal.roads.secondaryCasingWidth,
+      pal.roads.localCasingWidth
+    ]);
+    map.setPaintProperty('osm-roads', 'line-color', [
+      'case',
+      ['==', ['get', 'highway'], 'secondary'],
+      pal.roads.secondaryCoreColor,
+      pal.roads.localCoreColor
+    ]);
+    map.setPaintProperty('osm-roads', 'line-width', [
+      'case',
+      ['==', ['get', 'highway'], 'secondary'],
+      pal.roads.secondaryCoreWidth,
+      pal.roads.localCoreWidth
+    ]);
+
+    map.setPaintProperty('contours-casing', 'line-opacity', pal.contours.majorCasingOpacity);
+    map.setPaintProperty('contours-line', 'line-color', [
+      'case',
+      ['==', ['get', 'major'], true],
+      pal.contours.majorColor,
+      pal.contours.minorColor
+    ]);
+    map.setPaintProperty('contours-line', 'line-opacity', [
+      'case',
+      ['==', ['get', 'major'], true],
+      pal.contours.majorOpacity,
+      pal.contours.minorOpacity
+    ]);
+
+    map.setPaintProperty('flows-glow', 'line-color', pal.flows.backingColor);
+    map.setPaintProperty('flows-glow', 'line-opacity', pal.flows.backingOpacity);
+    map.setPaintProperty('flows-line', 'line-color', pal.flows.lineColor);
+    map.setPaintProperty('flows-line', 'line-opacity', pal.flows.lineOpacity);
+
+    map.setPaintProperty('agam-rbi-casing', 'line-color', pal.agamRbi.casingColor);
+    map.setPaintProperty('agam-rbi-casing', 'line-opacity', pal.agamRbi.casingOpacity);
+    map.setPaintProperty('agam-rbi-line', 'line-color', pal.agamRbi.lineColor);
+    map.setPaintProperty('agam-rbi-line', 'line-opacity', pal.agamRbi.lineOpacity);
+
+    map.setPaintProperty('agam-forest-fill', 'fill-color', [
+      'match',
+      ['get', 'fungsi'],
+      'HL',
+      pal.agamForest.hlFill,
+      'KSA/KPA',
+      pal.agamForest.ksaFill,
+      pal.agamForest.aplFill
+    ]);
+    map.setPaintProperty('agam-forest-fill', 'fill-opacity', [
+      'match',
+      ['get', 'fungsi'],
+      'APL',
+      0.05,
+      pal.agamForest.fillOpacity
+    ]);
+    map.setPaintProperty('agam-forest-casing', 'line-color', pal.agamForest.casingColor);
+    map.setPaintProperty('agam-forest-casing', 'line-opacity', pal.agamForest.casingOpacity);
+    map.setPaintProperty('agam-forest-line', 'line-color', pal.agamForest.lineColor);
+    map.setPaintProperty('agam-forest-line', 'line-width', pal.agamForest.lineWidth);
+
+    map.setPaintProperty('agam-soil-fill', 'fill-color', [
+      'match',
+      ['get', 'soilType'],
+      'Andosol',
+      pal.agamSoil.andosolFill,
+      pal.agamSoil.otherFill
+    ]);
+    map.setPaintProperty('agam-soil-fill', 'fill-opacity', pal.agamSoil.fillOpacity);
+    map.setPaintProperty('agam-soil-casing', 'line-color', pal.agamSoil.casingColor);
+    map.setPaintProperty('agam-soil-casing', 'line-opacity', pal.agamSoil.casingOpacity);
+    map.setPaintProperty('agam-soil-line', 'line-color', pal.agamSoil.lineColor);
+    map.setPaintProperty('agam-soil-line', 'line-width', pal.agamSoil.lineWidth);
+
+    map.setPaintProperty('agam-landslide-fill', 'fill-color', [
+      'match',
+      ['get', 'level'],
+      'Tinggi',
+      pal.agamLandslide.highFill,
+      'Sedang',
+      pal.agamLandslide.medFill,
+      pal.agamLandslide.lowFill
+    ]);
+    map.setPaintProperty('agam-landslide-fill', 'fill-opacity', pal.agamLandslide.fillOpacity);
+    map.setPaintProperty('agam-landslide-casing', 'line-color', pal.agamLandslide.casingColor);
+    map.setPaintProperty('agam-landslide-casing', 'line-opacity', pal.agamLandslide.casingOpacity);
+    map.setPaintProperty('agam-landslide-line', 'line-color', [
+      'match',
+      ['get', 'level'],
+      'Tinggi',
+      pal.agamLandslide.highLine,
+      'Sedang',
+      pal.agamLandslide.medLine,
+      pal.agamLandslide.lowLine
+    ]);
+    map.setPaintProperty('agam-landslide-line', 'line-width', pal.agamLandslide.lineWidth);
+  }, [mapReady, props.basemap]);
 
   useEffect(() => {
     const map = mapRef.current;

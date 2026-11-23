@@ -1,4 +1,4 @@
-import type { VerifiedWaterwayFeature } from '../types/gis';
+import type { DrainageStatus, GeoFeature, VerifiedWaterwayFeature, WaterwayKind } from '../types/gis';
 
 const METERS_PER_DEG_LAT = 110540;
 
@@ -144,4 +144,244 @@ export function orientCoordinatesDownhill(
     startElev: avgStart,
     endElev: avgEnd
   };
+}
+
+export interface RunoffConfluencePoint {
+  coordinates: [number, number];
+  waterwayId: string;
+  waterwayName: string;
+  flowIds: string[];
+  maxTier: number;
+}
+
+export interface MergedWaterwayReach {
+  waterwayId: string;
+  waterwayName: string;
+  kind: WaterwayKind;
+  status: DrainageStatus;
+  coordinates: [number, number][];
+  lengthM: number;
+  directRunoff: boolean;
+}
+
+export interface RunoffMergeNetwork {
+  confluences: RunoffConfluencePoint[];
+  mergedReaches: MergedWaterwayReach[];
+  mergingFlowIds: Set<string>;
+}
+
+interface WaterwayEntryTrack {
+  segIndex: number;
+  t: number;
+  entryPt: [number, number];
+  entryPos: number;
+  directRunoff: boolean;
+}
+
+function findClosestWaterwayProjection(
+  pt: [number, number],
+  waterways: VerifiedWaterwayFeature[],
+  excludeId: string | null,
+  thresholdMeters: number
+): {
+  ww: VerifiedWaterwayFeature;
+  segIndex: number;
+  t: number;
+  closest: [number, number];
+  distM: number;
+} | null {
+  let best: {
+    ww: VerifiedWaterwayFeature;
+    segIndex: number;
+    t: number;
+    closest: [number, number];
+    distM: number;
+  } | null = null;
+
+  for (const ww of waterways) {
+    if (excludeId && ww.properties.id === excludeId) continue;
+    const coords = ww.geometry.coordinates;
+    if (!coords || coords.length < 2) continue;
+    for (let i = 0; i < coords.length - 1; i++) {
+      const hit = pointToSegmentMeters(pt, coords[i], coords[i + 1]);
+      if (hit.distM <= thresholdMeters && (!best || hit.distM < best.distM)) {
+        best = { ww, segIndex: i, t: hit.t, closest: hit.closest, distM: hit.distM };
+      }
+    }
+  }
+  return best;
+}
+
+export function computeRunoffMergeNetwork(
+  flowFeatures: GeoFeature[],
+  verifiedWaterways: VerifiedWaterwayFeature[],
+  snapThresholdMeters = 45
+): RunoffMergeNetwork {
+  const mergingFlowIds = new Set<string>();
+  const confluences: RunoffConfluencePoint[] = [];
+  const mergedReaches: MergedWaterwayReach[] = [];
+
+  if (!flowFeatures.length || !verifiedWaterways.length) {
+    return { confluences, mergedReaches, mergingFlowIds };
+  }
+
+  const wwById = new Map<string, VerifiedWaterwayFeature>();
+  for (const ww of verifiedWaterways) {
+    if (ww.geometry.coordinates && ww.geometry.coordinates.length >= 2) {
+      wwById.set(ww.properties.id, ww);
+    }
+  }
+  if (wwById.size === 0) {
+    return { confluences, mergedReaches, mergingFlowIds };
+  }
+
+  const rawConfluences: {
+    coordinates: [number, number];
+    waterwayId: string;
+    waterwayName: string;
+    flowId: string;
+    tier: number;
+  }[] = [];
+  const entryByWwId = new Map<string, WaterwayEntryTrack>();
+
+  for (const flow of flowFeatures) {
+    if (flow.geometry.type !== 'LineString') continue;
+    const coords = flow.geometry.coordinates;
+    if (!coords || coords.length < 2) continue;
+
+    const endPt = coords[coords.length - 1];
+    const hit = findClosestWaterwayProjection(endPt, verifiedWaterways, null, snapThresholdMeters);
+    if (!hit) continue;
+
+    const flowId = String(flow.properties?.id || '');
+    const tierRaw = Number(flow.properties?.tier ?? 2);
+    const tier = Number.isFinite(tierRaw) ? tierRaw : 2;
+    if (flowId) mergingFlowIds.add(flowId);
+
+    const wwId = hit.ww.properties.id;
+    rawConfluences.push({
+      coordinates: hit.closest,
+      waterwayId: wwId,
+      waterwayName: hit.ww.properties.name,
+      flowId,
+      tier
+    });
+
+    const entryPos = hit.segIndex + hit.t;
+    const existing = entryByWwId.get(wwId);
+    if (!existing || entryPos < existing.entryPos) {
+      entryByWwId.set(wwId, {
+        segIndex: hit.segIndex,
+        t: hit.t,
+        entryPt: hit.closest,
+        entryPos,
+        directRunoff: true
+      });
+    } else if (!existing.directRunoff) {
+      existing.directRunoff = true;
+    }
+  }
+
+  for (const raw of rawConfluences) {
+    const match = confluences.find(
+      c =>
+        c.waterwayId === raw.waterwayId &&
+        haversineMeters(c.coordinates[0], c.coordinates[1], raw.coordinates[0], raw.coordinates[1]) <= 25
+    );
+    if (match) {
+      if (raw.flowId && !match.flowIds.includes(raw.flowId)) {
+        match.flowIds.push(raw.flowId);
+      }
+      match.maxTier = Math.min(match.maxTier, raw.tier);
+    } else {
+      confluences.push({
+        coordinates: raw.coordinates,
+        waterwayId: raw.waterwayId,
+        waterwayName: raw.waterwayName,
+        flowIds: raw.flowId ? [raw.flowId] : [],
+        maxTier: raw.tier
+      });
+    }
+  }
+
+  const ancestorsByWwId = new Map<string, Set<string>>();
+  for (const wwId of entryByWwId.keys()) {
+    ancestorsByWwId.set(wwId, new Set());
+  }
+
+  const queue = Array.from(entryByWwId.keys());
+  let iter = 0;
+  const maxIterations = verifiedWaterways.length * 4;
+  while (queue.length > 0 && iter++ < maxIterations) {
+    const srcId = queue.shift()!;
+    const srcWw = wwById.get(srcId);
+    if (!srcWw) continue;
+    const srcCoords = srcWw.geometry.coordinates;
+    const outlet = srcCoords[srcCoords.length - 1];
+
+    const dstHit = findClosestWaterwayProjection(outlet, verifiedWaterways, srcId, snapThresholdMeters);
+    if (!dstHit) continue;
+
+    const dstId = dstHit.ww.properties.id;
+    const srcAncestors = ancestorsByWwId.get(srcId);
+    if (srcAncestors?.has(dstId)) continue;
+
+    let dstAncestors = ancestorsByWwId.get(dstId);
+    if (!dstAncestors) {
+      dstAncestors = new Set<string>();
+      ancestorsByWwId.set(dstId, dstAncestors);
+    }
+    dstAncestors.add(srcId);
+    if (srcAncestors) {
+      for (const a of srcAncestors) dstAncestors.add(a);
+    }
+
+    const dstHitPos = dstHit.segIndex + dstHit.t;
+    const existing = entryByWwId.get(dstId);
+    if (!existing || dstHitPos < existing.entryPos - 1e-4) {
+      entryByWwId.set(dstId, {
+        segIndex: dstHit.segIndex,
+        t: dstHit.t,
+        entryPt: dstHit.closest,
+        entryPos: dstHitPos,
+        directRunoff: existing?.directRunoff ?? false
+      });
+      queue.push(dstId);
+    }
+  }
+
+  for (const [wwId, entry] of entryByWwId.entries()) {
+    const ww = wwById.get(wwId);
+    if (!ww) continue;
+    const srcCoords = ww.geometry.coordinates;
+    const sliced: [number, number][] = [[entry.entryPt[0], entry.entryPt[1]]];
+
+    for (let i = entry.segIndex + 1; i < srcCoords.length; i++) {
+      const pt = srcCoords[i];
+      const prev = sliced[sliced.length - 1];
+      if (haversineMeters(prev[0], prev[1], pt[0], pt[1]) >= 0.5) {
+        sliced.push([pt[0], pt[1]]);
+      }
+    }
+
+    if (sliced.length < 2) continue;
+    let lengthM = 0;
+    for (let i = 0; i < sliced.length - 1; i++) {
+      lengthM += haversineMeters(sliced[i][0], sliced[i][1], sliced[i + 1][0], sliced[i + 1][1]);
+    }
+    lengthM = Math.round(lengthM);
+    if (lengthM < 5) continue;
+
+    mergedReaches.push({
+      waterwayId: ww.properties.id,
+      waterwayName: ww.properties.name,
+      kind: ww.properties.kind,
+      status: ww.properties.status,
+      coordinates: sliced,
+      lengthM,
+      directRunoff: entry.directRunoff
+    });
+  }
+
+  return { confluences, mergedReaches, mergingFlowIds };
 }

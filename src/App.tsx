@@ -939,7 +939,6 @@ export function App() {
               forestScenario={forestScenario}
               forestActualPct={metadata?.landCoverStats?.forestPct ?? 74}
               rainAnimEnabled={rainAnimEnabled}
-              layers={layers}
               verifiedIssueCount={verifiedIssueCount}
               verifiedWaterways={verifiedWaterways}
               demClient={demClient}
@@ -989,12 +988,12 @@ export function App() {
                   setSoilMoisture('saturated');
                   setRainPattern('upland');
                   setDrainCondition(viewMode === 'detail' ? 'surge' : 'clogged');
+                  setForestScenario('actual');
                 }
                 setSimProgress(0.05);
                 setSimPlaying(true);
               }}
               onToggleRainAnim={setRainAnimEnabled}
-              onToggleLayer={(key, val) => setLayers(prev => ({ ...prev, [key]: val }))}
             />
           )}
 

@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { AlertTriangle, CloudRain, Mountain, Pause, Play, RotateCcw } from 'lucide-react';
+import { useId, useState } from 'react';
+import { AlertTriangle, Pause, Play, RotateCcw } from 'lucide-react';
 import { I18N } from '../i18n/translations';
 import { estimateChannelThresholds } from '../lib/channelHydraulics';
 import type { DemClient } from '../lib/demClient';
@@ -10,12 +10,12 @@ import type {
   DrainCondition,
   ForestScenario,
   Language,
-  LayerToggles,
   RainPattern,
   SoilMoisture,
   VerifiedWaterwayFeature,
   ViewMode
 } from '../types/gis';
+import { InfoTooltip } from './InfoTooltip';
 import { LegendIcon } from './LegendIcon';
 
 interface SimulationTabProps {
@@ -31,7 +31,6 @@ interface SimulationTabProps {
   forestScenario: ForestScenario;
   forestActualPct: number;
   rainAnimEnabled: boolean;
-  layers: LayerToggles;
   verifiedIssueCount?: number;
   verifiedWaterways?: VerifiedWaterwayFeature[];
   demClient?: DemClient | null;
@@ -48,7 +47,6 @@ interface SimulationTabProps {
   onChangeForestScenario: (f: ForestScenario) => void;
   onApplyPreset: (preset: 'normal' | 'upland' | 'extreme') => void;
   onToggleRainAnim: (enabled: boolean) => void;
-  onToggleLayer: (key: keyof LayerToggles, val: boolean) => void;
 }
 
 function formatDurationClock(totalMinutes: number): string {
@@ -86,7 +84,6 @@ export function SimulationTab({
   forestScenario,
   forestActualPct,
   rainAnimEnabled,
-  layers,
   verifiedIssueCount = 0,
   verifiedWaterways = [],
   demClient = null,
@@ -102,128 +99,145 @@ export function SimulationTab({
   onChangeDrainCondition,
   onChangeForestScenario,
   onApplyPreset,
-  onToggleRainAnim,
-  onToggleLayer
+  onToggleRainAnim
 }: SimulationTabProps) {
+  const uid = useId();
   const t = I18N[lang];
   const isEn = lang === 'en';
   const isDetail = viewMode === 'detail';
   const [selectedRiverId, setSelectedRiverId] = useState<string>('');
 
-  const rainPresets = [
-    { mm: 20, label: t.rainPresetLight, sub: '20' },
-    { mm: 45, label: t.rainPresetMed, sub: '45' },
-    { mm: 80, label: t.rainPresetHeavy, sub: '80' },
-    { mm: 120, label: t.rainPresetExtreme, sub: '120' }
-  ];
+  const activeScenario: 'normal' | 'upland' | 'extreme' | 'custom' =
+    rainMm === 25 &&
+    durationMin === 90 &&
+    soilMoisture === 'dry' &&
+    rainPattern === 'uniform' &&
+    drainCondition === 'cleared' &&
+    (!isDetail || forestScenario === 'actual')
+      ? 'normal'
+      : rainMm === 80 &&
+          durationMin === 180 &&
+          soilMoisture === 'saturated' &&
+          rainPattern === 'upland' &&
+          drainCondition === 'clogged' &&
+          (!isDetail || forestScenario === 'actual')
+        ? 'upland'
+        : rainMm === 120 &&
+            durationMin === 180 &&
+            soilMoisture === 'saturated' &&
+            rainPattern === 'upland' &&
+            drainCondition === (isDetail ? 'surge' : 'clogged') &&
+            (!isDetail || forestScenario === 'actual')
+          ? 'extreme'
+          : 'custom';
 
-  const activePresetMm =
-    rainMm <= 32 ? 20 : rainMm <= 62 ? 45 : rainMm <= 100 ? 80 : 120;
+  const rainCategoryLabel =
+    rainMm <= 32
+      ? t.rainPresetLight
+      : rainMm <= 62
+        ? t.rainPresetMed
+        : rainMm <= 100
+          ? t.rainPresetHeavy
+          : t.rainPresetExtreme;
 
   const alertText =
     kpis.alertLevel === 'kritis'
       ? t.alertKritis
       : kpis.alertLevel === 'siaga'
-      ? t.alertSiaga
-      : kpis.alertLevel === 'waspada'
-      ? t.alertWaspada
-      : t.alertNormal;
+        ? t.alertSiaga
+        : kpis.alertLevel === 'waspada'
+          ? t.alertWaspada
+          : t.alertNormal;
   const alertStyle = ALERT_BADGE[kpis.alertLevel];
 
   const stageTitle =
     kpis.stage === 0
       ? t.stage0Title
       : kpis.stage === 1
-      ? t.stage1Title
-      : kpis.stage === 2
-      ? t.stage2Title
-      : kpis.stage === 3
-      ? t.stage3Title
-      : t.stage4Title;
+        ? t.stage1Title
+        : kpis.stage === 2
+          ? t.stage2Title
+          : kpis.stage === 3
+            ? t.stage3Title
+            : t.stage4Title;
 
   const stageDesc =
     kpis.stage === 0
       ? t.stage0Desc
       : kpis.stage === 1
-      ? t.stage1Desc
-      : kpis.stage === 2
-      ? t.stage2Desc
-      : kpis.stage === 3
-      ? t.stage3Desc
-      : t.stage4Desc;
+        ? t.stage1Desc
+        : kpis.stage === 2
+          ? t.stage2Desc
+          : kpis.stage === 3
+            ? t.stage3Desc
+            : t.stage4Desc;
 
-  const drainOptions: { id: DrainCondition; label: string; activeText: string }[] = isDetail
-    ? [
-        { id: 'cleared', label: t.scCleared, activeText: 'text-[#047857]' },
-        { id: 'clogged', label: t.scClogged, activeText: 'text-[#b45309]' },
-        { id: 'surge', label: t.scSurge, activeText: 'text-[#b91c1c]' }
-      ]
-    : [
-        { id: 'clogged', label: t.scClogged, activeText: 'text-[#b45309]' },
-        { id: 'cleared', label: t.scCleared, activeText: 'text-[#047857]' }
-      ];
+  const agamCalibrationTooltip = agamStats
+    ? isEn
+      ? `${agamStats.andosolPct}% volcanic Andosol soil. ${
+          kpis.landslideAreaHa > 0
+            ? `${kpis.officialLandslideOverlapPct}% of high-risk modeled slopes match official BPBD Medium/High zones.`
+            : `Official zones: ${agamStats.officialHighPct}% High, ${agamStats.officialMedPct}% Medium.`
+        }`
+      : `${agamStats.andosolPct}% tanah vulkanik Andosol. ${
+          kpis.landslideAreaHa > 0
+            ? `${kpis.officialLandslideOverlapPct}% zona lereng kritis cocok dengan peta Rawan Gerakan Tanah Sedang/Tinggi Pemkab Agam.`
+            : `Zona resmi: ${agamStats.officialHighPct}% Tinggi, ${agamStats.officialMedPct}% Sedang.`
+        }`
+    : '';
+
+  const isAtEnd = !playing && progress >= 0.99;
 
   return (
     <div className="flex flex-col gap-3.5">
-      <div className="flex items-start gap-2.5 rounded-r-xl border-l-[3px] border-[#b45309] bg-[#b45309]/8 px-3.5 py-2.5 text-[12.5px] leading-snug text-[#78350f]">
-        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-[#b45309]" />
-        <span>{isDetail ? t.simDisclaimerDetail : t.simDisclaimer}</span>
-      </div>
-
-      {/* Live Cascade Playback & 4-Stage Progress */}
-      <section className="rounded-xl border border-[#161c1a]/12 bg-white p-3.5">
+      {/* Compact Sticky Playback Bar */}
+      <div className="sticky -top-3.5 z-10 -mx-3.5 -mt-3.5 border-b border-[#161c1a]/12 bg-white px-3.5 pt-3 pb-2.5 shadow-[0_4px_12px_-6px_rgba(22,28,26,0.12)]">
         <div className="mb-2 flex items-center justify-between gap-2">
-          <span className="text-[13px] font-bold text-[#161c1a]">{t.simPlaybackTitle}</span>
-          <span className={`rounded-full px-2.5 py-0.5 text-[11px] font-bold ${alertStyle.bg} ${alertStyle.text}`}>
+          <div className="flex min-w-0 items-center gap-1.5">
+            <span className="truncate text-[12.5px] font-bold text-[#161c1a]">{stageTitle}</span>
+            <InfoTooltip text={stageDesc} label={stageTitle} />
+          </div>
+          <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10.5px] font-bold ${alertStyle.bg} ${alertStyle.text}`}>
             {alertText}
           </span>
         </div>
 
-        {/* 4-Stage Cascade Bar */}
-        <div className="mb-2.5 rounded-lg bg-[#fafaf8] p-2.5">
-          <div className="mb-1.5 flex items-center justify-between gap-2">
-            <span className="text-[12.5px] font-bold text-[#161c1a]">{stageTitle}</span>
-            <span className="font-mono-num text-[11.5px] font-bold text-[#0369a1]">
-              {formatDurationClock(kpis.elapsedMin)} / {formatDurationClock(durationMin)}
-            </span>
-          </div>
-          <div className="mb-1.5 grid grid-cols-4 gap-1">
-            {[1, 2, 3, 4].map(st => (
-              <div
-                key={st}
-                className={`h-1.5 rounded-full transition ${
-                  kpis.stage >= st ? 'bg-[#0369a1]' : 'bg-[#161c1a]/12'
-                }`}
-              />
-            ))}
-          </div>
-          <p className="m-0 text-[12px] leading-snug text-[#434d49]">{stageDesc}</p>
-        </div>
-
-        <div className="mb-3 flex items-center gap-2">
+        <div className="mb-2 flex items-center gap-2">
           <button
             type="button"
             onClick={onTogglePlay}
-            className="inline-flex min-h-[40px] flex-1 items-center justify-center gap-1.5 rounded-lg bg-[#0369a1] px-3.5 py-2 text-[13px] font-bold text-white transition hover:bg-[#075985]"
+            className={`inline-flex min-h-[38px] flex-1 items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-[13px] font-bold text-white transition ${
+              playing ? 'bg-[#161c1a] hover:bg-[#2a3330]' : 'bg-[#0369a1] hover:bg-[#075985]'
+            }`}
           >
-            {playing ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
-            <span>{playing ? t.pause : t.play}</span>
+            {playing ? (
+              <Pause className="h-3.5 w-3.5" />
+            ) : isAtEnd ? (
+              <RotateCcw className="h-3.5 w-3.5" />
+            ) : (
+              <Play className="h-3.5 w-3.5" />
+            )}
+            <span>{playing ? t.pause : isAtEnd ? t.simReplay : t.play}</span>
           </button>
           <button
             type="button"
             onClick={onResetSim}
-            className="inline-flex min-h-[40px] items-center justify-center gap-1.5 rounded-lg border border-[#161c1a]/15 bg-white px-3 py-2 text-[13px] font-semibold text-[#161c1a] hover:bg-[#f2f3ef]"
+            disabled={progress === 0 && !playing}
+            aria-label={t.simReset}
+            title={t.simReset}
+            className="grid h-[38px] w-[38px] shrink-0 place-items-center rounded-lg border border-[#161c1a]/15 bg-white text-[#161c1a] transition hover:bg-[#f2f3ef] disabled:cursor-not-allowed disabled:opacity-45"
           >
-            <RotateCcw className="h-3.5 w-3.5" />
-            <span>{t.simReset}</span>
+            <RotateCcw className="h-4 w-4" />
           </button>
         </div>
 
         <div className="flex flex-col gap-1">
-          <div className="flex items-center justify-between text-[12.5px] font-semibold text-[#434d49]">
-            <span>{t.lblTimeline}</span>
-            <span className="font-mono-num text-[#0369a1]">
-              {t.lblAccumulated}: {kpis.accumulatedMm.toFixed(1)} mm
+          <div className="flex items-center justify-between text-[11.5px]">
+            <span className="font-mono-num font-bold text-[#0369a1]">
+              {formatDurationClock(kpis.elapsedMin)} / {formatDurationClock(durationMin)}
+            </span>
+            <span className="font-mono-num font-semibold text-[#434d49]">
+              {kpis.accumulatedMm.toFixed(1)} mm
             </span>
           </div>
           <input
@@ -236,241 +250,226 @@ export function SimulationTab({
             aria-label={t.lblTimeline}
             className="w-full cursor-pointer accent-[#0369a1]"
           />
-          <div className="flex justify-between text-[11.5px] font-medium text-[#636f6a]">
-            <span>00:00</span>
-            <span>{formatDurationClock(durationMin / 2)}</span>
-            <span>{formatDurationClock(durationMin)}</span>
+          <div className="grid grid-cols-4 gap-1">
+            {[1, 2, 3, 4].map(st => (
+              <div
+                key={st}
+                className={`h-1 rounded-full transition ${
+                  kpis.stage >= st ? 'bg-[#0369a1]' : 'bg-[#161c1a]/12'
+                }`}
+              />
+            ))}
           </div>
         </div>
 
-        <label className="mt-2.5 flex min-h-[38px] cursor-pointer items-center justify-between gap-2 border-t border-[#161c1a]/10 pt-2.5">
-          <span className="flex items-center gap-2 text-[13px] font-semibold text-[#161c1a]">
-            <CloudRain className="h-4 w-4 text-[#0369a1]" />
-            <span>{t.lblRainAnim}</span>
+        <div className="mt-2 flex items-center justify-between gap-1.5 rounded-md bg-[#b45309]/8 px-2 py-1 text-[11px] font-medium text-[#78350f]">
+          <span className="flex min-w-0 items-center gap-1.5">
+            <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-[#b45309]" />
+            <span className="truncate">{t.simIndicativeShort}</span>
           </span>
-          <input
-            type="checkbox"
-            checked={rainAnimEnabled}
-            onChange={e => onToggleRainAnim(e.target.checked)}
-            className="h-4.5 w-4.5 cursor-pointer accent-[#0369a1]"
+          <InfoTooltip
+            text={isDetail ? t.simDisclaimerDetail : t.simDisclaimer}
+            label={isEn ? 'Simulation disclaimer' : 'Penjelasan simulasi indikatif'}
           />
-        </label>
-      </section>
-
-      {/* Quick Scenario Presets */}
-      <section className="rounded-xl border border-[#161c1a]/12 bg-white p-3.5">
-        <div className="mb-2 text-[12.5px] font-bold text-[#434d49]">{t.presetQuickTitle}</div>
-        <div className="grid grid-cols-3 gap-1.5">
-          <button
-            type="button"
-            onClick={() => onApplyPreset('normal')}
-            className="min-h-[38px] rounded-lg border border-[#161c1a]/15 bg-[#fafaf8] px-2 py-1.5 text-[12px] font-bold text-[#047857] hover:bg-[#f2f3ef]"
-          >
-            {t.presetNormal}
-          </button>
-          <button
-            type="button"
-            onClick={() => onApplyPreset('upland')}
-            className="min-h-[38px] rounded-lg border border-[#161c1a]/15 bg-[#fafaf8] px-2 py-1.5 text-[12px] font-bold text-[#b45309] hover:bg-[#f2f3ef]"
-          >
-            {t.presetUpland}
-          </button>
-          <button
-            type="button"
-            onClick={() => onApplyPreset('extreme')}
-            className="min-h-[38px] rounded-lg border border-[#b91c1c]/30 bg-[#b91c1c]/8 px-2 py-1.5 text-[12px] font-bold text-[#b91c1c] hover:bg-[#b91c1c]/14"
-          >
-            {t.presetExtreme}
-          </button>
         </div>
-      </section>
+      </div>
 
-      {/* Rain, Soil & Channel Parameters */}
+      {/* Rain, Soil & Channel Parameters — Strictly Dropdown, Slider, Checkbox */}
       <section className="rounded-xl border border-[#161c1a]/12 bg-white p-3.5">
-        <div className="mb-3 text-[13px] font-bold text-[#161c1a]">{t.simControlTitle}</div>
+        <div className="mb-2.5 text-[13px] font-bold text-[#161c1a]">{t.simControlTitle}</div>
 
-        {/* Rainfall Intensity */}
-        <div className="flex flex-col gap-2">
-          <div className="flex items-center justify-between text-[13px] font-semibold text-[#434d49]">
-            <span>{t.lblRainIntensity}</span>
-            <span className="font-mono-num text-[13px] font-bold text-[#161c1a]">
-              {rainMm} {isEn ? 'mm/hr' : 'mm/jam'}
+        {/* Dropdown 1: Scenario Preset (single-line) */}
+        <div className="flex items-center justify-between gap-2.5 py-1">
+          <div className="flex min-w-0 flex-1 items-center gap-1.5 text-[12.5px] font-semibold text-[#434d49]">
+            <label htmlFor={`${uid}-scenario`} className="truncate">
+              {t.presetQuickTitle}
+            </label>
+            <InfoTooltip text={t.infoScenario} label={t.presetQuickTitle} />
+          </div>
+          <select
+            id={`${uid}-scenario`}
+            value={activeScenario}
+            onChange={e => {
+              const val = e.target.value;
+              if (val === 'normal' || val === 'upland' || val === 'extreme') {
+                onApplyPreset(val);
+              }
+            }}
+            className="min-h-[34px] w-[158px] shrink-0 cursor-pointer rounded-lg border border-[#161c1a]/20 bg-[#fafaf8] px-2.5 py-1 text-[12px] font-semibold text-[#161c1a] transition hover:border-[#161c1a]/30"
+          >
+            <option value="custom">{t.presetCustom}</option>
+            <option value="normal">{t.presetNormal}</option>
+            <option value="upland">{t.presetUpland}</option>
+            <option value="extreme">{t.presetExtreme}</option>
+          </select>
+        </div>
+
+        {/* Slider 1: Rainfall Intensity */}
+        <div className="mt-2.5 flex flex-col gap-1.5 border-t border-[#161c1a]/10 pt-3">
+          <div className="flex items-center justify-between gap-2 text-[12.5px]">
+            <span className="flex items-center gap-1.5 font-semibold text-[#434d49]">
+              <label htmlFor={`${uid}-rain`}>{t.lblRainIntensity}</label>
+              <InfoTooltip text={t.infoRainIntensity} label={t.lblRainIntensity} />
+            </span>
+            <span className="font-mono-num shrink-0 font-bold text-[#161c1a]">
+              {rainMm} {isEn ? 'mm/hr' : 'mm/jam'} · {rainCategoryLabel}
             </span>
           </div>
-
-          <div className="grid grid-cols-4 gap-1.5">
-            {rainPresets.map(p => {
-              const active = activePresetMm === p.mm;
-              return (
-                <button
-                  key={p.mm}
-                  type="button"
-                  onClick={() => onChangeRain(p.mm)}
-                  className={`flex min-h-[40px] flex-col items-center justify-center rounded-lg border px-1 py-1 text-center transition ${
-                    active
-                      ? 'border-[#0369a1] bg-[#0369a1] text-white'
-                      : 'border-[#161c1a]/15 bg-[#fafaf8] text-[#161c1a] hover:bg-[#f2f3ef]'
-                  }`}
-                >
-                  <span className="text-[12px] font-bold leading-tight">{p.label}</span>
-                  <span className={`font-mono-num text-[10px] ${active ? 'text-white/85' : 'text-[#636f6a]'}`}>
-                    {p.sub}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-
           <input
+            id={`${uid}-rain`}
             type="range"
             min={10}
             max={150}
             step={5}
             value={rainMm}
-            aria-label={t.lblRainIntensity}
             onChange={e => onChangeRain(parseInt(e.target.value, 10))}
             className="w-full cursor-pointer accent-[#0369a1]"
           />
-          <div className="flex justify-between text-[11.5px] font-medium text-[#636f6a]">
+          <div className="flex justify-between text-[11px] font-medium text-[#636f6a]">
             <span>{t.rainLight}</span>
             <span>{t.rainHeavy}</span>
             <span>{t.rainExtreme}</span>
           </div>
         </div>
 
-        {/* Storm Duration */}
-        <div className="mt-3.5 flex flex-col gap-1.5 border-t border-[#161c1a]/10 pt-3">
-          <div className="flex items-center justify-between text-[13px] font-semibold text-[#434d49]">
-            <span>{t.lblDuration}</span>
-            <span className="font-mono-num text-[13px] font-bold text-[#161c1a]">
+        {/* Slider 2: Storm Duration */}
+        <div className="mt-3 flex flex-col gap-1.5 border-t border-[#161c1a]/10 pt-3">
+          <div className="flex items-center justify-between gap-2 text-[12.5px]">
+            <span className="flex items-center gap-1.5 font-semibold text-[#434d49]">
+              <label htmlFor={`${uid}-duration`}>{t.lblDuration}</label>
+              <InfoTooltip text={t.infoDuration} label={t.lblDuration} />
+            </span>
+            <span className="font-mono-num shrink-0 font-bold text-[#161c1a]">
               {formatDurationLabel(durationMin, isEn)}
             </span>
           </div>
           <input
+            id={`${uid}-duration`}
             type="range"
             min={15}
             max={360}
             step={15}
             value={durationMin}
-            aria-label={t.lblDuration}
             onChange={e => onChangeDuration(parseInt(e.target.value, 10))}
             className="w-full cursor-pointer accent-[#0369a1]"
           />
-          <div className="flex justify-between text-[11.5px] font-medium text-[#636f6a]">
+          <div className="flex justify-between text-[11px] font-medium text-[#636f6a]">
             <span>{t.durMin}</span>
             <span>{t.durMid}</span>
             <span>{t.durMax}</span>
           </div>
         </div>
 
-        {/* Soil Moisture (Antecedent Rainfall) */}
-        <div className="mt-3.5 border-t border-[#161c1a]/10 pt-3">
-          <div className="mb-1.5 text-[13px] font-semibold text-[#434d49]">{t.lblSoilMoisture}</div>
-          <div className="grid grid-cols-3 gap-1 rounded-lg border border-[#161c1a]/12 bg-[#f2f3ef] p-1">
-            {(
-              [
-                ['dry', t.soilDry, 'text-[#047857]'],
-                ['moist', t.soilMoist, 'text-[#0369a1]'],
-                ['saturated', t.soilSaturated, 'text-[#b91c1c]']
-              ] as const
-            ).map(([id, label, activeCls]) => (
-              <button
-                key={id}
-                type="button"
-                onClick={() => onChangeSoilMoisture(id)}
-                className={`min-h-[36px] rounded-md py-1 text-[12.5px] font-bold transition ${
-                  soilMoisture === id ? `bg-white ${activeCls} shadow-xs` : 'text-[#434d49] hover:text-[#161c1a]'
-                }`}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* Rainfall Spatial Pattern */}
-        <div className="mt-3 border-t border-[#161c1a]/10 pt-3">
-          <div className="mb-1.5 text-[13px] font-semibold text-[#434d49]">{t.lblRainPattern}</div>
-          <div className="grid grid-cols-2 gap-1 rounded-lg border border-[#161c1a]/12 bg-[#f2f3ef] p-1">
-            <button
-              type="button"
-              onClick={() => onChangeRainPattern('uniform')}
-              className={`min-h-[36px] rounded-md py-1 text-[12.5px] font-bold transition ${
-                rainPattern === 'uniform' ? 'bg-white text-[#0369a1] shadow-xs' : 'text-[#434d49] hover:text-[#161c1a]'
-              }`}
-            >
-              {t.rainUniform}
-            </button>
-            <button
-              type="button"
-              onClick={() => onChangeRainPattern('upland')}
-              className={`inline-flex min-h-[36px] items-center justify-center gap-1 rounded-md py-1 text-[12.5px] font-bold transition ${
-                rainPattern === 'upland' ? 'bg-white text-[#0369a1] shadow-xs' : 'text-[#434d49] hover:text-[#161c1a]'
-              }`}
-            >
-              <Mountain className="h-3.5 w-3.5" />
-              <span>{t.rainUpland}</span>
-            </button>
-          </div>
-        </div>
-
-        {/* Culvert & Debris Blockage Condition */}
-        <div className="mt-3 border-t border-[#161c1a]/10 pt-3">
-          <div className="mb-1.5 text-[13px] font-semibold text-[#434d49]">{t.lblDrainState}</div>
-          <div
-            className={`grid gap-1 rounded-lg border border-[#161c1a]/12 bg-[#f2f3ef] p-1 ${
-              isDetail ? 'grid-cols-3' : 'grid-cols-2'
-            }`}
-          >
-            {drainOptions.map(opt => (
-              <button
-                key={opt.id}
-                type="button"
-                onClick={() => onChangeDrainCondition(opt.id)}
-                className={`min-h-[36px] rounded-md px-1.5 py-1 text-[12px] font-bold transition ${
-                  drainCondition === opt.id
-                    ? `bg-white ${opt.activeText} shadow-xs`
-                    : 'text-[#434d49] hover:text-[#161c1a]'
-                }`}
-              >
-                {opt.label}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* Detailed-only Upland Forest What-If */}
-        {isDetail && (
-          <div className="mt-3 border-t border-[#161c1a]/10 pt-3">
-            <div className="mb-1.5 flex items-center justify-between text-[13px] font-semibold text-[#434d49]">
-              <span>{t.lblForestScenario}</span>
-              <span className="font-mono-num text-[11.5px] text-[#15803d]">{forestActualPct}%</span>
+        {/* Single-line Parameter Dropdowns */}
+        <div className="mt-3 divide-y divide-[#161c1a]/10 border-t border-[#161c1a]/10">
+          {/* Dropdown 2: Soil Moisture */}
+          <div className="flex items-center justify-between gap-2.5 py-2">
+            <div className="flex min-w-0 flex-1 items-center gap-1.5 text-[12.5px] font-semibold text-[#434d49]">
+              <label htmlFor={`${uid}-soil`} className="truncate">
+                {t.lblSoilShort}
+              </label>
+              <InfoTooltip text={t.infoSoilMoisture} label={t.lblSoilShort} />
             </div>
-            <div className="grid grid-cols-3 gap-1 rounded-lg border border-[#161c1a]/12 bg-[#f2f3ef] p-1">
-              {(
-                [
-                  ['actual', t.forestActual, 'text-[#15803d]'],
-                  ['degraded30', t.forestDeg30, 'text-[#b45309]'],
-                  ['degraded50', t.forestDeg50, 'text-[#b91c1c]']
-                ] as const
-              ).map(([id, label, activeCls]) => (
-                <button
-                  key={id}
-                  type="button"
-                  onClick={() => onChangeForestScenario(id)}
-                  className={`min-h-[36px] rounded-md px-1 py-1 text-[11.5px] font-bold transition ${
-                    forestScenario === id ? `bg-white ${activeCls} shadow-xs` : 'text-[#434d49] hover:text-[#161c1a]'
-                  }`}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
+            <select
+              id={`${uid}-soil`}
+              value={soilMoisture}
+              onChange={e => onChangeSoilMoisture(e.target.value as SoilMoisture)}
+              className="min-h-[34px] w-[158px] shrink-0 cursor-pointer rounded-lg border border-[#161c1a]/20 bg-[#fafaf8] px-2.5 py-1 text-[12px] font-semibold text-[#161c1a] transition hover:border-[#161c1a]/30"
+            >
+              <option value="dry">{t.soilDry}</option>
+              <option value="moist">{t.soilMoist}</option>
+              <option value="saturated">{t.soilSaturated}</option>
+            </select>
           </div>
-        )}
+
+          {/* Dropdown 3: Culvert & Channel State */}
+          <div className="flex items-center justify-between gap-2.5 py-2">
+            <div className="flex min-w-0 flex-1 items-center gap-1.5 text-[12.5px] font-semibold text-[#434d49]">
+              <label htmlFor={`${uid}-drain`} className="truncate">
+                {t.lblDrainShort}
+              </label>
+              <InfoTooltip text={t.infoDrainState} label={t.lblDrainShort} />
+            </div>
+            <select
+              id={`${uid}-drain`}
+              value={drainCondition}
+              onChange={e => onChangeDrainCondition(e.target.value as DrainCondition)}
+              className="min-h-[34px] w-[158px] shrink-0 cursor-pointer rounded-lg border border-[#161c1a]/20 bg-[#fafaf8] px-2.5 py-1 text-[12px] font-semibold text-[#161c1a] transition hover:border-[#161c1a]/30"
+            >
+              <option value="cleared">{t.scCleared}</option>
+              <option value="clogged">{t.scClogged}</option>
+              {isDetail && <option value="surge">{t.scSurge}</option>}
+            </select>
+          </div>
+
+          {/* Dropdown 4 (Detailed only): Upland Forest What-If */}
+          {isDetail && (
+            <div className="flex items-center justify-between gap-2.5 py-2">
+              <div className="flex min-w-0 flex-1 items-center gap-1.5 text-[12.5px] font-semibold text-[#434d49]">
+                <label htmlFor={`${uid}-forest`} className="truncate">
+                  {t.lblForestShort}
+                </label>
+                <InfoTooltip text={t.infoForestScenario} label={t.lblForestShort} />
+              </div>
+              <select
+                id={`${uid}-forest`}
+                value={forestScenario}
+                onChange={e => onChangeForestScenario(e.target.value as ForestScenario)}
+                className="min-h-[34px] w-[158px] shrink-0 cursor-pointer rounded-lg border border-[#161c1a]/20 bg-[#fafaf8] px-2.5 py-1 text-[12px] font-semibold text-[#161c1a] transition hover:border-[#161c1a]/30"
+              >
+                <option value="actual">
+                  {isEn ? `Actual (${Math.round(forestActualPct)}%)` : `Aktual (${Math.round(forestActualPct)}%)`}
+                </option>
+                <option value="degraded30">{t.forestDeg30}</option>
+                <option value="degraded50">{t.forestDeg50}</option>
+              </select>
+            </div>
+          )}
+        </div>
+
+        {/* Checkboxes: Rainfall Focus & Falling Rain Visual */}
+        <div className="divide-y divide-[#161c1a]/10 border-t border-[#161c1a]/10 pt-1">
+          <div className="flex min-h-[40px] items-center justify-between gap-2.5 py-1">
+            <div className="flex min-w-0 flex-1 items-center gap-1.5">
+              <label
+                htmlFor={`${uid}-upland-check`}
+                className="cursor-pointer text-[12.5px] font-semibold text-[#161c1a]"
+              >
+                {t.lblRainUplandCheck}
+              </label>
+              <InfoTooltip text={t.infoRainPattern} label={t.lblRainUplandCheck} />
+            </div>
+            <input
+              id={`${uid}-upland-check`}
+              type="checkbox"
+              checked={rainPattern === 'upland'}
+              onChange={e => onChangeRainPattern(e.target.checked ? 'upland' : 'uniform')}
+              className="h-4.5 w-4.5 shrink-0 cursor-pointer accent-[#0369a1]"
+            />
+          </div>
+
+          <div className="flex min-h-[40px] items-center justify-between gap-2.5 py-1">
+            <div className="flex min-w-0 flex-1 items-center gap-1.5">
+              <label
+                htmlFor={`${uid}-anim-check`}
+                className="cursor-pointer text-[12.5px] font-semibold text-[#161c1a]"
+              >
+                {t.lblRainAnim}
+              </label>
+              <InfoTooltip text={t.infoRainAnim} label={t.lblRainAnim} />
+            </div>
+            <input
+              id={`${uid}-anim-check`}
+              type="checkbox"
+              checked={rainAnimEnabled}
+              onChange={e => onToggleRainAnim(e.target.checked)}
+              className="h-4.5 w-4.5 shrink-0 cursor-pointer accent-[#0369a1]"
+            />
+          </div>
+        </div>
 
         {verifiedIssueCount > 0 && progress > 0.02 && drainCondition !== 'cleared' && (
-          <div className="mt-3 rounded-lg bg-[#b45309]/10 px-3 py-2 text-[12px] font-semibold text-[#92400e]">
+          <div className="mt-2.5 rounded-lg bg-[#b45309]/10 px-3 py-2 text-[12px] font-semibold text-[#92400e]">
             {isEn
               ? `${verifiedIssueCount} field-confirmed clogged/critical culvert(s) highlighted on map.`
               : `${verifiedIssueCount} gorong-gorong bermasalah di lapangan disorot terlebih dulu di peta.`}
@@ -480,41 +479,60 @@ export function SimulationTab({
 
       {/* Indicative Cascade KPIs */}
       <section className="rounded-xl border border-[#161c1a]/12 bg-white p-3.5">
-        <div className="mb-2.5 flex items-center justify-between">
+        <div className="mb-2.5 flex flex-wrap items-center justify-between gap-1.5">
           <span className="text-[13px] font-bold text-[#161c1a]">
             {isEn ? 'Indicative Cascade Impact' : 'Ringkasan Dampak Indikatif'}
           </span>
-          {drainCondition === 'cleared' && progress > 0.03 && kpis.reductionPct > 0 && (
-            <span className="font-mono-num rounded-md bg-[#047857]/12 px-2 py-0.5 text-[11.5px] font-bold text-[#047857]">
-              -{kpis.reductionPct}% {isEn ? 'overflow' : 'luapan'}
-            </span>
-          )}
+          <div className="flex items-center gap-1.5">
+            {drainCondition === 'cleared' && progress > 0.03 && kpis.reductionPct > 0 && (
+              <span className="font-mono-num rounded-md bg-[#047857]/12 px-2 py-0.5 text-[11px] font-bold text-[#047857]">
+                -{kpis.reductionPct}% {isEn ? 'overflow' : 'luapan'}
+              </span>
+            )}
+            {isDetail && agamStats && (
+              <span className="inline-flex items-center gap-1 rounded-full bg-[#f2f3ef] px-2 py-0.5 text-[10.5px] font-semibold text-[#434d49]">
+                <span>{t.agamCalibrationBadge}</span>
+                <InfoTooltip text={agamCalibrationTooltip} label={t.agamCalibrationBadge} />
+              </span>
+            )}
+          </div>
         </div>
 
         <div className="grid grid-cols-2 gap-2">
           <div className="rounded-lg bg-[#fafaf8] px-3 py-2">
-            <div className="text-[12px] text-[#636f6a]">{t.kpiFloodArea}</div>
-            <div className="font-mono-num text-[15px] font-bold text-[#0369a1]">
+            <div className="flex items-start justify-between gap-1 text-[11.5px] leading-tight text-[#636f6a]">
+              <span>{t.kpiFloodArea}</span>
+              <InfoTooltip text={t.infoKpiFlood} label={t.kpiFloodArea} />
+            </div>
+            <div className="font-mono-num mt-0.5 text-[15px] font-bold text-[#0369a1]">
               {kpis.floodAreaHa.toFixed(1)} ha
             </div>
           </div>
           <div className="rounded-lg bg-[#fafaf8] px-3 py-2">
-            <div className="text-[12px] text-[#636f6a]">{t.kpiLandslideArea}</div>
-            <div className="font-mono-num text-[15px] font-bold text-[#c2410c]">
+            <div className="flex items-start justify-between gap-1 text-[11.5px] leading-tight text-[#636f6a]">
+              <span>{t.kpiLandslideArea}</span>
+              <InfoTooltip text={t.infoKpiLandslide} label={t.kpiLandslideArea} />
+            </div>
+            <div className="font-mono-num mt-0.5 text-[15px] font-bold text-[#c2410c]">
               {kpis.landslideAreaHa.toFixed(1)} ha
             </div>
           </div>
           <div className="rounded-lg bg-[#fafaf8] px-3 py-2">
-            <div className="text-[12px] text-[#636f6a]">{t.kpiBuildings}</div>
-            <div className="font-mono-num text-[15px] font-bold text-[#161c1a]">
+            <div className="flex items-start justify-between gap-1 text-[11.5px] leading-tight text-[#636f6a]">
+              <span>{t.kpiBuildings}</span>
+              <InfoTooltip text={t.infoKpiBuildings} label={t.kpiBuildings} />
+            </div>
+            <div className="font-mono-num mt-0.5 text-[15px] font-bold text-[#161c1a]">
               ~{kpis.affectedBuildingsFlood}
               {kpis.affectedBuildingsLandslide > 0 ? ` (+${kpis.affectedBuildingsLandslide})` : ''}
             </div>
-            <div className="mt-0.5 text-[10.5px] leading-tight text-[#636f6a]">{t.kpiBuildingsNote}</div>
           </div>
           <div className="rounded-lg bg-[#fafaf8] px-3 py-2">
-            <div className="text-[12px] text-[#636f6a]">{isDetail ? t.kpiChoke : t.kpiSimpleCrossings}</div>
-            <div className="font-mono-num text-[15px] font-bold text-[#161c1a]">
+            <div className="flex items-start justify-between gap-1 text-[11.5px] leading-tight text-[#636f6a]">
+              <span>{isDetail ? t.kpiChoke : t.kpiSimpleCrossings}</span>
+              <InfoTooltip text={t.infoKpiCrossings} label={isDetail ? t.kpiChoke : t.kpiSimpleCrossings} />
+            </div>
+            <div className="font-mono-num mt-0.5 text-[15px] font-bold text-[#161c1a]">
               {kpis.chokeCount} {isEn ? 'spots' : 'titik'}
             </div>
           </div>
@@ -522,37 +540,26 @@ export function SimulationTab({
           {isDetail && (
             <>
               <div className="rounded-lg bg-[#fafaf8] px-3 py-2">
-                <div className="text-[12px] text-[#636f6a]">{t.kpiEffectiveRunoff}</div>
-                <div className="font-mono-num text-[15px] font-bold text-[#161c1a]">
+                <div className="flex items-start justify-between gap-1 text-[11.5px] leading-tight text-[#636f6a]">
+                  <span>{t.kpiEffectiveRunoff}</span>
+                  <InfoTooltip text={t.infoKpiRunoff} label={t.kpiEffectiveRunoff} />
+                </div>
+                <div className="font-mono-num mt-0.5 text-[15px] font-bold text-[#161c1a]">
                   {kpis.effectiveRunoffMm.toFixed(1)} mm
                 </div>
               </div>
               <div className="rounded-lg bg-[#fafaf8] px-3 py-2">
-                <div className="text-[12px] text-[#636f6a]">{t.kpiTravelTime}</div>
-                <div className="font-mono-num text-[15px] font-bold text-[#161c1a]">
+                <div className="flex items-start justify-between gap-1 text-[11.5px] leading-tight text-[#636f6a]">
+                  <span>{t.kpiTravelTime}</span>
+                  <InfoTooltip text={t.infoKpiTravelTime} label={t.kpiTravelTime} />
+                </div>
+                <div className="font-mono-num mt-0.5 text-[15px] font-bold text-[#161c1a]">
                   ~{Math.round(kpis.peakTravelMin)} {isEn ? 'min' : 'mnt'}
                 </div>
               </div>
             </>
           )}
         </div>
-        {isDetail && agamStats && (
-          <div className="mt-2.5 rounded-lg bg-[#fafaf8] px-2.5 py-2 text-[11.5px] leading-snug text-[#434d49]">
-            <strong className="text-[#161c1a]">
-              {isEn ? 'Pemkab Agam Calibration:' : 'Kalibrasi Pemkab Agam:'}
-            </strong>{' '}
-            {isEn
-              ? `${agamStats.andosolPct}% volcanic Andosol soil.`
-              : `${agamStats.andosolPct}% tanah vulkanik Andosol.`}{' '}
-            {kpis.landslideAreaHa > 0
-              ? isEn
-                ? `${kpis.officialLandslideOverlapPct}% of high-risk modeled slopes match official BPBD Medium/High zones.`
-                : `${kpis.officialLandslideOverlapPct}% zona lereng kritis cocok dengan peta Rawan Gerakan Tanah Sedang/Tinggi Pemkab Agam.`
-              : isEn
-              ? `Official zones: ${agamStats.officialHighPct}% High, ${agamStats.officialMedPct}% Medium.`
-              : `Zona resmi: ${agamStats.officialHighPct}% Tinggi, ${agamStats.officialMedPct}% Sedang.`}
-          </div>
-        )}
       </section>
 
       {/* Detailed-only River Width & Bank-Widening Threshold Calculator */}
@@ -585,12 +592,19 @@ export function SimulationTab({
           soilMoisture
         });
 
+        const overflowLabel = isEn ? 'Bankfull overflow (Manning)' : 'Mulai meluap (Manning)';
+        const wideningLabel = isEn ? 'Bank widening (ω ≥ 300 W/m²)' : 'Pelebaran tebing (ω ≥ 300 W/m²)';
+        const scourLabel = isEn ? 'Severe galodo scour (ω ≥ 1000)' : 'Gerusan galodo berat (ω ≥ 1000)';
+
         return (
           <section className="rounded-xl border border-[#161c1a]/12 bg-white p-3.5">
             <div className="mb-2 flex items-center justify-between gap-2">
-              <span className="text-[13px] font-bold text-[#161c1a]">{t.channelCalcTitle}</span>
+              <div className="flex min-w-0 items-center gap-1.5">
+                <span className="text-[13px] font-bold text-[#161c1a]">{t.channelCalcTitle}</span>
+                <InfoTooltip text={t.infoChannelCalc} label={t.channelCalcTitle} />
+              </div>
               <span
-                className={`rounded-full px-2 py-0.5 text-[10.5px] font-bold ${
+                className={`shrink-0 rounded-full px-2 py-0.5 text-[10.5px] font-bold ${
                   hasMeasured ? 'bg-[#047857]/12 text-[#047857]' : 'bg-[#64748b]/12 text-[#475569]'
                 }`}
               >
@@ -599,8 +613,8 @@ export function SimulationTab({
                     ? 'Field measured'
                     : 'Ukuran lapangan'
                   : isEn
-                  ? 'Default est.'
-                  : 'Estimasi default'}
+                    ? 'Default est.'
+                    : 'Estimasi default'}
               </span>
             </div>
 
@@ -608,7 +622,7 @@ export function SimulationTab({
               aria-label={t.channelCalcTitle}
               value={activeWw.properties.id}
               onChange={e => setSelectedRiverId(e.target.value)}
-              className="mb-2.5 min-h-[36px] w-full rounded-lg border border-[#161c1a]/20 bg-[#fafaf8] px-2.5 py-1 text-[12.5px] font-semibold text-[#161c1a]"
+              className="mb-2.5 min-h-[38px] w-full cursor-pointer rounded-lg border border-[#161c1a]/20 bg-[#fafaf8] px-2.5 py-1.5 text-[12.5px] font-semibold text-[#161c1a] transition hover:border-[#161c1a]/30"
             >
               {verifiedWaterways.map(w => (
                 <option key={w.properties.id} value={w.properties.id}>
@@ -635,104 +649,72 @@ export function SimulationTab({
             </div>
 
             <div className="flex flex-col gap-1.5 text-[12px]">
-              <div className="flex items-center justify-between rounded-lg bg-[#0369a1]/8 px-2.5 py-1.5">
-                <span className="font-semibold text-[#161c1a]">
-                  {isEn ? 'Bankfull overflow (Manning)' : 'Mulai meluap (Manning)'}
+              <div className="flex items-center justify-between gap-2 rounded-lg bg-[#0369a1]/8 px-2.5 py-1.5">
+                <span className="flex min-w-0 items-center gap-1 font-semibold text-[#161c1a]">
+                  <span className="truncate">{overflowLabel}</span>
+                  <InfoTooltip text={t.infoThresholdOverflow} label={overflowLabel} />
                 </span>
-                <span className="font-mono-num font-bold text-[#0369a1]">
+                <span className="font-mono-num shrink-0 font-bold text-[#0369a1]">
                   {calc.overflowRange[0]}–{calc.overflowRange[1]} {isEn ? 'mm/hr' : 'mm/jam'}
                 </span>
               </div>
-              <div className="flex items-center justify-between rounded-lg bg-[#b45309]/10 px-2.5 py-1.5">
-                <span className="font-semibold text-[#161c1a]">
-                  {isEn ? 'Bank widening (ω ≥ 300 W/m²)' : 'Pelebaran tebing (ω ≥ 300 W/m²)'}
+              <div className="flex items-center justify-between gap-2 rounded-lg bg-[#b45309]/10 px-2.5 py-1.5">
+                <span className="flex min-w-0 items-center gap-1 font-semibold text-[#161c1a]">
+                  <span className="truncate">{wideningLabel}</span>
+                  <InfoTooltip text={t.infoThresholdWidening} label={wideningLabel} />
                 </span>
-                <span className="font-mono-num font-bold text-[#b45309]">
+                <span className="font-mono-num shrink-0 font-bold text-[#b45309]">
                   {calc.wideningRange[0]}–{calc.wideningRange[1]} {isEn ? 'mm/hr' : 'mm/jam'}
                 </span>
               </div>
-              <div className="flex items-center justify-between rounded-lg bg-[#b91c1c]/10 px-2.5 py-1.5">
-                <span className="font-semibold text-[#161c1a]">
-                  {isEn ? 'Severe galodo scour (ω ≥ 1000)' : 'Gerusan galodo berat (ω ≥ 1000)'}
+              <div className="flex items-center justify-between gap-2 rounded-lg bg-[#b91c1c]/10 px-2.5 py-1.5">
+                <span className="flex min-w-0 items-center gap-1 font-semibold text-[#161c1a]">
+                  <span className="truncate">{scourLabel}</span>
+                  <InfoTooltip text={t.infoThresholdScour} label={scourLabel} />
                 </span>
-                <span className="font-mono-num font-bold text-[#b91c1c]">
+                <span className="font-mono-num shrink-0 font-bold text-[#b91c1c]">
                   {calc.severeScourRange[0]}–{calc.severeScourRange[1]} {isEn ? 'mm/hr' : 'mm/jam'}
                 </span>
               </div>
             </div>
-
-            <p className="mt-2 mb-0 text-[11px] leading-snug text-[#636f6a]">
-              {isEn
-                ? '±25% range using Manning (n=0.045) & Specific Stream Power under active soil moisture. Enter field-measured widths in Editor → Waterways.'
-                : 'Rentang ±25% berdasarkan rumus Manning (n=0,045) & Specific Stream Power pada kondisi tanah aktif. Ukur lebar asli di Editor → Jalur Air agar lebih presisi.'}
-            </p>
           </section>
         );
       })()}
 
-      {/* Unified Cascade Legend + Toggles */}
+      {/* Compact Read-Only Cascade Legend */}
       <section className="rounded-xl border border-[#161c1a]/12 bg-white p-3.5">
         <div className="mb-2 text-[13px] font-bold text-[#161c1a]">{t.simLegendTitle}</div>
-        <div className="flex flex-col gap-1.5 border-b border-[#161c1a]/10 pb-2.5">
-          <div className="flex items-center gap-2.5 text-[13px] text-[#161c1a]">
-            <LegendIcon kind="flow" />
-            <span>
-              {isEn ? 'Rainwater runoff wave (upstream → river)' : 'Gelombang air limpasan (hulu → sungai)'}
+        <div className="grid grid-cols-2 gap-x-3 gap-y-2 text-[12px] leading-snug text-[#161c1a]">
+          <div className="flex items-start gap-2">
+            <span className="mt-0.5 shrink-0">
+              <LegendIcon kind="flow" />
             </span>
+            <span>{isEn ? 'Runoff wave (upland → river)' : 'Gelombang limpasan'}</span>
           </div>
-          <div className="flex items-center gap-2.5 text-[13px] text-[#161c1a]">
-            <span className="h-3 w-3 shrink-0 rounded-[3px] bg-[#0369a1]" />
-            <span>{isEn ? 'Deep valley surge (>1.5m HAND proxy)' : 'Luapan koridor utama (>1,5m)'}</span>
-          </div>
-          <div className="flex items-center gap-2.5 text-[13px] text-[#161c1a]">
-            <span className="h-3 w-3 shrink-0 rounded-[3px] bg-[#7dd3fc]" />
-            <span>{isEn ? 'Shallow low-ground overflow' : 'Genangan koridor rendah'}</span>
-          </div>
-          <div className="flex items-center gap-2.5 text-[13px] text-[#161c1a]">
-            <span className="h-3 w-3 shrink-0 rounded-[3px] bg-[#ea580c]" />
-            <span>{isEn ? 'Saturated steep slope (landslide risk)' : 'Lereng jenuh rawan longsor'}</span>
-          </div>
-        </div>
-
-        <div className="divide-y divide-[#161c1a]/10 pt-1">
-          <label className="flex min-h-[40px] cursor-pointer items-center justify-between gap-2.5 py-1">
-            <span className="flex items-center gap-2.5 text-[13px] font-medium text-[#161c1a]">
-              <LegendIcon kind="settlements" />
-              <span>{t.lblSettlements}</span>
-            </span>
-            <input
-              type="checkbox"
-              checked={layers.settlements}
-              onChange={e => onToggleLayer('settlements', e.target.checked)}
-              className="h-4.5 w-4.5 cursor-pointer accent-[#0369a1]"
-            />
-          </label>
-          <label className="flex min-h-[40px] cursor-pointer items-center justify-between gap-2.5 py-1">
-            <span className="flex items-center gap-2.5 text-[13px] font-medium text-[#161c1a]">
-              <LegendIcon kind="evacuation" />
-              <span>{t.lblEvac}</span>
-            </span>
-            <input
-              type="checkbox"
-              checked={layers.evac}
-              onChange={e => onToggleLayer('evac', e.target.checked)}
-              className="h-4.5 w-4.5 cursor-pointer accent-[#0369a1]"
-            />
-          </label>
-          {isDetail && (
-            <label className="flex min-h-[40px] cursor-pointer items-center justify-between gap-2.5 py-1">
-              <span className="flex items-center gap-2.5 text-[13px] font-medium text-[#161c1a]">
-                <LegendIcon kind="bronjong" />
-                <span>{t.lblBronjong}</span>
-              </span>
-              <input
-                type="checkbox"
-                checked={layers.bronjong}
-                onChange={e => onToggleLayer('bronjong', e.target.checked)}
-                className="h-4.5 w-4.5 cursor-pointer accent-[#0369a1]"
+          <div className="flex items-start gap-2">
+            <span className="mt-1 h-3 w-3 shrink-0 rounded-[3px] bg-[#0369a1]" />
+            <span className="flex items-center gap-1">
+              <span>{isEn ? 'Deep surge (>1.5m)' : 'Luapan utama (>1,5m)'}</span>
+              <InfoTooltip
+                text={t.infoLegendDeep}
+                label={isEn ? 'Deep valley surge' : 'Luapan koridor utama'}
               />
-            </label>
-          )}
+            </span>
+          </div>
+          <div className="flex items-start gap-2">
+            <span className="mt-1 h-3 w-3 shrink-0 rounded-[3px] bg-[#7dd3fc]" />
+            <span>{isEn ? 'Shallow overflow' : 'Genangan rendah'}</span>
+          </div>
+          <div className="flex items-start gap-2">
+            <span className="mt-1 h-3 w-3 shrink-0 rounded-[3px] bg-[#ea580c]" />
+            <span className="flex items-center gap-1">
+              <span>{isEn ? 'Landslide slope' : 'Lereng rawan longsor'}</span>
+              <InfoTooltip
+                text={t.infoLegendLandslide}
+                label={isEn ? 'Saturated steep slope' : 'Lereng jenuh rawan longsor'}
+              />
+            </span>
+          </div>
         </div>
       </section>
     </div>
