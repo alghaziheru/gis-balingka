@@ -1,0 +1,308 @@
+import type { Dispatch, MutableRefObject, SetStateAction } from 'react';
+import type { GeoJSONSource, ImageSource, Map as MapLibreMap } from 'maplibre-gl';
+import type { CascadeEngine } from '../../lib/cascadeEngine';
+import type { MergedWaterwayReach } from '../../lib/geometry';
+import { extractAffectedBuildings, extractFloodPoolPolygons } from '../../lib/poolContours';
+import type {
+  CascadeSimParams,
+  GeoFeature,
+  LayerToggles,
+  TabId,
+  VerifiedWaterwayFeature
+} from '../../types/gis';
+import {
+  asGeoInput,
+  buildImageCoords,
+  EMPTY_FC,
+  HAND_LAYERS,
+  interpolateLine,
+  lerpHex,
+  type LoadedDatasets
+} from './types';
+
+export function syncWaterwaySimStyling(map: MapLibreMap, isRaining: boolean): void {
+  map.setPaintProperty('verified-waterways-casing', 'line-color', [
+    'case',
+    ['==', ['get', 'kind'], 'culvert'],
+    '#334155',
+    isRaining ? '#0c334a' : '#ffffff'
+  ]);
+  map.setPaintProperty(
+    'verified-waterways-casing',
+    'line-width',
+    isRaining
+      ? ['match', ['get', 'kind'], 'river', 7.8, 'stream', 6.0, 'culvert', 5.0, 4.8]
+      : ['match', ['get', 'kind'], 'river', 6.4, 'stream', 5.2, 'culvert', 5.0, 4.2]
+  );
+  map.setPaintProperty('verified-waterways-casing', 'line-opacity', isRaining ? 0.78 : 0.9);
+  map.setPaintProperty(
+    'verified-waterways-line',
+    'line-width',
+    isRaining
+      ? ['match', ['get', 'kind'], 'river', 4.8, 'stream', 3.5, 2.8]
+      : ['match', ['get', 'kind'], 'river', 3.8, 'stream', 2.8, 2.3]
+  );
+  map.setPaintProperty('verified-waterways-line', 'line-opacity', isRaining ? 0.92 : 0.96);
+  map.setPaintProperty('verified-culverts-line', 'line-opacity', 0.98);
+}
+
+export function syncSimulationOverlays(opts: {
+  map: MapLibreMap;
+  isRaining: boolean;
+  datasets: LoadedDatasets;
+  layers: LayerToggles;
+  simRain: number;
+  simDurationMin: number;
+  simProgress: number;
+  simScenario: 'clogged' | 'cleared';
+  cascadeEngine: CascadeEngine | null;
+  cascadeParams: CascadeSimParams;
+  verifiedWaterways: VerifiedWaterwayFeature[];
+  lastCascadeKeyRef: MutableRefObject<string>;
+  lastCascadeTsRef: MutableRefObject<number>;
+  landslideCanvasRef: MutableRefObject<HTMLCanvasElement | null>;
+  setPoolGlintPoints: Dispatch<SetStateAction<[number, number][]>>;
+}): () => void {
+  const { map, isRaining } = opts;
+  const vis = (on: boolean) => (on ? 'visible' : 'none');
+
+  const showFlood = isRaining;
+  const useDynamicCascade = Boolean(opts.cascadeEngine);
+  let activeHandId: string | null = null;
+  let handOpacity = 0.72;
+  if (showFlood && !useDynamicCascade) {
+    const accumulatedMm = opts.simRain * ((opts.simDurationMin * opts.simProgress) / 60);
+    const effectiveLoad = opts.simRain * 0.45 + accumulatedMm * 0.55;
+    const level = effectiveLoad < 45 ? 'low' : effectiveLoad < 105 ? 'med' : 'high';
+    activeHandId = `hand-${opts.simScenario}-${level}`;
+    const baseMax = opts.simScenario === 'cleared' ? 0.56 : 0.72;
+    handOpacity = Math.min(baseMax, 0.22 + Math.min(1, opts.simProgress * 1.15) * (baseMax - 0.22));
+  }
+  for (const hid of HAND_LAYERS) {
+    const isOn = hid === activeHandId;
+    map.setLayoutProperty(hid, 'visibility', vis(isOn));
+    if (isOn) map.setPaintProperty(hid, 'raster-opacity', handOpacity);
+  }
+
+  const showCascadeLayers = showFlood && useDynamicCascade;
+  map.setLayoutProperty('sim-pools-shallow-fill', 'visibility', vis(showCascadeLayers));
+  map.setLayoutProperty('sim-pools-deep-fill', 'visibility', vis(showCascadeLayers));
+  map.setLayoutProperty(
+    'sim-affected-buildings-line',
+    'visibility',
+    vis(showCascadeLayers && opts.layers.settlements)
+  );
+  map.setLayoutProperty('cascade-landslide-overlay', 'visibility', vis(showCascadeLayers));
+
+  let cascadeTimer: number | null = null;
+  if (!showCascadeLayers) {
+    opts.lastCascadeKeyRef.current = '';
+    const shallowSrc = map.getSource('src-sim-pools-shallow') as GeoJSONSource | undefined;
+    const deepSrc = map.getSource('src-sim-pools-deep') as GeoJSONSource | undefined;
+    const bldSrc = map.getSource('src-sim-affected-buildings') as GeoJSONSource | undefined;
+    if (shallowSrc) shallowSrc.setData(asGeoInput(EMPTY_FC));
+    if (deepSrc) deepSrc.setData(asGeoInput(EMPTY_FC));
+    if (bldSrc) bldSrc.setData(asGeoInput(EMPTY_FC));
+    opts.setPoolGlintPoints(prev => (prev.length > 0 ? [] : prev));
+  } else if (opts.cascadeEngine) {
+    const cp = opts.cascadeParams;
+    const engine = opts.cascadeEngine;
+    const cacheKey = `${cp.rainMmHr}|${cp.durationMin}|${cp.progress.toFixed(3)}|${cp.soilMoisture}|${cp.rainPattern}|${cp.drainCondition}|${cp.forestScenario}|${opts.verifiedWaterways.length}`;
+    const renderCascade = () => {
+      opts.lastCascadeKeyRef.current = cacheKey;
+      opts.lastCascadeTsRef.current = performance.now();
+      engine.evaluate(cp);
+
+      const pools = extractFloodPoolPolygons(engine, opts.verifiedWaterways);
+      const shallowSrc = map.getSource('src-sim-pools-shallow') as GeoJSONSource | undefined;
+      const deepSrc = map.getSource('src-sim-pools-deep') as GeoJSONSource | undefined;
+      const bldSrc = map.getSource('src-sim-affected-buildings') as GeoJSONSource | undefined;
+      if (shallowSrc) shallowSrc.setData(asGeoInput(pools.shallow));
+      if (deepSrc) deepSrc.setData(asGeoInput(pools.deep));
+      if (bldSrc) {
+        bldSrc.setData(
+          asGeoInput(extractAffectedBuildings(opts.datasets.settlements, pools.filteredDepth, engine.fields))
+        );
+      }
+      opts.setPoolGlintPoints(pools.glintPoints);
+
+      const outSize = 256;
+      const { landslideRgba } = engine.renderRgba(outSize);
+
+      if (!opts.landslideCanvasRef.current) {
+        const c = document.createElement('canvas');
+        c.width = outSize;
+        c.height = outSize;
+        opts.landslideCanvasRef.current = c;
+      }
+
+      const imgCoords = buildImageCoords(opts.datasets.bbox);
+      const lCtx = opts.landslideCanvasRef.current.getContext('2d');
+      if (lCtx) {
+        lCtx.putImageData(new ImageData(new Uint8ClampedArray(landslideRgba), outSize, outSize), 0, 0);
+        const srcLs = map.getSource('img-cascade-landslide') as ImageSource | undefined;
+        if (srcLs && typeof srcLs.updateImage === 'function') {
+          srcLs.updateImage({ url: opts.landslideCanvasRef.current.toDataURL('image/png'), coordinates: imgCoords });
+        }
+      }
+    };
+
+    if (cacheKey !== opts.lastCascadeKeyRef.current) {
+      const elapsed = performance.now() - opts.lastCascadeTsRef.current;
+      if (elapsed >= 70) {
+        renderCascade();
+      } else {
+        cascadeTimer = window.setTimeout(renderCascade, 75 - elapsed);
+      }
+    }
+  }
+
+  return () => {
+    if (cascadeTimer !== null) window.clearTimeout(cascadeTimer);
+  };
+}
+
+export function syncStormSky(
+  map: MapLibreMap,
+  lastSkyKeyRef: MutableRefObject<string>,
+  opts: { tab: TabId; rainAnimEnabled: boolean; simProgress: number; simRain: number }
+): void {
+  const isStorm = opts.tab === 'sim' && opts.rainAnimEnabled && opts.simProgress > 0.02;
+  const stormFactor = isStorm
+    ? Math.min(1, opts.simRain / 130) * Math.min(1, opts.simProgress * 2.5)
+    : 0;
+  const key = stormFactor.toFixed(2);
+  if (key === lastSkyKeyRef.current) return;
+  lastSkyKeyRef.current = key;
+
+  try {
+    if (stormFactor <= 0.01) {
+      map.setSky({
+        'sky-color': '#c9dce8',
+        'horizon-color': '#e5ebe8',
+        'fog-color': '#e5ebe8',
+        'sky-horizon-blend': 0.5,
+        'horizon-fog-blend': 0.7,
+        'fog-ground-blend': 0.5
+      });
+    } else {
+      map.setSky({
+        'sky-color': lerpHex('#c9dce8', '#9eb4c6', stormFactor),
+        'horizon-color': lerpHex('#e5ebe8', '#c8d4dc', stormFactor),
+        'fog-color': lerpHex('#e5ebe8', '#c2cfd8', stormFactor),
+        'sky-horizon-blend': Number((0.5 + stormFactor * 0.08).toFixed(2)),
+        'horizon-fog-blend': Number((0.7 + stormFactor * 0.08).toFixed(2)),
+        'fog-ground-blend': Number((0.5 + stormFactor * 0.08).toFixed(2))
+      });
+    }
+  } catch {
+    // Ignore if map style is not ready for sky updates
+  }
+}
+
+export function startFlowParticleLoop(
+  map: MapLibreMap,
+  refs: {
+    flowAnimActiveRef: MutableRefObject<boolean>;
+    particlesClearedRef: MutableRefObject<boolean>;
+    animPathsRef: MutableRefObject<GeoFeature[]>;
+    suppressedDemSetRef: MutableRefObject<Set<string>>;
+    mergingFlowIdsRef: MutableRefObject<Set<string>>;
+    layersRef: MutableRefObject<LayerToggles>;
+    mergedReachesRef: MutableRefObject<MergedWaterwayReach[]>;
+    verifiedWaterwaysRef: MutableRefObject<VerifiedWaterwayFeature[]>;
+  }
+): () => void {
+  let animTimerId = 0;
+  let particlePhase = 0;
+  let lastTs = 0;
+
+  const stepAnim = (ts: number) => {
+    if (ts - lastTs > 50) {
+      const dt = Math.min(0.1, (ts - lastTs) / 1000 || 0.05);
+      lastTs = ts;
+      const animActive = refs.flowAnimActiveRef.current;
+      const src = map.getSource('src-flow-particles') as GeoJSONSource | undefined;
+
+      if (!animActive) {
+        if (src && !refs.particlesClearedRef.current) {
+          src.setData(asGeoInput(EMPTY_FC));
+          refs.particlesClearedRef.current = true;
+        }
+      } else {
+        refs.particlesClearedRef.current = false;
+        const speed = 0.16;
+        particlePhase = (particlePhase + dt * speed) % 1;
+
+        if (src) {
+          const features: GeoFeature[] = [];
+          const animPaths = refs.animPathsRef.current;
+          for (let i = 0; i < animPaths.length; i++) {
+            const f = animPaths[i];
+            if (f.geometry.type !== 'LineString') continue;
+            const segId = String(f.properties?.id || '');
+            if (refs.suppressedDemSetRef.current.has(segId)) continue;
+            const tier = Number(f.properties?.tier || 2);
+            const lenM = Number(f.properties?.length_m || 0);
+            const isMerging = refs.mergingFlowIdsRef.current.has(segId);
+            const coords = f.geometry.coordinates;
+            const count = tier === 1 || (isMerging && lenM >= 150) ? 2 : 1;
+            for (let k = 0; k < count; k++) {
+              const frac = (particlePhase + k / count + i * 0.17) % 1;
+              features.push({
+                type: 'Feature',
+                properties: { kind: 'dem', radius: tier === 1 ? 3.2 : 2.5 },
+                geometry: { type: 'Point', coordinates: interpolateLine(coords, frac) }
+              });
+            }
+          }
+
+          if (refs.layersRef.current.verifiedWaterways) {
+            const mergedReaches = refs.mergedReachesRef.current;
+            const mergedWwIds = new Set<string>();
+            for (let i = 0; i < mergedReaches.length; i++) {
+              const reach = mergedReaches[i];
+              mergedWwIds.add(reach.waterwayId);
+              const coords = reach.coordinates;
+              if (!coords || coords.length < 2) continue;
+              const count = Math.max(2, Math.min(12, Math.round(reach.lengthM / 220)));
+              const radius = reach.kind === 'river' ? 3.7 : 3.2;
+              for (let k = 0; k < count; k++) {
+                const frac = (particlePhase + k / count + i * 0.11) % 1;
+                features.push({
+                  type: 'Feature',
+                  properties: { kind: 'merged', radius, mix: frac },
+                  geometry: { type: 'Point', coordinates: interpolateLine(coords, frac) }
+                });
+              }
+            }
+
+            for (let i = 0; i < refs.verifiedWaterwaysRef.current.length; i++) {
+              const ww = refs.verifiedWaterwaysRef.current[i];
+              if (mergedWwIds.has(ww.properties.id)) continue;
+              const isRiver = ww.properties.kind === 'river';
+              const coords = ww.geometry.coordinates;
+              if (!coords || coords.length < 2) continue;
+              const count = Math.max(1, Math.min(8, Math.round((ww.properties.length_m || 400) / 320)));
+              const radius = isRiver ? 3.0 : 2.5;
+              for (let k = 0; k < count; k++) {
+                const frac = (particlePhase + k / count + i * 0.13) % 1;
+                features.push({
+                  type: 'Feature',
+                  properties: { kind: 'verified', radius },
+                  geometry: { type: 'Point', coordinates: interpolateLine(coords, frac) }
+                });
+              }
+            }
+          }
+
+          src.setData(asGeoInput({ type: 'FeatureCollection', features }));
+        }
+      }
+    }
+    animTimerId = requestAnimationFrame(stepAnim);
+  };
+  animTimerId = requestAnimationFrame(stepAnim);
+
+  return () => cancelAnimationFrame(animTimerId);
+}
