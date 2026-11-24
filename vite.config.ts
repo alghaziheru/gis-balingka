@@ -43,6 +43,18 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     sourcemap: false,
-    chunkSizeWarningLimit: 1200
+    chunkSizeWarningLimit: 1200,
+    rolldownOptions: {
+      output: {
+        codeSplitting: {
+          groups: [
+            {
+              name: 'maplibre',
+              test: /node_modules[\\/]maplibre-gl/
+            }
+          ]
+        }
+      }
+    }
   }
 });
