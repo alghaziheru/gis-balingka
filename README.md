@@ -2,8 +2,11 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-0284c7.svg)](./LICENSE)
 [![Node >= 24](https://img.shields.io/badge/Node.js-%3E%3D24-047857.svg)](https://nodejs.org/)
+[![Live Demo](https://img.shields.io/badge/Live%20Demo-gsb.jenderalist.web.id-0369a1.svg)](https://gsb.jenderalist.web.id)
 
 Open-source (**MIT**) public spatial data viewer, terrain & drainage inventory, computational terrain-flow visualizer, and collaborative waterway & boundary editor — built for **Nagari Balingka** (`29.89 km²`, `1,032–2,869 mdpl`, Kec. IV Koto, Kab. Agam, West Sumatra) and configurable for **any Indonesian Desa / Nagari** via [`region.config.json`](./region.config.json).
+
+**Live Viewer:** [https://gsb.jenderalist.web.id](https://gsb.jenderalist.web.id) *(public read-only build hosted on Cloudflare Pages)*
 
 ![Nagari Balingka Community GIS — Desktop View](./docs/screenshot-desktop.png)
 
@@ -50,7 +53,9 @@ gis-balingka/
 │   └── seed-io.mjs            # Safe GeoJSON snapshot import/export for verified waterways & structures
 ├── src/
 │   ├── components/
-│   │   ├── MapView.tsx        # MapLibre 2D/3D map, Nagari mask, cartographic badges & vertex editor
+│   │   ├── map/               # Modular MapLibre setup, popups, simulation layers & vertex editing
+│   │   ├── MapView.tsx        # MapLibre 2D/3D map container & FlowFilamentOverlay host
+│   │   ├── FlowFilamentOverlay.tsx # HTML5 canvas silky runoff filament visualizer during rain sim
 │   │   ├── ActiveMapLegend.tsx # Desktop collapsible floating legend reflecting active basemap & layers
 │   │   ├── RainOverlay.tsx    # Intensity-scaled HTML5 canvas falling rain animation
 │   │   ├── LegendIcon.tsx     # Synchronized canvas/SVG map symbol badges across sidebar & mobile legend
@@ -60,6 +65,10 @@ gis-balingka/
 │   │   ├── AuditLogPanel.tsx / EditorUnlockModal.tsx
 │   │   ├── TopHud.tsx / TelemetryDock.tsx / ElevationProfileModal.tsx
 │   │   └── FeedbackModal.tsx / InfoDataModal.tsx
+│   ├── hooks/
+│   │   ├── useRegionDatasets.ts     # Parallel /data/* loader, DemClient hydration & reloader
+│   │   ├── useSimulationController.ts # Rainfall sim params, playback loop & CascadeEngine memos
+│   │   └── useEditorActions.ts      # SQLite/static seed hydration, CRUD, audit & recompute handlers
 │   ├── config/
 │   │   └── region.ts          # Typed loader for root region.config.json (multi-region adaptability)
 │   ├── data/
@@ -68,6 +77,9 @@ gis-balingka/
 │   │   ├── api.ts             # Typed REST client + sessionStorage passphrase + static read-only fallback
 │   │   ├── cascadeEngine.ts   # Real-time 4-stage rainfall-flood-landslide cascade evaluator (masked to Nagari)
 │   │   ├── channelHydraulics.ts # Manning + Specific Stream Power bank-widening rain threshold estimator
+│   │   ├── flowField.ts       # Downhill flow vectors, verified-channel mask & upland bounding box
+│   │   ├── flowRibbons.ts     # Smooth flow-corridor ribbon & confluence builder (including BIG RBI)
+│   │   ├── poolContours.ts    # Marching-squares flood-corridor polygons & affected-building extractor
 │   │   ├── agamLookup.ts      # Spatial point-in-Nagari & Pemkab Agam soil/geology/hazard profile lookup
 │   │   ├── demClient.ts       # Client-side bilinear DEM interpolation, raindrop tracer & profile sampler
 │   │   ├── geometry.ts        # Line snapping, downhill orientation & runoff-to-waterway merge utilities
@@ -78,9 +90,12 @@ gis-balingka/
 ├── scripts/
 │   ├── extract-big-ref.py     # Extracts official BIG Desa/Nagari polygon & optional RBI 50K (.gdb/.zip)
 │   ├── lib/hydrology.mjs      # Priority-Flood, D8, Horn slope, HAND, Chaikin, polygon mask & stream-burning
+│   ├── lib/dem-loaders.mjs    # Local GeoTIFF, Copernicus COG mosaic & AWS Terrarium DEM fallback loaders
+│   ├── lib/data-fetchers.mjs  # OSM, ESA WorldCover, Sentinel-2 NDVI, Open Buildings & Pemkab Agam fetchers
+│   ├── lib/export-helpers.mjs # Bottleneck/seed builders, studio mask, clipped settlements & metadata JSON
 │   ├── lib/tiles.mjs          # Multi-tile Copernicus DEM (1°), ESA WorldCover (3°) & Terrarium tile addressing
 │   ├── lib/recompute-hydrology.mjs # Live server handler for offline stream-burned DEM recomputation
-│   ├── prepare-data.mjs       # Full offline DEMNAS/Copernicus/WorldCover/OSM/Sentinel-2/Agam asset builder
+│   ├── prepare-data.mjs       # Offline pipeline orchestrator writing clipped assets to public/data/
 │   ├── reset-region.mjs       # Safe cleanup of stale Nagari Balingka artifacts before adapting a new region
 │   ├── sync-seed.mjs          # Export SQLite verified waterways & structures back to Git GeoJSON snapshots
 │   └── import-seed.mjs        # Import Git GeoJSON snapshots into SQLite without overwriting suggestions
@@ -180,6 +195,8 @@ pnpm start                # Serves dist/ and /api/* together on PORT (default 87
 - **Database backup**: Back up the single SQLite file at `data/balingka.db` (or set `BALINGKA_DB_PATH`).
 
 ### Static Deployment on Cloudflare Pages (Free)
+
+Live production static deployment: **[https://gsb.jenderalist.web.id](https://gsb.jenderalist.web.id)**.
 
 You can also host the entire read-only public atlas (~13 MB in `dist/`) on **Cloudflare Pages** with zero server cost:
 
