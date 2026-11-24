@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ChevronLeft,
   CloudRain,
@@ -10,76 +10,34 @@ import {
 } from 'lucide-react';
 import { ActiveMapLegend } from './components/ActiveMapLegend';
 import { DrainageTab } from './components/DrainageTab';
-import { EditorTab, type EditorSubTab } from './components/EditorTab';
+import { EditorTab } from './components/EditorTab';
 import { EditorUnlockModal } from './components/EditorUnlockModal';
 import { ElevationProfileModal } from './components/ElevationProfileModal';
 import { FeedbackModal } from './components/FeedbackModal';
 import { InfoDataModal, type InfoModalTab } from './components/InfoDataModal';
-import { MapView, type FlyRequest, type LoadedDatasets, type MapCameraState, type MapControlHandle } from './components/MapView';
+import { MapView, type FlyRequest, type MapCameraState, type MapControlHandle } from './components/MapView';
 import { RainOverlay } from './components/RainOverlay';
 import { SimulationTab } from './components/SimulationTab';
 import { TelemetryDock } from './components/TelemetryDock';
 import { TerrainTab } from './components/TerrainTab';
 import { TopHud } from './components/TopHud';
-import type { ActiveEditingJorong } from './components/JorongEditorPanel';
-import type { ActiveEditingStructure } from './components/StructureEditorPanel';
-import type { ActiveEditingWaterway } from './components/WaterwayEditorPanel';
 import { REGION } from './config/region';
+import { useEditorActions } from './hooks/useEditorActions';
+import { useRegionDatasets, type CursorTelemetry } from './hooks/useRegionDatasets';
+import { useSimulationController } from './hooks/useSimulationController';
 import { I18N } from './i18n/translations';
-import {
-  createJorongBoundary,
-  createStructure,
-  createSuggestion,
-  createWaterway,
-  deleteJorongBoundary,
-  deleteStructure,
-  deleteWaterway,
-  fetchAuditLogs,
-  fetchEditorStatus,
-  fetchStaticVerifiedSeed,
-  fetchWaterwaysState,
-  loadEditorName,
-  loadStoredPassphrase,
-  recomputeHydrology,
-  restoreDemSegment,
-  revertAuditLog,
-  saveEditorName,
-  saveStoredPassphrase,
-  suppressDemSegment,
-  updateJorongBoundary,
-  updateStructure,
-  updateWaterway,
-  verifyEditorPassphrase
-} from './lib/api';
-import { CascadeEngine, extractBuildingCentroids } from './lib/cascadeEngine';
-import { DemClient } from './lib/demClient';
-import { computeUplandBounds } from './lib/flowField';
-import { haversineMeters, orientCoordinatesDownhill } from './lib/geometry';
+import { createSuggestion, saveEditorName, saveStoredPassphrase } from './lib/api';
+import { haversineMeters } from './lib/geometry';
 import type {
   ActiveTool,
-  AuditLogEntry,
   BasemapId,
-  CascadeKpis,
-  CascadeSimParams,
-  DatasetMetadata,
-  DemGridData,
   DrainageStatus,
-  DrainCondition,
   ElevationProfileResult,
-  ForestScenario,
-  HydroStatus,
-  JorongBoundaryFeature,
   Language,
   LayerToggles,
   ProfileSample,
   RaindropTrace,
-  RainPattern,
-  SimFieldsData,
-  SoilMoisture,
-  SuppressedDemSegment,
   TabId,
-  VerifiedStructureFeature,
-  VerifiedWaterwayFeature,
   ViewMode
 } from './types/gis';
 
@@ -138,59 +96,15 @@ export function App() {
   const [mobileSheetMode, setMobileSheetMode] = useState<'peek' | 'half' | 'full'>('peek');
   const [infoModalTab, setInfoModalTab] = useState<InfoModalTab | null>(null);
   const [feedbackOpen, setFeedbackOpen] = useState(false);
-
   const [layers, setLayers] = useState<LayerToggles>(DEFAULT_LAYERS);
-
-  const [datasets, setDatasets] = useState<LoadedDatasets | null>(null);
-  const [metadata, setMetadata] = useState<DatasetMetadata | null>(null);
-  const [demClient, setDemClient] = useState<DemClient | null>(null);
-  const [simFields, setSimFields] = useState<SimFieldsData | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
 
   const [activeTool, setActiveTool] = useState<ActiveTool>(null);
   const [raindrop, setRaindrop] = useState<RaindropTrace | null>(null);
   const [profilePts, setProfilePts] = useState<[number, number][]>([]);
   const [profileResult, setProfileResult] = useState<ElevationProfileResult | null>(null);
   const [profileHover, setProfileHover] = useState<ProfileSample | null>(null);
-
-  // Interactive Rainfall -> Galodo Cascade Simulator (calm 00:00 dry start)
-  const [simPlaying, setSimPlaying] = useState(false);
-  const [simRain, setSimRain] = useState(45);
-  const [simDurationMin, setSimDurationMin] = useState(120);
-  const [simProgress, setSimProgress] = useState(0);
-  const [soilMoisture, setSoilMoisture] = useState<SoilMoisture>('moist');
-  const [rainPattern, setRainPattern] = useState<RainPattern>('uniform');
-  const [drainCondition, setDrainCondition] = useState<DrainCondition>('clogged');
-  const [forestScenario, setForestScenario] = useState<ForestScenario>('actual');
-  const [rainAnimEnabled, setRainAnimEnabled] = useState(true);
-  const [simShowVerifiedWaterways, setSimShowVerifiedWaterways] = useState(true);
-  const [simShowRbiRivers, setSimShowRbiRivers] = useState(true);
-
   const [drainFilter, setDrainFilter] = useState<'all' | DrainageStatus>('all');
   const [drawVertices, setDrawVertices] = useState<[number, number][]>([]);
-
-  const [editorSubTab, setEditorSubTab] = useState<EditorSubTab>('waterways');
-  const [apiAvailable, setApiAvailable] = useState(false);
-  const [requiresPassphrase, setRequiresPassphrase] = useState(false);
-  const [editorUnlocked, setEditorUnlocked] = useState(false);
-  const [unlockModalOpen, setUnlockModalOpen] = useState(false);
-  const [actorName, setActorName] = useState(() => loadEditorName());
-  const [verifiedWaterways, setVerifiedWaterways] = useState<VerifiedWaterwayFeature[]>([]);
-  const [verifiedStructures, setVerifiedStructures] = useState<VerifiedStructureFeature[]>([]);
-  const [jorongBoundaries, setJorongBoundaries] = useState<JorongBoundaryFeature[]>([]);
-  const [suppressedDem, setSuppressedDem] = useState<SuppressedDemSegment[]>([]);
-  const [editingWaterway, setEditingWaterway] = useState<ActiveEditingWaterway | null>(null);
-  const [editingStructure, setEditingStructure] = useState<ActiveEditingStructure | null>(null);
-  const [editingJorong, setEditingJorong] = useState<ActiveEditingJorong | null>(null);
-  const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
-  const [dataVersion, setDataVersion] = useState(0);
-  const [hydroStatus, setHydroStatus] = useState<HydroStatus>({
-    dirty: false,
-    lastRecomputedAt: null,
-    burnedCellCount: 0,
-    verifiedWaterwayCount: 0
-  });
-  const [recomputingHydro, setRecomputingHydro] = useState(false);
 
   const [flyRequest, setFlyRequest] = useState<FlyRequest | null>(null);
   const flyCounter = useRef(0);
@@ -201,7 +115,7 @@ export function App() {
     pitch: 36,
     metersPerPixel: 3.15
   });
-  const [cursorTelemetry, setCursorTelemetry] = useState({
+  const [cursorTelemetry, setCursorTelemetry] = useState<CursorTelemetry>({
     lng: DEFAULT_VIEW_CENTER[0],
     lat: DEFAULT_VIEW_CENTER[1],
     elev: 1089,
@@ -213,142 +127,48 @@ export function App() {
 
   const t = I18N[lang];
 
-  const notify = (msg: string) => {
+  const notify = useCallback((msg: string) => {
     setToast(msg);
     if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
     toastTimerRef.current = window.setTimeout(() => setToast(null), 2800);
-  };
+  }, []);
 
-  const flyTo = (center: [number, number], opts?: { zoom?: number; pitch?: number; bearing?: number }) => {
-    flyCounter.current += 1;
-    setFlyRequest({ center, ...opts, nonce: flyCounter.current });
-  };
+  const flyTo = useCallback(
+    (center: [number, number], opts?: { zoom?: number; pitch?: number; bearing?: number }) => {
+      flyCounter.current += 1;
+      setFlyRequest({ center, ...opts, nonce: flyCounter.current });
+    },
+    []
+  );
+
+  const { datasets, metadata, demClient, simFields, loadError, initialTelemetry, reloadHydrologyData } =
+    useRegionDatasets();
 
   useEffect(() => {
-    let cancelled = false;
-    async function loadAll() {
-      try {
-        const [metaRes, demRes, maskRes, wsRes, nbRes, stRes, cntRes, flRes, osmRes, drnRes, sfRes, rbiRes, agamCtxRes] = await Promise.all([
-          fetch('/data/metadata.json'),
-          fetch('/data/dem-grid.json'),
-          fetch('/data/mask.geojson'),
-          fetch('/data/watershed.geojson'),
-          fetch('/data/nagari-boundary.geojson'),
-          fetch('/data/settlements.geojson'),
-          fetch('/data/contours.geojson'),
-          fetch('/data/flow-paths.geojson'),
-          fetch('/data/osm-context.geojson'),
-          fetch('/data/drainage-draft.geojson'),
-          fetch('/data/sim-fields.json'),
-          fetch('/data/agam-rbi-rivers.geojson'),
-          fetch('/data/agam-context.json')
-        ]);
-
-        if (!metaRes.ok || !demRes.ok) {
-          throw new Error('Failed to load geospatial datasets from /data/');
-        }
-
-        const emptyFc = { type: 'FeatureCollection' as const, features: [] };
-        const [meta, demGrid, mask, watershed, nagariBoundary, settlements, contours, flowPaths, osmContext, drainageDraft, sfData, agamRbiRivers, agamContext] =
-          await Promise.all([
-            metaRes.json(),
-            demRes.json(),
-            maskRes.json(),
-            wsRes.json(),
-            nbRes.ok ? nbRes.json() : Promise.resolve(emptyFc),
-            stRes.ok ? stRes.json() : Promise.resolve(emptyFc),
-            cntRes.json(),
-            flRes.json(),
-            osmRes.json(),
-            drnRes.json(),
-            sfRes.ok ? sfRes.json() : Promise.resolve(null),
-            rbiRes.ok ? rbiRes.json() : Promise.resolve(emptyFc),
-            agamCtxRes.ok ? agamCtxRes.json() : Promise.resolve(null)
-          ]);
-
-        if (cancelled) return;
-        const m = meta as DatasetMetadata;
-        const client = new DemClient(demGrid as DemGridData);
-        const balingkaPlace = (
-          osmContext as {
-            features?: Array<{
-              geometry?: { type?: string; coordinates?: [number, number] };
-              properties?: { kind?: string; name?: string };
-            }>;
-          }
-        ).features?.find(
-          f =>
-            f.properties?.kind === 'place' &&
-            f.geometry?.type === 'Point' &&
-            f.properties?.name?.trim().toLowerCase() === 'balingka'
-        );
-        const initialCenter: [number, number] = balingkaPlace?.geometry?.coordinates ?? DEFAULT_VIEW_CENTER;
-        setMetadata(m);
-        setDemClient(client);
-        setSimFields(sfData as SimFieldsData | null);
-        setDatasets({
-          bbox: m.bbox,
-          center: initialCenter,
-          mask,
-          watershed,
-          nagariBoundary,
-          settlements,
-          contours,
-          flowPaths,
-          osmContext,
-          drainageDraft,
-          agamRbiRivers,
-          agamContext
-        });
-        setCursorTelemetry({
-          lng: initialCenter[0],
-          lat: initialCenter[1],
-          elev: client.getElevation(initialCenter[0], initialCenter[1]),
-          slope: client.getSlopePercent(initialCenter[0], initialCenter[1])
-        });
-
-        const edStatus = await fetchEditorStatus();
-        if (cancelled) return;
-        if (edStatus) {
-          setApiAvailable(true);
-          setRequiresPassphrase(edStatus.requiresPassphrase);
-          if (edStatus.unlockedByDefault) {
-            setEditorUnlocked(true);
-          } else {
-            const savedPass = loadStoredPassphrase();
-            if (savedPass) {
-              const valid = await verifyEditorPassphrase(savedPass);
-              if (!cancelled && valid) setEditorUnlocked(true);
-              else if (!cancelled) saveStoredPassphrase('');
-            }
-          }
-          const [wwState, logs] = await Promise.all([fetchWaterwaysState(), fetchAuditLogs()]);
-          if (!cancelled) {
-            setVerifiedWaterways(wwState.waterways);
-            setVerifiedStructures(wwState.structures);
-            setJorongBoundaries(wwState.jorongBoundaries);
-            setSuppressedDem(wwState.suppressedDem);
-            setHydroStatus(wwState.hydroStatus);
-            setAuditLogs(logs);
-          }
-        } else {
-          setApiAvailable(false);
-          const staticSeed = await fetchStaticVerifiedSeed(osmContext);
-          if (!cancelled) {
-            setVerifiedWaterways(staticSeed.waterways);
-            setVerifiedStructures(staticSeed.structures);
-            setSuppressedDem(staticSeed.suppressedDem);
-          }
-        }
-      } catch (err) {
-        if (!cancelled) setLoadError(err instanceof Error ? err.message : 'Data load failed');
-      }
+    if (initialTelemetry) {
+      setCursorTelemetry(initialTelemetry);
     }
-    loadAll();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  }, [initialTelemetry]);
+
+  const sim = useSimulationController({
+    simFields,
+    settlements: datasets?.settlements,
+    metadata
+  });
+
+  const editor = useEditorActions({
+    datasets,
+    demClient,
+    lang,
+    activeTool,
+    setActiveTool,
+    setDrawVertices,
+    setViewMode,
+    setTab,
+    notify,
+    flyTo,
+    reloadHydrologyData
+  });
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -361,77 +181,6 @@ export function App() {
     return () => window.removeEventListener('keydown', onKey);
   }, [activeTool]);
 
-  useEffect(() => {
-    if (!simPlaying) return;
-    const id = window.setInterval(() => {
-      setSimProgress(prev => {
-        if (prev >= 1) {
-          setSimPlaying(false);
-          return 1;
-        }
-        const next = Math.min(1, prev + 0.008);
-        if (next >= 1) setSimPlaying(false);
-        return next;
-      });
-    }, 80);
-    return () => window.clearInterval(id);
-  }, [simPlaying]);
-
-  const buildingCentroids = useMemo(
-    () => extractBuildingCentroids(datasets?.settlements),
-    [datasets?.settlements]
-  );
-
-  const cascadeEngine = useMemo(() => {
-    if (!simFields) return null;
-    const totalCrossings = (metadata?.crossingsDetected || 0) + (metadata?.bridgesDetected || 0) || 34;
-    return new CascadeEngine(simFields, buildingCentroids, totalCrossings);
-  }, [simFields, buildingCentroids, metadata?.crossingsDetected, metadata?.bridgesDetected]);
-
-  const uplandBbox = useMemo(() => (simFields ? computeUplandBounds(simFields) : null), [simFields]);
-
-  const cascadeParams: CascadeSimParams = useMemo(
-    () => ({
-      rainMmHr: simRain,
-      durationMin: simDurationMin,
-      progress: simProgress,
-      soilMoisture,
-      rainPattern,
-      drainCondition,
-      forestScenario
-    }),
-    [simRain, simDurationMin, simProgress, soilMoisture, rainPattern, drainCondition, forestScenario]
-  );
-
-  const cascadeKpis: CascadeKpis = useMemo(() => {
-    if (cascadeEngine) {
-      return cascadeEngine.evaluate(cascadeParams);
-    }
-    const elapsedMin = simDurationMin * simProgress;
-    const accumulatedMm = simRain * (elapsedMin / 60);
-    return {
-      stage: simProgress <= 0.02 ? 0 : simProgress <= 0.25 ? 1 : simProgress <= 0.55 ? 2 : simProgress <= 0.82 ? 3 : 4,
-      alertLevel: 'normal',
-      elapsedMin,
-      accumulatedMm,
-      effectiveRunoffMm: 0,
-      floodAreaHa: 0,
-      landslideAreaHa: 0,
-      affectedBuildingsFlood: 0,
-      affectedBuildingsLandslide: 0,
-      chokeCount: 0,
-      reductionPct: 0,
-      peakTravelMin: 75,
-      runoffIndex: 0,
-      officialLandslideOverlapPct: 0
-    };
-  }, [cascadeEngine, cascadeParams, simRain, simDurationMin, simProgress]);
-
-  const verifiedIssueCount = useMemo(
-    () => verifiedStructures.filter(s => ['clogged', 'damaged', 'critical'].includes(s.properties.status)).length,
-    [verifiedStructures]
-  );
-
   const drainageCounts = useMemo(() => {
     const counts: Record<'all' | DrainageStatus, number> = {
       all: 0,
@@ -442,9 +191,9 @@ export function App() {
       critical: 0
     };
     const verifiedRefSet = new Set(
-      verifiedStructures.map(s => s.properties.source_ref).filter(Boolean).map(String)
+      editor.verifiedStructures.map(s => s.properties.source_ref).filter(Boolean).map(String)
     );
-    for (const s of verifiedStructures) {
+    for (const s of editor.verifiedStructures) {
       counts.all += 1;
       const st = s.properties.status;
       if (st in counts) counts[st] += 1;
@@ -456,7 +205,11 @@ export function App() {
         if (verifiedRefSet.has(fid)) continue;
         if (f.geometry.type === 'Point') {
           const fc = f.geometry.coordinates;
-          if (verifiedStructures.some(s => haversineMeters(fc[0], fc[1], s.geometry.coordinates[0], s.geometry.coordinates[1]) <= 45)) {
+          if (
+            editor.verifiedStructures.some(
+              s => haversineMeters(fc[0], fc[1], s.geometry.coordinates[0], s.geometry.coordinates[1]) <= 45
+            )
+          ) {
             continue;
           }
         }
@@ -466,7 +219,7 @@ export function App() {
       }
     }
     return counts;
-  }, [datasets, verifiedStructures]);
+  }, [datasets, editor.verifiedStructures]);
 
   const handleChangeViewMode = (next: ViewMode) => {
     setViewMode(next);
@@ -477,21 +230,8 @@ export function App() {
       if (tab === 'editor') {
         setTab('terrain');
       }
-      if (forestScenario !== 'actual') {
-        setForestScenario('actual');
-      }
-      if (drainCondition === 'surge') {
-        setDrainCondition('clogged');
-      }
-      if (editingWaterway) {
-        setEditingWaterway(null);
-      }
-      if (editingStructure) {
-        setEditingStructure(null);
-      }
-      if (editingJorong) {
-        setEditingJorong(null);
-      }
+      sim.resetForSimpleMode();
+      editor.resetEditorForSimpleMode();
       if (activeTool) {
         setActiveTool(null);
         setDrawVertices([]);
@@ -502,7 +242,7 @@ export function App() {
   const handleMapClick = (lngLat: [number, number]) => {
     if (!demClient) return;
     if (activeTool === 'raindrop') {
-      setRaindrop(demClient.traceRaindrop(lngLat[0], lngLat[1], verifiedWaterways));
+      setRaindrop(demClient.traceRaindrop(lngLat[0], lngLat[1], editor.verifiedWaterways));
       setActiveTool(null);
     } else if (activeTool === 'profileA') {
       setProfileResult(null);
@@ -518,7 +258,7 @@ export function App() {
     } else if (activeTool === 'drawWaterway' || activeTool === 'redrawWaterway' || activeTool === 'drawJorong') {
       setDrawVertices(prev => [...prev, lngLat]);
     } else if (activeTool === 'placeStructure') {
-      setEditingStructure({
+      editor.setEditingStructure({
         id: null,
         name: '',
         kind: 'culvert',
@@ -530,65 +270,6 @@ export function App() {
         coordinates: lngLat
       });
       setActiveTool(null);
-    }
-  };
-
-  const refreshSqliteState = async () => {
-    const [wwState, logs] = await Promise.all([fetchWaterwaysState(), fetchAuditLogs()]);
-    setVerifiedWaterways(wwState.waterways);
-    setVerifiedStructures(wwState.structures);
-    setJorongBoundaries(wwState.jorongBoundaries);
-    setSuppressedDem(wwState.suppressedDem);
-    setHydroStatus(wwState.hydroStatus);
-    setAuditLogs(logs);
-  };
-
-  const handleRecomputeHydrology = async () => {
-    setRecomputingHydro(true);
-    try {
-      const res = await recomputeHydrology({ actor: actorName, carveDepthM: 3.5 });
-      const nextVer = Date.now();
-      const [metaRes, flowRes, draftRes, sfRes, logs] = await Promise.all([
-        fetch(`/data/metadata.json?v=${nextVer}`),
-        fetch(`/data/flow-paths.geojson?v=${nextVer}`),
-        fetch(`/data/drainage-draft.geojson?v=${nextVer}`),
-        fetch(`/data/sim-fields.json?v=${nextVer}`),
-        fetchAuditLogs()
-      ]);
-      if (metaRes.ok && flowRes.ok && draftRes.ok) {
-        const [nextMeta, nextFlows, nextDraft, nextSf] = await Promise.all([
-          metaRes.json(),
-          flowRes.json(),
-          draftRes.json(),
-          sfRes.ok ? sfRes.json() : Promise.resolve(null)
-        ]);
-        setMetadata(nextMeta as DatasetMetadata);
-        if (nextSf) setSimFields(nextSf as SimFieldsData);
-        setDatasets(prev =>
-          prev
-            ? {
-                ...prev,
-                flowPaths: nextFlows,
-                drainageDraft: nextDraft
-              }
-            : prev
-        );
-      }
-      setVerifiedWaterways(res.state.waterways.features);
-      setVerifiedStructures(res.state.structures?.features || []);
-      setSuppressedDem(res.state.suppressedDem);
-      setHydroStatus(res.hydroStatus);
-      setAuditLogs(logs);
-      setDataVersion(nextVer);
-      notify(
-        lang === 'en'
-          ? `DEM updated (${res.summary.burnedCellCount} cells adjusted) & flow/HAND maps recomputed.`
-          : `DEM berhasil diperbarui (${res.summary.burnedCellCount} sel disesuaikan) & peta aliran/HAND dihitung ulang.`
-      );
-    } catch (err) {
-      notify(err instanceof Error ? err.message : 'Hydrology recompute failed');
-    } finally {
-      setRecomputingHydro(false);
     }
   };
 
@@ -629,40 +310,16 @@ export function App() {
           ['drainage', t.tabDrainage, MapPin]
         ] as const);
 
-  const suppressedDemIds = useMemo(() => suppressedDem.map(s => s.seg_id), [suppressedDem]);
   const effectiveLayers = useMemo<LayerToggles>(
     () =>
       tab === 'sim'
         ? {
             ...layers,
-            verifiedWaterways: simShowVerifiedWaterways,
-            agamRbiRivers: simShowRbiRivers
+            verifiedWaterways: sim.simShowVerifiedWaterways,
+            agamRbiRivers: sim.simShowRbiRivers
           }
         : layers,
-    [tab, layers, simShowVerifiedWaterways, simShowRbiRivers]
-  );
-  const mapEditingWaterway = useMemo(
-    () =>
-      editingWaterway
-        ? {
-            id: editingWaterway.id,
-            coordinates: editingWaterway.coordinates,
-            sourceRef: editingWaterway.sourceRef
-          }
-        : null,
-    [editingWaterway?.id, editingWaterway?.coordinates, editingWaterway?.sourceRef]
-  );
-
-  const mapEditingStructure = useMemo(
-    () =>
-      editingStructure
-        ? {
-            id: editingStructure.id,
-            coordinates: editingStructure.coordinates,
-            sourceRef: editingStructure.sourceRef
-          }
-        : null,
-    [editingStructure?.id, editingStructure?.coordinates, editingStructure?.sourceRef]
+    [tab, layers, sim.simShowVerifiedWaterways, sim.simShowRbiRivers]
   );
 
   const mobileHeightClass =
@@ -687,157 +344,48 @@ export function App() {
           layers={effectiveLayers}
           flowDensity={flowDensity}
           activeTool={activeTool}
-          simRain={simRain}
-          simDurationMin={simDurationMin}
-          simProgress={simProgress}
-          simScenario={drainCondition === 'cleared' ? 'cleared' : 'clogged'}
-          rainAnimEnabled={rainAnimEnabled}
-          cascadeEngine={cascadeEngine}
-          cascadeParams={cascadeParams}
+          simRain={sim.simRain}
+          simDurationMin={sim.simDurationMin}
+          simProgress={sim.simProgress}
+          simScenario={sim.drainCondition === 'cleared' ? 'cleared' : 'clogged'}
+          rainAnimEnabled={sim.rainAnimEnabled}
+          cascadeEngine={sim.cascadeEngine}
+          cascadeParams={sim.cascadeParams}
           drainFilter={drainFilter}
           raindrop={raindrop}
           profilePts={profilePts}
           profileHover={profileHover}
-          verifiedWaterways={verifiedWaterways}
-          verifiedStructures={verifiedStructures}
-          jorongBoundaries={jorongBoundaries}
-          suppressedDemIds={suppressedDemIds}
-          dataVersion={dataVersion}
-          apiAvailable={apiAvailable}
-          requiresPassphrase={requiresPassphrase}
-          editorUnlocked={editorUnlocked}
-          editingWaterway={mapEditingWaterway}
-          editingStructure={mapEditingStructure}
+          verifiedWaterways={editor.verifiedWaterways}
+          verifiedStructures={editor.verifiedStructures}
+          jorongBoundaries={editor.jorongBoundaries}
+          suppressedDemIds={editor.suppressedDemIds}
+          dataVersion={editor.dataVersion}
+          apiAvailable={editor.apiAvailable}
+          requiresPassphrase={editor.requiresPassphrase}
+          editorUnlocked={editor.editorUnlocked}
+          editingWaterway={editor.mapEditingWaterway}
+          editingStructure={editor.mapEditingStructure}
           drawVertices={drawVertices}
           flyRequest={flyRequest}
           controlRef={mapControlRef}
           onCameraChange={setMapCamera}
           onSelectJorongPill={setCameraPreset}
           onMapClick={handleMapClick}
-          onOpenUnlock={() => setUnlockModalOpen(true)}
-          onSelectWaterway={feat => {
-            setViewMode('detail');
-            setTab('editor');
-            setEditorSubTab('waterways');
-            setEditingWaterway({
-              id: feat.properties.id,
-              name: feat.properties.name,
-              kind: feat.properties.kind,
-              status: feat.properties.status,
-              source: feat.properties.source,
-              sourceRef: feat.properties.source_ref,
-              notes: feat.properties.notes,
-              widthPreM: feat.properties.width_pre_m ?? null,
-              widthPostM: feat.properties.width_post_m ?? null,
-              depthM: feat.properties.depth_m ?? null,
-              coordinates: feat.geometry.coordinates.map(c => [c[0], c[1]])
-            });
-          }}
-          onSelectStructure={feat => {
-            setViewMode('detail');
-            setTab('editor');
-            setEditorSubTab('structures');
-            setEditingStructure({
-              id: feat.properties.id,
-              name: feat.properties.name,
-              kind: feat.properties.kind,
-              status: feat.properties.status,
-              source: feat.properties.source,
-              sourceRef: feat.properties.source_ref,
-              sizeNote: feat.properties.size_note,
-              notes: feat.properties.notes,
-              coordinates: [feat.geometry.coordinates[0], feat.geometry.coordinates[1]]
-            });
-          }}
-          onVerifyCrossing={(draftId, coords, suggestedName, suggestedKind) => {
-            setViewMode('detail');
-            setTab('editor');
-            setEditorSubTab('structures');
-            setEditingStructure({
-              id: null,
-              name: suggestedName,
-              kind: suggestedKind,
-              status: 'normal',
-              source: 'crossing_promoted',
-              sourceRef: draftId,
-              sizeNote: '',
-              notes: '',
-              coordinates: coords
-            });
-          }}
+          onOpenUnlock={() => editor.setUnlockModalOpen(true)}
+          onSelectWaterway={editor.selectWaterwayFromMap}
+          onSelectStructure={editor.selectStructureFromMap}
+          onVerifyCrossing={editor.verifyCrossingFromMap}
           onMoveEditingStructure={coords => {
-            setEditingStructure(prev => (prev ? { ...prev, coordinates: coords } : prev));
+            editor.setEditingStructure(prev => (prev ? { ...prev, coordinates: coords } : prev));
           }}
-          onPromoteDemSegment={(segId, coords) => {
-            setViewMode('detail');
-            setTab('editor');
-            setEditorSubTab('waterways');
-            const oriented = demClient
-              ? orientCoordinatesDownhill(coords, (x, y) => demClient.getElevation(x, y)).coordinates
-              : coords;
-            setEditingWaterway({
-              id: null,
-              name: `Alur Koreksi (${segId})`,
-              kind: 'stream',
-              status: 'normal',
-              source: 'dem_promoted',
-              sourceRef: segId,
-              notes: '',
-              coordinates: oriented
-            });
-          }}
-          onPromoteRbiRiver={(name, kind, coords) => {
-            setViewMode('detail');
-            setTab('editor');
-            setEditorSubTab('waterways');
-            const oriented = demClient
-              ? orientCoordinatesDownhill(coords, (x, y) => demClient.getElevation(x, y)).coordinates
-              : coords;
-            setEditingWaterway({
-              id: null,
-              name,
-              kind,
-              status: 'normal',
-              source: 'manual',
-              sourceRef: null,
-              notes: 'Sumber awal: Pemkab Agam RBI 1:50.000',
-              coordinates: oriented
-            });
-          }}
-          onRedrawDemSegment={segId => {
-            setViewMode('detail');
-            setTab('editor');
-            setEditorSubTab('waterways');
-            setEditingWaterway({
-              id: null,
-              name: `Alur Koreksi (${segId})`,
-              kind: 'stream',
-              status: 'normal',
-              source: 'dem_promoted',
-              sourceRef: segId,
-              notes: '',
-              coordinates: []
-            });
-            setDrawVertices([]);
-            setActiveTool('redrawWaterway');
-          }}
-          onSuppressDemSegment={async segId => {
-            try {
-              await suppressDemSegment({
-                seg_id: segId,
-                reason: 'Ditandai keliru langsung dari peta',
-                actor: actorName
-              });
-              await refreshSqliteState();
-              notify(lang === 'en' ? `Hidden DEM segment ${segId}` : `Segmen ${segId} disembunyikan & dicatat`);
-            } catch (err) {
-              notify(err instanceof Error ? err.message : 'Failed to suppress');
-            }
-          }}
+          onPromoteDemSegment={editor.promoteDemSegmentFromMap}
+          onPromoteRbiRiver={editor.promoteRbiRiverFromMap}
+          onRedrawDemSegment={editor.redrawDemSegmentFromMap}
+          onSuppressDemSegment={editor.suppressDemSegmentFromMap}
           onChangeEditingCoords={coords => {
-            setEditingWaterway(prev => (prev ? { ...prev, coordinates: coords } : prev));
+            editor.setEditingWaterway(prev => (prev ? { ...prev, coordinates: coords } : prev));
           }}
-          onSnapFeedback={msg => notify(msg)}
+          onSnapFeedback={notify}
           onCursorTelemetry={setCursorTelemetry}
         />
       ) : (
@@ -852,10 +400,10 @@ export function App() {
 
       {/* Falling Rain Animation Overlay during Simulation */}
       <RainOverlay
-        active={tab === 'sim' && rainAnimEnabled && simProgress > 0.02}
-        intensityMmHr={simRain}
-        rainPattern={rainPattern}
-        uplandBbox={uplandBbox}
+        active={tab === 'sim' && sim.rainAnimEnabled && sim.simProgress > 0.02}
+        intensityMmHr={sim.simRain}
+        rainPattern={sim.rainPattern}
+        uplandBbox={sim.uplandBbox}
         mapControlRef={mapControlRef}
       />
 
@@ -938,7 +486,7 @@ export function App() {
                     setActiveTool(null);
                     setDrawVertices([]);
                   }
-                  if (id !== 'sim') setSimPlaying(false);
+                  if (id !== 'sim') sim.setSimPlaying(false);
                 }}
                 className={`flex min-h-[44px] flex-col items-center justify-center gap-0.5 rounded-lg py-1.5 text-center text-[12px] leading-tight font-bold transition ${
                   active
@@ -1016,75 +564,36 @@ export function App() {
             <SimulationTab
               lang={lang}
               viewMode={viewMode}
-              playing={simPlaying}
-              rainMm={simRain}
-              durationMin={simDurationMin}
-              progress={simProgress}
-              soilMoisture={soilMoisture}
-              rainPattern={rainPattern}
-              drainCondition={drainCondition}
-              forestScenario={forestScenario}
+              playing={sim.simPlaying}
+              rainMm={sim.simRain}
+              durationMin={sim.simDurationMin}
+              progress={sim.simProgress}
+              soilMoisture={sim.soilMoisture}
+              rainPattern={sim.rainPattern}
+              drainCondition={sim.drainCondition}
+              forestScenario={sim.forestScenario}
               forestActualPct={metadata?.landCoverStats?.forestPct ?? 74}
-              rainAnimEnabled={rainAnimEnabled}
-              showVerifiedWaterways={simShowVerifiedWaterways}
-              showRbiRivers={simShowRbiRivers}
-              verifiedIssueCount={verifiedIssueCount}
-              verifiedWaterways={verifiedWaterways}
+              rainAnimEnabled={sim.rainAnimEnabled}
+              showVerifiedWaterways={sim.simShowVerifiedWaterways}
+              showRbiRivers={sim.simShowRbiRivers}
+              verifiedIssueCount={editor.verifiedIssueCount}
+              verifiedWaterways={editor.verifiedWaterways}
               demClient={demClient}
               agamStats={metadata?.agamStats}
-              kpis={cascadeKpis}
-              onTogglePlay={() => {
-                if (simPlaying) {
-                  setSimPlaying(false);
-                } else {
-                  if (simProgress >= 1) setSimProgress(0);
-                  setSimPlaying(true);
-                }
-              }}
-              onResetSim={() => {
-                setSimPlaying(false);
-                setSimProgress(0);
-              }}
-              onChangeProgress={p => {
-                setSimPlaying(false);
-                setSimProgress(p);
-              }}
-              onChangeRain={setSimRain}
-              onChangeDuration={setSimDurationMin}
-              onChangeSoilMoisture={setSoilMoisture}
-              onChangeRainPattern={setRainPattern}
-              onChangeDrainCondition={setDrainCondition}
-              onChangeForestScenario={setForestScenario}
-              onApplyPreset={preset => {
-                setSimPlaying(false);
-                if (preset === 'normal') {
-                  setSimRain(25);
-                  setSimDurationMin(90);
-                  setSoilMoisture('dry');
-                  setRainPattern('uniform');
-                  setDrainCondition('cleared');
-                  setForestScenario('actual');
-                } else if (preset === 'upland') {
-                  setSimRain(80);
-                  setSimDurationMin(180);
-                  setSoilMoisture('saturated');
-                  setRainPattern('upland');
-                  setDrainCondition('clogged');
-                  setForestScenario('actual');
-                } else {
-                  setSimRain(120);
-                  setSimDurationMin(180);
-                  setSoilMoisture('saturated');
-                  setRainPattern('upland');
-                  setDrainCondition(viewMode === 'detail' ? 'surge' : 'clogged');
-                  setForestScenario('actual');
-                }
-                setSimProgress(0.05);
-                setSimPlaying(true);
-              }}
-              onToggleRainAnim={setRainAnimEnabled}
-              onToggleVerifiedWaterways={setSimShowVerifiedWaterways}
-              onToggleRbiRivers={setSimShowRbiRivers}
+              kpis={sim.cascadeKpis}
+              onTogglePlay={sim.togglePlay}
+              onResetSim={sim.resetSim}
+              onChangeProgress={sim.changeProgress}
+              onChangeRain={sim.setSimRain}
+              onChangeDuration={sim.setSimDurationMin}
+              onChangeSoilMoisture={sim.setSoilMoisture}
+              onChangeRainPattern={sim.setRainPattern}
+              onChangeDrainCondition={sim.setDrainCondition}
+              onChangeForestScenario={sim.setForestScenario}
+              onApplyPreset={preset => sim.applyPreset(preset, viewMode)}
+              onToggleRainAnim={sim.setRainAnimEnabled}
+              onToggleVerifiedWaterways={sim.setSimShowVerifiedWaterways}
+              onToggleRbiRivers={sim.setSimShowRbiRivers}
             />
           )}
 
@@ -1120,333 +629,24 @@ export function App() {
             <EditorTab
               lang={lang}
               demClient={demClient}
-              subTab={editorSubTab}
-              onChangeSubTab={sub => {
-                setEditorSubTab(sub);
-                if (activeTool) {
-                  setActiveTool(null);
-                  setDrawVertices([]);
-                }
-              }}
+              subTab={editor.editorSubTab}
               activeTool={activeTool}
               onNotify={notify}
-              apiAvailable={apiAvailable}
-              editorUnlocked={editorUnlocked}
-              requiresPassphrase={requiresPassphrase}
-              actorName={actorName}
-              onChangeActorName={name => {
-                setActorName(name);
-                saveEditorName(name);
-              }}
-              onOpenUnlock={() => setUnlockModalOpen(true)}
-              onLockEditor={() => {
-                saveStoredPassphrase('');
-                setEditorUnlocked(false);
-                setEditingWaterway(null);
-                setEditingStructure(null);
-                setEditingJorong(null);
-              }}
-              verifiedWaterways={verifiedWaterways}
-              verifiedStructures={verifiedStructures}
-              jorongBoundaries={jorongBoundaries}
-              suppressedDem={suppressedDem}
-              editingWaterway={editingWaterway}
-              editingStructure={editingStructure}
-              editingJorong={editingJorong}
-              hydroStatus={hydroStatus}
-              recomputingHydro={recomputingHydro}
-              onStartDrawWaterway={() => {
-                setEditingWaterway(null);
-                setDrawVertices([]);
-                setActiveTool(prev => (prev === 'drawWaterway' ? null : 'drawWaterway'));
-              }}
-              onStartEditWaterway={feat => {
-                setEditingWaterway({
-                  id: feat.properties.id,
-                  name: feat.properties.name,
-                  kind: feat.properties.kind,
-                  status: feat.properties.status,
-                  source: feat.properties.source,
-                  sourceRef: feat.properties.source_ref,
-                  notes: feat.properties.notes,
-                  widthPreM: feat.properties.width_pre_m ?? null,
-                  widthPostM: feat.properties.width_post_m ?? null,
-                  depthM: feat.properties.depth_m ?? null,
-                  coordinates: feat.geometry.coordinates.map(c => [c[0], c[1]])
-                });
-                const mid = feat.geometry.coordinates[Math.floor(feat.geometry.coordinates.length / 2)];
-                if (mid) flyTo(mid, { zoom: 15.6 });
-              }}
-              onStartRedrawEditing={() => {
-                setDrawVertices([]);
-                setActiveTool(prev => (prev === 'redrawWaterway' ? null : 'redrawWaterway'));
-              }}
-              onFlipEditingDirection={() => {
-                setEditingWaterway(prev => {
-                  if (!prev || prev.coordinates.length < 2) return prev;
-                  return { ...prev, coordinates: [...prev.coordinates].reverse() };
-                });
-                notify(lang === 'en' ? 'Flow direction flipped.' : 'Arah aliran dibalik (Hulu ↔ Hilir).');
-              }}
-              onUpdateEditingCoords={coords => {
-                setEditingWaterway(prev => (prev ? { ...prev, coordinates: coords } : prev));
-              }}
-              onCancelWaterwayEdit={() => {
-                setEditingWaterway(null);
-                if (activeTool === 'redrawWaterway') {
-                  setActiveTool(null);
-                  setDrawVertices([]);
-                }
-              }}
-              onSaveWaterway={async (draft, reason) => {
-                try {
-                  if (draft.id) {
-                    await updateWaterway(draft.id, {
-                      name: draft.name,
-                      kind: draft.kind,
-                      status: draft.status,
-                      notes: draft.notes,
-                      width_pre_m: draft.widthPreM ?? null,
-                      width_post_m: draft.widthPostM ?? null,
-                      depth_m: draft.depthM ?? null,
-                      coordinates: draft.coordinates,
-                      actor: actorName,
-                      reason
-                    });
-                  } else {
-                    await createWaterway({
-                      name: draft.name,
-                      kind: draft.kind,
-                      status: draft.status,
-                      source: draft.source,
-                      source_ref: draft.sourceRef || null,
-                      notes: draft.notes,
-                      width_pre_m: draft.widthPreM ?? null,
-                      width_post_m: draft.widthPostM ?? null,
-                      depth_m: draft.depthM ?? null,
-                      coordinates: draft.coordinates,
-                      actor: actorName,
-                      reason
-                    });
-                  }
-                  setEditingWaterway(null);
-                  await refreshSqliteState();
-                  notify(lang === 'en' ? 'Waterway saved & logged.' : 'Jalur sungai tersimpan & dicatat di Riwayat.');
-                } catch (err) {
-                  notify(err instanceof Error ? err.message : 'Save failed');
-                }
-              }}
-              onDeleteWaterway={async (id, reason) => {
-                try {
-                  await deleteWaterway(id, { actor: actorName, reason });
-                  setEditingWaterway(null);
-                  await refreshSqliteState();
-                  notify(lang === 'en' ? 'Waterway removed & logged.' : 'Jalur dihapus & dicatat di Riwayat.');
-                } catch (err) {
-                  notify(err instanceof Error ? err.message : 'Delete failed');
-                }
-              }}
-              onRestoreDem={async segId => {
-                try {
-                  await restoreDemSegment(segId, { actor: actorName, reason: 'Pulihkan segmen DEM' });
-                  await refreshSqliteState();
-                  notify(lang === 'en' ? `Restored ${segId}` : `Segmen ${segId} dipulihkan`);
-                } catch (err) {
-                  notify(err instanceof Error ? err.message : 'Restore failed');
-                }
-              }}
-              onRecomputeHydrology={handleRecomputeHydrology}
-              onFlyToWaterway={feat => {
-                const mid = feat.geometry.coordinates[Math.floor(feat.geometry.coordinates.length / 2)];
-                if (mid) flyTo(mid, { zoom: 15.6 });
-              }}
-              onStartPlaceStructure={() => {
-                setEditingStructure(null);
-                setActiveTool(prev => (prev === 'placeStructure' ? null : 'placeStructure'));
-              }}
-              onStartEditStructure={feat => {
-                setEditingStructure({
-                  id: feat.properties.id,
-                  name: feat.properties.name,
-                  kind: feat.properties.kind,
-                  status: feat.properties.status,
-                  source: feat.properties.source,
-                  sourceRef: feat.properties.source_ref,
-                  sizeNote: feat.properties.size_note,
-                  notes: feat.properties.notes,
-                  coordinates: [feat.geometry.coordinates[0], feat.geometry.coordinates[1]]
-                });
-                flyTo(feat.geometry.coordinates, { zoom: 16.0 });
-              }}
-              onCancelStructureEdit={() => {
-                setEditingStructure(null);
-                if (activeTool === 'placeStructure') setActiveTool(null);
-              }}
-              onSaveStructure={async (draft, reason) => {
-                try {
-                  if (draft.id) {
-                    await updateStructure(draft.id, {
-                      name: draft.name,
-                      kind: draft.kind,
-                      status: draft.status,
-                      size_note: draft.sizeNote,
-                      notes: draft.notes,
-                      coordinates: draft.coordinates,
-                      actor: actorName,
-                      reason
-                    });
-                  } else {
-                    await createStructure({
-                      name: draft.name,
-                      kind: draft.kind,
-                      status: draft.status,
-                      source: draft.source,
-                      source_ref: draft.sourceRef || null,
-                      size_note: draft.sizeNote,
-                      notes: draft.notes,
-                      coordinates: draft.coordinates,
-                      actor: actorName,
-                      reason
-                    });
-                  }
-                  setEditingStructure(null);
-                  await refreshSqliteState();
-                  notify(
-                    lang === 'en'
-                      ? 'Structure saved & logged.'
-                      : 'Titik gorong-gorong tersimpan & dicatat di Riwayat.'
-                  );
-                } catch (err) {
-                  notify(err instanceof Error ? err.message : 'Save failed');
-                }
-              }}
-              onDeleteStructure={async (id, reason) => {
-                try {
-                  await deleteStructure(id, { actor: actorName, reason });
-                  setEditingStructure(null);
-                  await refreshSqliteState();
-                  notify(lang === 'en' ? 'Structure removed & logged.' : 'Titik dihapus & dicatat di Riwayat.');
-                } catch (err) {
-                  notify(err instanceof Error ? err.message : 'Delete failed');
-                }
-              }}
-              onFlyToStructure={feat => {
-                flyTo(feat.geometry.coordinates, { zoom: 16.0 });
-              }}
-              onStartDrawJorong={() => {
-                setEditingJorong(null);
-                setDrawVertices([]);
-                setActiveTool(prev => (prev === 'drawJorong' ? null : 'drawJorong'));
-              }}
-              onImportJorongPolygon={(name, ring) => {
-                setEditingJorong({
-                  id: null,
-                  name,
-                  status: 'indicative',
-                  sourceNote: 'Impor GeoJSON',
-                  coordinates: ring
-                });
-                const mid = ring[Math.floor(ring.length / 2)];
-                if (mid) flyTo(mid, { zoom: 14.8 });
-              }}
-              onStartEditJorong={feat => {
-                const ring = feat.geometry.coordinates[0] || [];
-                setEditingJorong({
-                  id: feat.properties.id,
-                  name: feat.properties.name,
-                  status: feat.properties.status,
-                  sourceNote: feat.properties.source_note,
-                  coordinates: ring.map(c => [c[0], c[1]])
-                });
-                const mid = ring[Math.floor(ring.length / 2)];
-                if (mid) flyTo(mid, { zoom: 14.8 });
-              }}
-              onCancelJorongEdit={() => {
-                setEditingJorong(null);
-                if (activeTool === 'drawJorong') {
-                  setActiveTool(null);
-                  setDrawVertices([]);
-                }
-              }}
-              onSaveJorong={async (draft, reason) => {
-                try {
-                  if (draft.id) {
-                    await updateJorongBoundary(draft.id, {
-                      name: draft.name,
-                      status: draft.status,
-                      source_note: draft.sourceNote,
-                      coordinates: draft.coordinates,
-                      actor: actorName,
-                      reason
-                    });
-                  } else {
-                    await createJorongBoundary({
-                      name: draft.name,
-                      status: draft.status,
-                      source_note: draft.sourceNote,
-                      coordinates: draft.coordinates,
-                      actor: actorName,
-                      reason
-                    });
-                  }
-                  setEditingJorong(null);
-                  await refreshSqliteState();
-                  notify(lang === 'en' ? 'Jorong boundary saved & logged.' : 'Batas Jorong tersimpan & dicatat.');
-                } catch (err) {
-                  notify(err instanceof Error ? err.message : 'Save failed');
-                }
-              }}
-              onDeleteJorong={async (id, reason) => {
-                try {
-                  await deleteJorongBoundary(id, { actor: actorName, reason });
-                  setEditingJorong(null);
-                  await refreshSqliteState();
-                  notify(lang === 'en' ? 'Jorong boundary removed.' : 'Batas Jorong dihapus.');
-                } catch (err) {
-                  notify(err instanceof Error ? err.message : 'Delete failed');
-                }
-              }}
-              onFlyToJorong={feat => {
-                const ring = feat.geometry.coordinates[0] || [];
-                const mid = ring[Math.floor(ring.length / 2)];
-                if (mid) flyTo(mid, { zoom: 14.8 });
-              }}
-              auditLogs={auditLogs}
-              onRevertAuditLog={async logId => {
-                try {
-                  await revertAuditLog(logId, {
-                    actor: actorName,
-                    reason: lang === 'en' ? `Revert log #${logId}` : `Pulihkan perubahan #${logId}`
-                  });
-                  setEditingWaterway(null);
-                  setEditingStructure(null);
-                  setEditingJorong(null);
-                  await refreshSqliteState();
-                  notify(lang === 'en' ? `Reverted #${logId}` : `Perubahan #${logId} berhasil dipulihkan`);
-                } catch (err) {
-                  notify(err instanceof Error ? err.message : 'Revert failed');
-                }
-              }}
-              onFlyToAuditLog={log => {
-                const snap = (log.after || log.before) as {
-                  coordinates?: [number, number][] | [number, number];
-                  lng?: number;
-                  lat?: number;
-                } | null;
-                if (snap) {
-                  if (typeof snap.lng === 'number' && typeof snap.lat === 'number') {
-                    flyTo([snap.lng, snap.lat], { zoom: 16.0 });
-                  } else if (Array.isArray(snap.coordinates) && snap.coordinates.length > 0) {
-                    if (typeof snap.coordinates[0] === 'number' && typeof snap.coordinates[1] === 'number') {
-                      flyTo(snap.coordinates as [number, number], { zoom: 16.0 });
-                    } else {
-                      const line = snap.coordinates as [number, number][];
-                      const mid = line[Math.floor(line.length / 2)];
-                      if (mid) flyTo(mid, { zoom: 15.6 });
-                    }
-                  }
-                }
-              }}
+              apiAvailable={editor.apiAvailable}
+              editorUnlocked={editor.editorUnlocked}
+              requiresPassphrase={editor.requiresPassphrase}
+              actorName={editor.actorName}
+              verifiedWaterways={editor.verifiedWaterways}
+              verifiedStructures={editor.verifiedStructures}
+              jorongBoundaries={editor.jorongBoundaries}
+              suppressedDem={editor.suppressedDem}
+              editingWaterway={editor.editingWaterway}
+              editingStructure={editor.editingStructure}
+              editingJorong={editor.editingJorong}
+              hydroStatus={editor.hydroStatus}
+              recomputingHydro={editor.recomputingHydro}
+              auditLogs={editor.auditLogs}
+              {...editor.editorTabActions}
             />
           )}
         </div>
@@ -1478,7 +678,7 @@ export function App() {
         onOpenFeedback={() => setFeedbackOpen(true)}
         onOpenInfo={() => setInfoModalTab('guide')}
       >
-        {tab === 'sim' && rainAnimEnabled && simProgress > 0.01 && rainPattern === 'upland' && (
+        {tab === 'sim' && sim.rainAnimEnabled && sim.simProgress > 0.01 && sim.rainPattern === 'upland' && (
           <div
             data-testid="upland-rain-pill"
             className="surface-panel pointer-events-none relative z-10 inline-flex items-center gap-2 rounded-full px-3.5 py-1.5 text-[12px] leading-none font-bold text-[#0369a1] max-md:hidden"
@@ -1495,7 +695,7 @@ export function App() {
           basemap={basemap}
           layers={effectiveLayers}
           flowDensity={flowDensity}
-          simProgress={simProgress}
+          simProgress={sim.simProgress}
           drainFilter={drainFilter}
           elevRange={metadata ? [metadata.minElevM, metadata.maxElevM] : undefined}
           landCoverStats={metadata?.landCoverStats}
@@ -1515,56 +715,7 @@ export function App() {
           {(activeTool === 'drawWaterway' || activeTool === 'redrawWaterway' || activeTool === 'drawJorong') && (
             <button
               type="button"
-              onClick={() => {
-                if (activeTool === 'drawJorong') {
-                  if (drawVertices.length < 3) {
-                    notify(lang === 'en' ? 'At least 3 vertices required for a polygon.' : 'Minimal 3 titik batas diperlukan untuk poligon Jorong.');
-                    return;
-                  }
-                  setEditingJorong({
-                    id: null,
-                    name: '',
-                    status: 'indicative',
-                    sourceNote: '',
-                    coordinates: [...drawVertices]
-                  });
-                  setDrawVertices([]);
-                  setActiveTool(null);
-                  return;
-                }
-                if (drawVertices.length < 2) {
-                  notify(t.toastNeed2Pts);
-                  return;
-                }
-                const oriented = demClient
-                  ? orientCoordinatesDownhill(drawVertices, (x, y) => demClient.getElevation(x, y))
-                  : { coordinates: [...drawVertices], reversed: false };
-                if (activeTool === 'redrawWaterway' && editingWaterway) {
-                  setEditingWaterway({
-                    ...editingWaterway,
-                    coordinates: oriented.coordinates
-                  });
-                } else {
-                  setEditingWaterway({
-                    id: null,
-                    name: '',
-                    kind: 'canal',
-                    status: 'normal',
-                    source: 'manual',
-                    notes: '',
-                    coordinates: oriented.coordinates
-                  });
-                }
-                if (oriented.reversed) {
-                  notify(
-                    lang === 'en'
-                      ? 'Auto-oriented downhill (upstream → downstream).'
-                      : 'Arah jalur otomatis disesuaikan ke hilir (hulu → hilir).'
-                  );
-                }
-                setDrawVertices([]);
-                setActiveTool(null);
-              }}
+              onClick={() => editor.finishDrawing(drawVertices)}
               className="rounded-full bg-[#047857] px-3 py-1 text-[12px] font-bold text-white"
             >
               {t.finishDraw}
@@ -1602,7 +753,7 @@ export function App() {
         basemap={basemap}
         layers={effectiveLayers}
         flowDensity={flowDensity}
-        simProgress={simProgress}
+        simProgress={sim.simProgress}
         drainFilter={drainFilter}
         elevRange={metadata ? [metadata.minElevM, metadata.maxElevM] : undefined}
         landCoverStats={metadata?.landCoverStats}
@@ -1611,8 +762,8 @@ export function App() {
         cursorTelemetry={cursorTelemetry}
         mapCamera={mapCamera}
         onToggleLayer={(key, val) => setLayers(prev => ({ ...prev, [key]: val }))}
-        onToggleSimVerifiedWaterways={setSimShowVerifiedWaterways}
-        onToggleSimRbiRivers={setSimShowRbiRivers}
+        onToggleSimVerifiedWaterways={sim.setSimShowVerifiedWaterways}
+        onToggleSimRbiRivers={sim.setSimShowRbiRivers}
         onChangeFlowDensity={setFlowDensity}
         onZoomIn={() => mapControlRef.current?.zoomIn()}
         onZoomOut={() => mapControlRef.current?.zoomOut()}
@@ -1623,7 +774,7 @@ export function App() {
       <FeedbackModal
         open={feedbackOpen}
         lang={lang}
-        apiAvailable={apiAvailable}
+        apiAvailable={editor.apiAvailable}
         onSubmit={async payload => {
           try {
             await createSuggestion({
@@ -1648,21 +799,21 @@ export function App() {
         initialTab={infoModalTab ?? 'guide'}
         lang={lang}
         metadata={metadata}
-        verifiedCount={verifiedWaterways.length}
+        verifiedCount={editor.verifiedWaterways.length}
         onClose={() => setInfoModalTab(null)}
       />
 
       <EditorUnlockModal
-        open={unlockModalOpen}
+        open={editor.unlockModalOpen}
         lang={lang}
-        requiresPassphrase={requiresPassphrase}
-        actorName={actorName}
-        onClose={() => setUnlockModalOpen(false)}
+        requiresPassphrase={editor.requiresPassphrase}
+        actorName={editor.actorName}
+        onClose={() => editor.setUnlockModalOpen(false)}
         onUnlocked={(pass, nextActor) => {
           saveStoredPassphrase(pass);
           saveEditorName(nextActor);
-          setActorName(nextActor);
-          setEditorUnlocked(true);
+          editor.setActorName(nextActor);
+          editor.setEditorUnlocked(true);
           notify(lang === 'en' ? 'Editor Mode unlocked.' : 'Mode Editor berhasil dibuka.');
         }}
       />
