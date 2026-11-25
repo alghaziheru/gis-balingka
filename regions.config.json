@@ -1,0 +1,250 @@
+{
+  "defaultRegionId": "nagari-balingka",
+  "regions": [
+    {
+      "id": "nagari-balingka",
+      "name": "Nagari Balingka",
+      "shortName": "Balingka",
+      "adminLevelLabel": { "id": "Nagari", "en": "Nagari" },
+      "subRegionLabel": { "id": "Jorong", "en": "Jorong" },
+      "district": "Kec. IV Koto",
+      "regency": "Kab. Agam",
+      "province": "Sumatera Barat",
+      "officialBoundaryCode": "13.06.05.2003",
+      "officialBoundaryNameMatch": "BALINGKA",
+      "appTitle": {
+        "id": "Peta Nagari Balingka",
+        "en": "Nagari Balingka Map"
+      },
+      "areaKm2": 29.9,
+      "uplandLandmark": {
+        "id": "Gunung Singgalang",
+        "en": "Mount Singgalang"
+      },
+      "mainRivers": ["Batang Ngalai", "Batang Tuhua"],
+      "bbox": {
+        "west": 100.278,
+        "south": -0.408,
+        "east": 100.345,
+        "north": -0.314
+      },
+      "defaultView": {
+        "center": [100.324686, -0.336166],
+        "zoom": 15.6
+      },
+      "dataCenter": [100.319, -0.345],
+      "cameraPresets": [
+        {
+          "id": "center",
+          "label": "Balingka",
+          "center": [100.324686, -0.336166],
+          "zoom": 15.6,
+          "pitch3D": 36,
+          "bearing3D": -12
+        },
+        {
+          "id": "subarang",
+          "label": "Subarang",
+          "center": [100.326183, -0.326062],
+          "zoom": 15.5,
+          "pitch3D": 34,
+          "bearing3D": -12
+        },
+        {
+          "id": "hilalang",
+          "label": "Koto Hilalang",
+          "center": [100.327863, -0.341817],
+          "zoom": 15.6,
+          "pitch3D": 34,
+          "bearing3D": -8
+        },
+        {
+          "id": "pahambatan",
+          "label": "Pahambatan",
+          "center": [100.319315, -0.339606],
+          "zoom": 15.6,
+          "pitch3D": 34,
+          "bearing3D": -10
+        }
+      ],
+      "subRegionSuggestions": [
+        "Jorong Pahambatan",
+        "Jorong Koto Hilalang",
+        "Jorong Subarang"
+      ],
+      "drainageFocus": {
+        "upland": {
+          "center": [100.322, -0.346],
+          "zoom": 14.4,
+          "pitch": 54,
+          "bearing": -20
+        },
+        "culverts": {
+          "center": [100.3248, -0.3365],
+          "zoom": 15.0,
+          "pitch": 35,
+          "bearing": -10
+        },
+        "facilities": {
+          "center": [100.325, -0.337],
+          "zoom": 15.0,
+          "pitch": 32,
+          "bearing": 0
+        }
+      },
+      "authorities": {
+        "bpbdLabel": "BPBD Kab. Agam",
+        "localOfficeId": "Kantor Wali Nagari Balingka & Wali Jorong",
+        "localOfficeEn": "Wali Nagari Balingka Office & Wali Jorong",
+        "localAuthorityShort": "Wali Nagari Balingka",
+        "defaultEditorName": "Relawan Balingka"
+      },
+      "regionalOverlays": {
+        "enabled": true,
+        "providerName": "Pemkab Agam",
+        "rbiAvailable": true,
+        "sentinelChangeAvailable": true,
+        "localDemFilename": "demnas-balingka.tif",
+        "bigRbiZipName": "Agam.zip",
+        "bigRbiGdbName": "RBI50K_AGAM_KUGI50_20221231.gdb",
+        "bigDesaGdbName": "BATASWILAYAH_DESA_20260601.gdb",
+        "bigRbiDasName": "MASANG KIRI"
+      },
+      "dataBasePath": "/data",
+      "dbFilename": "balingka.db",
+      "repositoryUrl": "https://github.com/alghaziheru/gis-balingka"
+    },
+    {
+      "id": "malalak-timur-utara",
+      "name": "Malalak Timur & Utara",
+      "shortName": "Malalak",
+      "adminLevelLabel": { "id": "Nagari", "en": "Nagari" },
+      "subRegionLabel": { "id": "Nagari / Jorong", "en": "Nagari / Hamlet" },
+      "district": "Kec. Malalak",
+      "regency": "Kab. Agam",
+      "province": "Sumatera Barat",
+      "officialBoundaryCode": "13.06.16.2001+2002",
+      "officialBoundaryNameMatch": "MALALAK",
+      "officialBoundaryCodes": [
+        "13.06.16.2001",
+        "13.06.16.2002"
+      ],
+      "appTitle": {
+        "id": "Peta Malalak Timur & Utara",
+        "en": "Malalak Timur & Utara Map"
+      },
+      "areaKm2": 54.6,
+      "uplandLandmark": {
+        "id": "Gunung Singgalang & Tandikat",
+        "en": "Mount Singgalang & Tandikat"
+      },
+      "mainRivers": ["Batang Malalak", "Batang Mangau"],
+      "bbox": {
+        "west": 100.226,
+        "south": -0.434,
+        "east": 100.338,
+        "north": -0.345
+      },
+      "defaultView": {
+        "center": [100.2761, -0.39453],
+        "zoom": 15.2
+      },
+      "dataCenter": [100.276, -0.392],
+      "cameraPresets": [
+        {
+          "id": "center",
+          "label": "Malalak Timur & Utara",
+          "center": [100.2761, -0.39453],
+          "zoom": 15.2,
+          "pitch3D": 36,
+          "bearing3D": -12
+        },
+        {
+          "id": "malalak-timur",
+          "label": "Malalak Timur",
+          "center": [100.2761, -0.39453],
+          "zoom": 15.2,
+          "pitch3D": 36,
+          "bearing3D": -12
+        },
+        {
+          "id": "malalak-utara",
+          "label": "Malalak Utara",
+          "center": [100.26746, -0.3906],
+          "zoom": 15.2,
+          "pitch3D": 34,
+          "bearing3D": -12
+        },
+        {
+          "id": "limo-badak",
+          "label": "Limo Badak",
+          "center": [100.27666, -0.38623],
+          "zoom": 15.5,
+          "pitch3D": 34,
+          "bearing3D": -10
+        },
+        {
+          "id": "campago",
+          "label": "Campago",
+          "center": [100.27044, -0.3892],
+          "zoom": 15.5,
+          "pitch3D": 34,
+          "bearing3D": -10
+        },
+        {
+          "id": "bukik-malanca",
+          "label": "Bukik Malanca",
+          "center": [100.27359, -0.41621],
+          "zoom": 15.2,
+          "pitch3D": 34,
+          "bearing3D": -10
+        }
+      ],
+      "subRegionSuggestions": [
+        "Nagari Malalak Timur",
+        "Nagari Malalak Utara"
+      ],
+      "drainageFocus": {
+        "upland": {
+          "center": [100.305, -0.392],
+          "zoom": 13.8,
+          "pitch": 52,
+          "bearing": -20
+        },
+        "culverts": {
+          "center": [100.273, -0.393],
+          "zoom": 14.8,
+          "pitch": 35,
+          "bearing": -10
+        },
+        "facilities": {
+          "center": [100.273, -0.392],
+          "zoom": 14.6,
+          "pitch": 32,
+          "bearing": 0
+        }
+      },
+      "authorities": {
+        "bpbdLabel": "BPBD Kab. Agam",
+        "localOfficeId": "Kantor Wali Nagari Malalak Timur & Malalak Utara",
+        "localOfficeEn": "Wali Nagari Malalak Timur & Malalak Utara Offices",
+        "localAuthorityShort": "Wali Nagari Malalak Timur & Utara",
+        "defaultEditorName": "Relawan Malalak"
+      },
+      "regionalOverlays": {
+        "enabled": true,
+        "providerName": "Pemkab Agam",
+        "rbiAvailable": true,
+        "sentinelChangeAvailable": true,
+        "localDemFilename": "demnas-balingka.tif",
+        "bigRbiZipName": "Agam.zip",
+        "bigRbiGdbName": "RBI50K_AGAM_KUGI50_20221231.gdb",
+        "bigDesaGdbName": "BATASWILAYAH_DESA_20260601.gdb",
+        "bigRbiDasName": "MANGAU"
+      },
+      "dataBasePath": "/data/regions/malalak-timur-utara",
+      "dbFilename": "malalak-timur-utara.db",
+      "repositoryUrl": "https://github.com/alghaziheru/gis-balingka"
+    }
+  ]
+}

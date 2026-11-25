@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from 'react';
 import { Lock, Unlock, X } from 'lucide-react';
-import { I18N } from '../i18n/translations';
+import { useActiveRegion, useT } from '../context/RegionContext';
 import { verifyEditorPassphrase } from '../lib/api';
 import type { Language } from '../types/gis';
 
@@ -27,7 +27,8 @@ export function EditorUnlockModal({
   const [busy, setBusy] = useState(false);
 
   if (!open) return null;
-  const t = I18N[lang];
+  const region = useActiveRegion();
+  const t = useT(lang);
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -42,7 +43,7 @@ export function EditorUnlockModal({
           return;
         }
       }
-      onUnlocked(passphrase, name.trim() || 'Editor Balingka');
+      onUnlocked(passphrase, name.trim() || region.authorities.defaultEditorName);
       setPassphrase('');
       onClose();
     } finally {

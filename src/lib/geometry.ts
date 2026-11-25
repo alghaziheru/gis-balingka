@@ -1,4 +1,4 @@
-import type { DrainageStatus, GeoFeature, VerifiedWaterwayFeature, WaterwayKind } from '../types/gis';
+import type { DrainageStatus, GeoFeature, GeoFeatureCollection, VerifiedWaterwayFeature, WaterwayKind } from '../types/gis';
 
 const METERS_PER_DEG_LAT = 110540;
 
@@ -384,4 +384,43 @@ export function computeRunoffMergeNetwork(
   }
 
   return { confluences, mergedReaches, mergingFlowIds };
+}
+
+function pointInRing2D(pt: [number, number], ring: [number, number][]): boolean {
+  const [x, y] = pt;
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const xi = ring[i][0];
+    const yi = ring[i][1];
+    const xj = ring[j][0];
+    const yj = ring[j][1];
+    const intersect = yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi + 1e-12) + xi;
+    if (intersect) inside = !inside;
+  }
+  return inside;
+}
+
+function pointInPolygon2D(pt: [number, number], rings: [number, number][][]): boolean {
+  if (!Array.isArray(rings) || rings.length === 0) return false;
+  if (!pointInRing2D(pt, rings[0])) return false;
+  for (let k = 1; k < rings.length; k++) {
+    if (pointInRing2D(pt, rings[k])) return false;
+  }
+  return true;
+}
+
+export function isPointInBoundary(pt: [number, number], fc: GeoFeatureCollection | null | undefined): boolean {
+  const feats = fc?.features;
+  if (!feats || feats.length === 0) return true;
+  for (const f of feats) {
+    const g = f?.geometry as { type?: string; coordinates?: unknown } | undefined;
+    if (!g) continue;
+    if (g.type === 'Polygon' && pointInPolygon2D(pt, g.coordinates as [number, number][][])) return true;
+    if (g.type === 'MultiPolygon') {
+      for (const poly of (g.coordinates as [number, number][][][]) || []) {
+        if (pointInPolygon2D(pt, poly)) return true;
+      }
+    }
+  }
+  return false;
 }

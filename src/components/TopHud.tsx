@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Info, MessageSquare, Settings } from 'lucide-react';
-import { I18N } from '../i18n/translations';
+import { useT } from '../context/RegionContext';
 import type { BasemapId, Language, ViewMode } from '../types/gis';
 
 interface TopHudProps {
@@ -32,7 +32,7 @@ export function TopHud({
 }: TopHudProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
-  const t = I18N[lang];
+  const t = useT(lang);
   const isDetail = viewMode === 'detail';
 
   useEffect(() => {

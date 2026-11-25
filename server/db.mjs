@@ -22,11 +22,11 @@ function loadRegionConfig() {
 }
 
 const REGION_CFG = loadRegionConfig();
-const SUGGESTION_BOUNDS = {
-  west: Number(REGION_CFG?.bbox?.west ?? 100.278) - 0.03,
-  east: Number(REGION_CFG?.bbox?.east ?? 100.345) + 0.03,
-  south: Number(REGION_CFG?.bbox?.south ?? -0.408) - 0.03,
-  north: Number(REGION_CFG?.bbox?.north ?? -0.314) + 0.03
+const DEFAULT_COORD_BOUNDS = {
+  west: Math.min(99.5, Number(REGION_CFG?.bbox?.west ?? 100.278) - 1),
+  east: Math.max(101.5, Number(REGION_CFG?.bbox?.east ?? 100.345) + 1),
+  south: Math.min(-1.5, Number(REGION_CFG?.bbox?.south ?? -0.408) - 1),
+  north: Math.max(0.5, Number(REGION_CFG?.bbox?.north ?? -0.314) + 1)
 };
 const DEFAULT_REGION_NAME = String(REGION_CFG?.name || 'Nagari Balingka');
 
@@ -58,7 +58,7 @@ export function computeLineLengthMeters(coords) {
   return Math.round(len);
 }
 
-export function normalizeCoordinates(coords) {
+export function normalizeCoordinates(coords, bounds = DEFAULT_COORD_BOUNDS) {
   if (!Array.isArray(coords) || coords.length < 2) {
     throw new Error('Coordinates must contain at least 2 [lng, lat] pairs.');
   }
@@ -72,8 +72,8 @@ export function normalizeCoordinates(coords) {
     if (!Number.isFinite(lng) || !Number.isFinite(lat)) {
       throw new Error('Coordinates must contain finite numbers.');
     }
-    if (lng < 99.5 || lng > 101.5 || lat < -1.5 || lat > 0.5) {
-      throw new Error('Coordinates must stay within the Agam / Balingka region bounds.');
+    if (lng < bounds.west || lng > bounds.east || lat < bounds.south || lat > bounds.north) {
+      throw new Error('Coordinates must stay within the configured region bounds.');
     }
     clean.push([Number(lng.toFixed(6)), Number(lat.toFixed(6))]);
   }
@@ -95,14 +95,14 @@ function normalizeStructureKind(kind, fallback = 'culvert') {
   return VALID_STRUCTURE_KINDS.has(k) ? k : fallback;
 }
 
-function normalizePoint(lngInput, latInput) {
+function normalizePoint(lngInput, latInput, bounds = DEFAULT_COORD_BOUNDS) {
   const lng = Number(lngInput);
   const lat = Number(latInput);
   if (!Number.isFinite(lng) || !Number.isFinite(lat)) {
     throw new Error('Point coordinates must contain finite numbers.');
   }
-  if (lng < 99.5 || lng > 101.5 || lat < -1.5 || lat > 0.5) {
-    throw new Error('Coordinates must stay within the Agam / Balingka region bounds.');
+  if (lng < bounds.west || lng > bounds.east || lat < bounds.south || lat > bounds.north) {
+    throw new Error('Coordinates must stay within the configured region bounds.');
   }
   return [Number(lng.toFixed(6)), Number(lat.toFixed(6))];
 }
@@ -296,7 +296,15 @@ function parseLogRow(row) {
   };
 }
 
-export function createStore(dbPath = DEFAULT_DB_PATH, seedGeoJsonPath = DEFAULT_SEED_PATH) {
+export function createStore(dbPath = DEFAULT_DB_PATH, seedGeoJsonPath = DEFAULT_SEED_PATH, regionCfg = null) {
+  const activeRegion = regionCfg || REGION_CFG;
+  const regionName = String(activeRegion?.name || DEFAULT_REGION_NAME);
+  const suggestionBounds = {
+    west: Number(activeRegion?.bbox?.west ?? 100.278) - 0.03,
+    east: Number(activeRegion?.bbox?.east ?? 100.345) + 0.03,
+    south: Number(activeRegion?.bbox?.south ?? -0.408) - 0.03,
+    north: Number(activeRegion?.bbox?.north ?? -0.314) + 0.03
+  };
   if (dbPath !== ':memory:') {
     fs.mkdirSync(path.dirname(dbPath), { recursive: true });
   }
@@ -1430,12 +1438,12 @@ export function createStore(dbPath = DEFAULT_DB_PATH, seedGeoJsonPath = DEFAULT_
         if (
           !Number.isFinite(lng) ||
           !Number.isFinite(lat) ||
-          lng < SUGGESTION_BOUNDS.west ||
-          lng > SUGGESTION_BOUNDS.east ||
-          lat < SUGGESTION_BOUNDS.south ||
-          lat > SUGGESTION_BOUNDS.north
+          lng < suggestionBounds.west ||
+          lng > suggestionBounds.east ||
+          lat < suggestionBounds.south ||
+          lat > suggestionBounds.north
         ) {
-          throw new Error(`Suggestion coordinates must lie inside the ${DEFAULT_REGION_NAME} region bounds.`);
+          throw new Error(`Suggestion coordinates must lie inside the ${regionName} region bounds.`);
         }
         lng = Number(lng.toFixed(6));
         lat = Number(lat.toFixed(6));
@@ -1454,7 +1462,7 @@ export function createStore(dbPath = DEFAULT_DB_PATH, seedGeoJsonPath = DEFAULT_
         reporterName.slice(0, 80),
         contact,
         category,
-        (locationName || DEFAULT_REGION_NAME).slice(0, 140),
+        (locationName || regionName).slice(0, 140),
         message.slice(0, 1500),
         lng,
         lat

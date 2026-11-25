@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { LoadedDatasets } from '../components/MapView';
-import { REGION } from '../config/region';
+import { getRegionDataBasePath, REGION, type RegionConfig } from '../config/region';
 import { DemClient } from '../lib/demClient';
 import type { DatasetMetadata, DemGridData, SimFieldsData } from '../types/gis';
 
@@ -11,7 +11,7 @@ export interface CursorTelemetry {
   slope: number;
 }
 
-export function useRegionDatasets() {
+export function useRegionDatasets(region: RegionConfig = REGION) {
   const [datasets, setDatasets] = useState<LoadedDatasets | null>(null);
   const [metadata, setMetadata] = useState<DatasetMetadata | null>(null);
   const [demClient, setDemClient] = useState<DemClient | null>(null);
@@ -19,8 +19,16 @@ export function useRegionDatasets() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [initialTelemetry, setInitialTelemetry] = useState<CursorTelemetry | null>(null);
 
+  const dataBasePath = getRegionDataBasePath(region);
+
   useEffect(() => {
     let cancelled = false;
+    setDatasets(null);
+    setMetadata(null);
+    setDemClient(null);
+    setSimFields(null);
+    setLoadError(null);
+
     async function loadAll() {
       try {
         const [
@@ -29,6 +37,7 @@ export function useRegionDatasets() {
           maskRes,
           wsRes,
           nbRes,
+          sbRes,
           stRes,
           cntRes,
           flRes,
@@ -38,23 +47,24 @@ export function useRegionDatasets() {
           rbiRes,
           agamCtxRes
         ] = await Promise.all([
-          fetch('/data/metadata.json'),
-          fetch('/data/dem-grid.json'),
-          fetch('/data/mask.geojson'),
-          fetch('/data/watershed.geojson'),
-          fetch('/data/nagari-boundary.geojson'),
-          fetch('/data/settlements.geojson'),
-          fetch('/data/contours.geojson'),
-          fetch('/data/flow-paths.geojson'),
-          fetch('/data/osm-context.geojson'),
-          fetch('/data/drainage-draft.geojson'),
-          fetch('/data/sim-fields.json'),
-          fetch('/data/agam-rbi-rivers.geojson'),
-          fetch('/data/agam-context.json')
+          fetch(`${dataBasePath}/metadata.json`),
+          fetch(`${dataBasePath}/dem-grid.json`),
+          fetch(`${dataBasePath}/mask.geojson`),
+          fetch(`${dataBasePath}/watershed.geojson`),
+          fetch(`${dataBasePath}/nagari-boundary.geojson`),
+          fetch(`${dataBasePath}/sub-boundaries.geojson`),
+          fetch(`${dataBasePath}/settlements.geojson`),
+          fetch(`${dataBasePath}/contours.geojson`),
+          fetch(`${dataBasePath}/flow-paths.geojson`),
+          fetch(`${dataBasePath}/osm-context.geojson`),
+          fetch(`${dataBasePath}/drainage-draft.geojson`),
+          fetch(`${dataBasePath}/sim-fields.json`),
+          fetch(`${dataBasePath}/agam-rbi-rivers.geojson`),
+          fetch(`${dataBasePath}/agam-context.json`)
         ]);
 
         if (!metaRes.ok || !demRes.ok) {
-          throw new Error('Failed to load geospatial datasets from /data/');
+          throw new Error(`Failed to load geospatial datasets from ${dataBasePath}/`);
         }
 
         const emptyFc = { type: 'FeatureCollection' as const, features: [] };
@@ -64,6 +74,7 @@ export function useRegionDatasets() {
           mask,
           watershed,
           nagariBoundary,
+          subBoundaries,
           settlements,
           contours,
           flowPaths,
@@ -78,6 +89,7 @@ export function useRegionDatasets() {
           maskRes.json(),
           wsRes.json(),
           nbRes.ok ? nbRes.json() : Promise.resolve(emptyFc),
+          sbRes.ok ? sbRes.json() : Promise.resolve(emptyFc),
           stRes.ok ? stRes.json() : Promise.resolve(emptyFc),
           cntRes.json(),
           flRes.json(),
@@ -91,7 +103,8 @@ export function useRegionDatasets() {
         if (cancelled) return;
         const m = meta as DatasetMetadata;
         const client = new DemClient(demGrid as DemGridData);
-        const balingkaPlace = (
+        const matchName = region.shortName.trim().toLowerCase();
+        const regionPlace = (
           osmContext as {
             features?: Array<{
               geometry?: { type?: string; coordinates?: [number, number] };
@@ -102,9 +115,12 @@ export function useRegionDatasets() {
           f =>
             f.properties?.kind === 'place' &&
             f.geometry?.type === 'Point' &&
-            f.properties?.name?.trim().toLowerCase() === 'balingka'
+            f.properties?.name?.trim().toLowerCase() === matchName
         );
-        const initialCenter: [number, number] = balingkaPlace?.geometry?.coordinates ?? REGION.defaultView.center;
+        const initialCenter: [number, number] =
+          region.id === 'nagari-balingka'
+            ? regionPlace?.geometry?.coordinates ?? region.defaultView.center
+            : region.defaultView.center;
         setMetadata(m);
         setDemClient(client);
         setSimFields(sfData as SimFieldsData | null);
@@ -114,6 +130,7 @@ export function useRegionDatasets() {
           mask,
           watershed,
           nagariBoundary,
+          subBoundaries,
           settlements,
           contours,
           flowPaths,
@@ -136,35 +153,38 @@ export function useRegionDatasets() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [region.id, dataBasePath]);
 
-  const reloadHydrologyData = useCallback(async (nextVer: number) => {
-    const [metaRes, flowRes, draftRes, sfRes] = await Promise.all([
-      fetch(`/data/metadata.json?v=${nextVer}`),
-      fetch(`/data/flow-paths.geojson?v=${nextVer}`),
-      fetch(`/data/drainage-draft.geojson?v=${nextVer}`),
-      fetch(`/data/sim-fields.json?v=${nextVer}`)
-    ]);
-    if (metaRes.ok && flowRes.ok && draftRes.ok) {
-      const [nextMeta, nextFlows, nextDraft, nextSf] = await Promise.all([
-        metaRes.json(),
-        flowRes.json(),
-        draftRes.json(),
-        sfRes.ok ? sfRes.json() : Promise.resolve(null)
+  const reloadHydrologyData = useCallback(
+    async (nextVer: number) => {
+      const [metaRes, flowRes, draftRes, sfRes] = await Promise.all([
+        fetch(`${dataBasePath}/metadata.json?v=${nextVer}`),
+        fetch(`${dataBasePath}/flow-paths.geojson?v=${nextVer}`),
+        fetch(`${dataBasePath}/drainage-draft.geojson?v=${nextVer}`),
+        fetch(`${dataBasePath}/sim-fields.json?v=${nextVer}`)
       ]);
-      setMetadata(nextMeta as DatasetMetadata);
-      if (nextSf) setSimFields(nextSf as SimFieldsData);
-      setDatasets(prev =>
-        prev
-          ? {
-              ...prev,
-              flowPaths: nextFlows,
-              drainageDraft: nextDraft
-            }
-          : prev
-      );
-    }
-  }, []);
+      if (metaRes.ok && flowRes.ok && draftRes.ok) {
+        const [nextMeta, nextFlows, nextDraft, nextSf] = await Promise.all([
+          metaRes.json(),
+          flowRes.json(),
+          draftRes.json(),
+          sfRes.ok ? sfRes.json() : Promise.resolve(null)
+        ]);
+        setMetadata(nextMeta as DatasetMetadata);
+        if (nextSf) setSimFields(nextSf as SimFieldsData);
+        setDatasets(prev =>
+          prev
+            ? {
+                ...prev,
+                flowPaths: nextFlows,
+                drainageDraft: nextDraft
+              }
+            : prev
+        );
+      }
+    },
+    [dataBasePath]
+  );
 
   return {
     datasets,

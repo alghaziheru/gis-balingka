@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from 'react';
 import { Crosshair, Lock, Map, Pencil, Trash2, Unlock, Upload } from 'lucide-react';
-import { REGION } from '../config/region';
-import { I18N } from '../i18n/translations';
+import { useActiveRegion, useT } from '../context/RegionContext';
 import type { JorongBoundaryFeature, JorongBoundaryStatus, Language } from '../types/gis';
 
 export interface ActiveEditingJorong {
@@ -34,8 +33,6 @@ interface JorongEditorPanelProps {
   onNotify: (msg: string) => void;
 }
 
-const JORONG_SUGGESTIONS = REGION.subRegionSuggestions;
-
 export function JorongEditorPanel({
   lang,
   apiAvailable,
@@ -57,7 +54,9 @@ export function JorongEditorPanel({
   onFlyToJorong,
   onNotify
 }: JorongEditorPanelProps) {
-  const t = I18N[lang];
+  const region = useActiveRegion();
+  const JORONG_SUGGESTIONS = region.subRegionSuggestions;
+  const t = useT(lang);
   const isEn = lang === 'en';
   const [name, setName] = useState('');
   const [status, setStatus] = useState<JorongBoundaryStatus>('indicative');

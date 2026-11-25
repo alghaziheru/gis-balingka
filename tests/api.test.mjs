@@ -833,3 +833,105 @@ test('waterway cross-sections & Jorong boundary API enforce auth, persist to SQL
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('Multi-region API isolates SQLite waterways and suggestions per ?region=<id>', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'balingka-multi-region-'));
+  const dataDir = path.join(dir, 'sqlite-data');
+  const publicDir = path.join(dir, 'public');
+
+  const mkRegion = (id, dataBasePath, dbFilename, riverName, coords) => {
+    const rel = dataBasePath.replace(/^\/+/, '');
+    const rPub = path.join(publicDir, ...rel.split('/'));
+    fs.mkdirSync(rPub, { recursive: true });
+    fs.writeFileSync(
+      path.join(rPub, 'osm-context.geojson'),
+      JSON.stringify({
+        type: 'FeatureCollection',
+        features: [
+          {
+            type: 'Feature',
+            properties: { id: `osm-${id}`, kind: 'waterway', waterway: 'river', name: riverName },
+            geometry: { type: 'LineString', coordinates: coords }
+          }
+        ]
+      })
+    );
+    return {
+      id,
+      name: id,
+      shortName: id,
+      district: 'Kec. Test',
+      regency: 'Kab. Agam',
+      areaKm2: 20,
+      bbox: { west: 100.2, south: -0.5, east: 100.4, north: -0.3 },
+      dataBasePath,
+      dbFilename
+    };
+  };
+
+  const regionsManifest = {
+    defaultRegionId: 'nagari-balingka',
+    regions: [
+      mkRegion('nagari-balingka', '/data', 'balingka.db', 'Batang Ngalai', [[100.318, -0.345], [100.318, -0.334]]),
+      mkRegion(
+        'malalak-timur-utara',
+        '/data/regions/malalak-timur-utara',
+        'malalak-timur-utara.db',
+        'Batang Malalak',
+        [[100.280, -0.400], [100.282, -0.390]]
+      )
+    ]
+  };
+
+  const { server } = createAppServer({
+    dataDir,
+    publicDir,
+    distDir: null,
+    regionsManifest,
+    adminPassphrase: ''
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const addr = server.address();
+  const base = `http://127.0.0.1:${addr.port}`;
+
+  try {
+    const regList = await (await fetch(`${base}/api/regions`)).json();
+    assert.equal(regList.defaultRegionId, 'nagari-balingka');
+    assert.equal(regList.regions.length, 2);
+
+    const balingkaInit = await (await fetch(`${base}/api/waterways`)).json();
+    assert.equal(balingkaInit.waterways.features.length, 1);
+    assert.equal(balingkaInit.waterways.features[0].properties.name, 'Batang Ngalai');
+
+    const malalakInit = await (await fetch(`${base}/api/waterways?region=malalak-timur-utara`)).json();
+    assert.equal(malalakInit.waterways.features.length, 1);
+    assert.equal(malalakInit.waterways.features[0].properties.name, 'Batang Malalak');
+
+    const createRes = await fetch(`${base}/api/waterways?region=malalak-timur-utara`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: 'Parit Toboh',
+        kind: 'canal',
+        status: 'normal',
+        source: 'manual',
+        notes: 'Uji isolasi',
+        coordinates: [[100.281, -0.398], [100.282, -0.395]],
+        actor: 'Relawan Malalak',
+        reason: 'Tambah saluran Malalak Timur & Utara'
+      })
+    });
+    assert.equal(createRes.status, 201);
+
+    const balingkaAfter = await (await fetch(`${base}/api/waterways`)).json();
+    const malalakAfter = await (await fetch(`${base}/api/waterways?region=malalak-timur-utara`)).json();
+    assert.equal(balingkaAfter.waterways.features.length, 1, 'Balingka must remain isolated from Malalak edits');
+    assert.equal(malalakAfter.waterways.features.length, 2, 'Malalak Timur & Utara should persist its own new waterway');
+
+    const badRegion = await fetch(`${base}/api/waterways?region=unknown-nagari`);
+    assert.equal(badRegion.status, 400);
+  } finally {
+    await new Promise(resolve => server.close(resolve));
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
