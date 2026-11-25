@@ -1,6 +1,6 @@
 import { useId, useState } from 'react';
 import { AlertTriangle, Pause, Play, RotateCcw } from 'lucide-react';
-import { I18N } from '../i18n/translations';
+import { useT } from '../context/RegionContext';
 import { estimateChannelThresholds } from '../lib/channelHydraulics';
 import type { DemClient } from '../lib/demClient';
 import type {
@@ -110,7 +110,7 @@ export function SimulationTab({
   onToggleRbiRivers
 }: SimulationTabProps) {
   const uid = useId();
-  const t = I18N[lang];
+  const t = useT(lang);
   const isEn = lang === 'en';
   const isDetail = viewMode === 'detail';
   const [selectedRiverId, setSelectedRiverId] = useState<string>('');

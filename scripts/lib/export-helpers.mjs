@@ -4,9 +4,13 @@ import { DatabaseSync } from 'node:sqlite';
 import { haversineMeters } from './hydrology.mjs';
 import { mergeBuildingsWithDedupe } from './data-fetchers.mjs';
 
-export function loadVerifiedWaterwaysForBurning(rootDir, outDir) {
-  const dbPath = path.join(rootDir, 'data', 'balingka.db');
-  if (fs.existsSync(dbPath)) {
+export function loadVerifiedWaterwaysForBurning(
+  rootDir,
+  outDir,
+  dbPath = path.join(rootDir, 'data', 'balingka.db'),
+  rawDir = path.join(rootDir, 'raw-data')
+) {
+  if (dbPath && fs.existsSync(dbPath)) {
     try {
       const db = new DatabaseSync(dbPath, { open: true });
       const rows = db.prepare('SELECT id, name, kind, coordinates_json FROM waterways WHERE deleted = 0').all();
@@ -28,12 +32,12 @@ export function loadVerifiedWaterwaysForBurning(rootDir, outDir) {
         suppressedIds: new Set(supRows.map(s => s.seg_id))
       };
     } catch (err) {
-      console.warn('Warning: could not read data/balingka.db for stream burning:', err.message);
+      console.warn(`Warning: could not read ${path.relative(rootDir, dbPath)} for stream burning:`, err.message);
     }
   }
   for (const geoPath of [
     path.join(outDir, 'verified-waterways.geojson'),
-    path.join(rootDir, 'raw-data', 'verified-waterways.geojson')
+    path.join(rawDir, 'verified-waterways.geojson')
   ]) {
     if (fs.existsSync(geoPath)) {
       const fc = JSON.parse(fs.readFileSync(geoPath, 'utf8'));

@@ -1,5 +1,6 @@
 import type { MutableRefObject } from 'react';
 import type { GeoJSONSource } from 'maplibre-gl';
+import type { RegionConfig } from '../../config/region';
 import type { CascadeEngine } from '../../lib/cascadeEngine';
 import type { DemClient } from '../../lib/demClient';
 import type {
@@ -52,6 +53,7 @@ export interface LoadedDatasets {
   mask: GeoFeatureCollection;
   watershed: GeoFeatureCollection;
   nagariBoundary: GeoFeatureCollection;
+  subBoundaries: GeoFeatureCollection;
   settlements: GeoFeatureCollection;
   contours: GeoFeatureCollection;
   flowPaths: GeoFeatureCollection;
@@ -62,6 +64,8 @@ export interface LoadedDatasets {
 }
 
 export interface MapViewProps {
+  region: RegionConfig;
+  dataBasePath: string;
   datasets: LoadedDatasets;
   demClient: DemClient;
   lang: Language;

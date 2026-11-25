@@ -1,14 +1,10 @@
 import { useEffect, useState } from 'react';
 import { BookOpen, BookText, Code2, Database, ExternalLink, PlayCircle, Search, ShieldAlert, X } from 'lucide-react';
 import { GLOSSARY_ENTRIES } from '../data/glossary';
-import { REGION } from '../config/region';
-import { I18N } from '../i18n/translations';
+import { useActiveRegion, useT } from '../context/RegionContext';
 import type { DatasetMetadata, Language } from '../types/gis';
 
 export type InfoModalTab = 'guide' | 'method' | 'glossary' | 'api';
-
-const GITHUB_REPO_URL = REGION.repositoryUrl;
-const GITHUB_DATA_SOURCES_URL = `${GITHUB_REPO_URL}/blob/main/DATA_SOURCES.md`;
 
 interface InfoDataModalProps {
   open: boolean;
@@ -48,8 +44,11 @@ function InfoDataModalContent({
     return () => window.removeEventListener('keydown', onKey);
   }, [open, onClose]);
 
-  const t = I18N[lang];
+  const region = useActiveRegion();
+  const t = useT(lang);
   const isEn = lang === 'en';
+  const GITHUB_REPO_URL = region.repositoryUrl;
+  const GITHUB_DATA_SOURCES_URL = `${GITHUB_REPO_URL}/blob/main/DATA_SOURCES.md`;
 
   const tabs: { id: InfoModalTab; label: string; Icon: typeof BookOpen }[] = [
     { id: 'guide', label: t.infoTabGuide, Icon: BookOpen },
@@ -74,36 +73,34 @@ function InfoDataModalContent({
     return haystack.includes(normalizedQuery);
   });
 
-  const hasRegionalOverlays = REGION.regionalOverlays.enabled;
-  const hasSentinelChange = REGION.regionalOverlays.sentinelChangeAvailable;
-  const subRegionList = REGION.cameraPresets
+  const hasRegionalOverlays = region.regionalOverlays.enabled;
+  const hasSentinelChange = region.regionalOverlays.sentinelChangeAvailable;
+  const subRegionList = region.cameraPresets
     .filter(p => p.id !== 'center')
     .map(p => p.label)
     .slice(0, 4)
     .join(', ');
   const demLabel = metadata?.demSource || 'BIG DEMNAS (~8.3m) / Copernicus DEM GLO-30';
-  const boundaryCodeSuffix = REGION.officialBoundaryCode ? ` (${REGION.officialBoundaryCode})` : '';
+  const boundaryCodeSuffix = region.officialBoundaryCode ? ` (${region.officialBoundaryCode})` : '';
 
   const softwareRows = [
     { name: 'React 19, TypeScript, Vite & Tailwind CSS', role: isEn ? 'Open-source web UI & build tools' : 'Antarmuka web & alat pengembangan terbuka', license: 'MIT' },
     { name: 'MapLibre GL JS & Lucide Icons', role: isEn ? 'Interactive 2D/3D map engine & icons' : 'Mesin peta 2D/3D interaktif & ikon', license: 'BSD-3 / ISC' },
     { name: 'Node.js SQLite & Pure-Node Hydrology', role: isEn ? 'DEM processing, HAND model & audit storage' : 'Pengolahan elevasi, model HAND & riwayat data', license: 'MIT' },
     {
-      name: hasRegionalOverlays
-        ? `BIG DEMNAS (~8.3m) & RBI 50K ${REGION.regency}`
-        : demLabel,
+      name: demLabel,
       role: isEn
         ? 'Elevation grid, terrain slope, contours, rivers & public facilities'
         : 'Elevasi tanah, kemiringan lereng, kontur, jaringan sungai & fasilitas umum',
       license: demLabel.includes('BIG') ? 'Public Gov Data (BIG)' : 'Open Data'
     },
-    ...(REGION.officialBoundaryCode
+    ...(region.officialBoundaryCode
       ? [
           {
             name: 'BIG Batas Wilayah Desa/Nagari',
             role: isEn
-              ? `Official ${REGION.name} boundary polygon${boundaryCodeSuffix}`
-              : `Poligon resmi batas ${REGION.name}${boundaryCodeSuffix}`,
+              ? `Official ${region.name} boundary polygon${boundaryCodeSuffix}`
+              : `Poligon resmi batas ${region.name}${boundaryCodeSuffix}`,
             license: 'Public Gov Data (BIG)'
           }
         ]
@@ -129,7 +126,7 @@ function InfoDataModalContent({
             license: 'CC-BY-4.0'
           },
           {
-            name: `${REGION.regionalOverlays.providerName} Open GIS (ArcGIS Web Maps)`,
+            name: `${region.regionalOverlays.providerName} Open GIS (ArcGIS Web Maps)`,
             role: isEn
               ? 'Ground-movement map, soil, geology, BMKG rainfall & protected forest'
               : 'Peta gerakan tanah, jenis tanah, geologi, curah hujan BMKG & kawasan hutan',
@@ -154,12 +151,12 @@ function InfoDataModalContent({
         <div className="flex items-center justify-between border-b border-[#161c1a]/12 bg-[#fafaf8] px-5 py-4">
           <div>
             <h2 id="info-modal-title" className="m-0 text-[16px] font-extrabold text-[#161c1a]">
-              {isEn ? `About ${REGION.appTitle.en} & Open Data` : `Tentang ${REGION.appTitle.id} & Data Terbuka`}
+              {isEn ? `About ${region.appTitle.en} & Open Data` : `Tentang ${region.appTitle.id} & Data Terbuka`}
             </h2>
             <p className="mt-0.5 mb-0 text-[13px] text-[#434d49]">
               {isEn
                 ? 'Public information for residents, researchers, government, and developers'
-                : `Informasi publik untuk warga, peneliti, pemerintah ${REGION.adminLevelLabel.id.toLowerCase()}/daerah, dan pengembang`}
+                : `Informasi publik untuk warga, peneliti, pemerintah ${region.adminLevelLabel.id.toLowerCase()}/daerah, dan pengembang`}
             </p>
           </div>
           <button
@@ -199,8 +196,8 @@ function InfoDataModalContent({
             <div className="flex flex-col gap-4">
               <p className="m-0 text-[#434d49]">
                 {isEn
-                  ? `This open spatial data viewer displays geographic datasets from BIG${hasRegionalOverlays ? `, ${REGION.regionalOverlays.providerName}` : ''}, ESA/Copernicus, and OpenStreetMap alongside field-verified river and culvert records in ${REGION.name} — without making disaster declarations or predictions.`
-                  : `Portal data terbuka ini menampilkan kumpulan data geospasial resmi dan terbuka (BIG${hasRegionalOverlays ? `, ${REGION.regionalOverlays.providerName}` : ''}, ESA/Copernicus, OpenStreetMap) serta catatan kondisi sungai dan gorong-gorong lapangan di ${REGION.name} — tanpa membuat kesimpulan atau pernyataan status bencana.`}
+                  ? `This open spatial data viewer displays geographic datasets from BIG${hasRegionalOverlays ? `, ${region.regionalOverlays.providerName}` : ''}, ESA/Copernicus, and OpenStreetMap alongside field-verified river and culvert records in ${region.name} — without making disaster declarations or predictions.`
+                  : `Portal data terbuka ini menampilkan kumpulan data geospasial resmi dan terbuka (BIG${hasRegionalOverlays ? `, ${region.regionalOverlays.providerName}` : ''}, ESA/Copernicus, OpenStreetMap) serta catatan kondisi sungai dan gorong-gorong lapangan di ${region.name} — tanpa membuat kesimpulan atau pernyataan status bencana.`}
               </p>
 
               <div className="rounded-xl border border-[#161c1a]/12 bg-[#fafaf8] p-4">
@@ -211,8 +208,8 @@ function InfoDataModalContent({
                   <li>
                     <strong className="text-[#161c1a]">{isEn ? 'Map tab:' : 'Tab Peta:'}</strong>{' '}
                     {isEn
-                      ? `Jump to a ${REGION.subRegionLabel.en}${subRegionList ? ` (${subRegionList})` : ''} and toggle verified rivers${hasRegionalOverlays ? `, vegetation-change layers, ${REGION.regionalOverlays.providerName} reference maps,` : ','} or DEM slope-flow lines.`
-                      : `Pilih ${REGION.subRegionLabel.id}${subRegionList ? ` (${subRegionList})` : ''} dan tampilkan data sungai terverifikasi${hasRegionalOverlays ? `, perubahan tutupan vegetasi, peta referensi ${REGION.regionalOverlays.providerName},` : ','} atau arah kemiringan elevasi DEM.`}
+                      ? `Jump to a ${region.subRegionLabel.en}${subRegionList ? ` (${subRegionList})` : ''} and toggle verified rivers${hasRegionalOverlays ? `, vegetation-change layers, ${region.regionalOverlays.providerName} reference maps,` : ','} or DEM slope-flow lines.`
+                      : `Pilih ${region.subRegionLabel.id}${subRegionList ? ` (${subRegionList})` : ''} dan tampilkan data sungai terverifikasi${hasRegionalOverlays ? `, perubahan tutupan vegetasi, peta referensi ${region.regionalOverlays.providerName},` : ','} atau arah kemiringan elevasi DEM.`}
                   </li>
                   <li>
                     <strong className="text-[#161c1a]">{isEn ? 'Simulation tab:' : 'Tab Simulasi:'}</strong>{' '}
@@ -243,8 +240,8 @@ function InfoDataModalContent({
                   </strong>
                   <span>
                     {isEn
-                      ? `This application strictly displays open spatial data, topographic computations (HAND / D8 / SCS-CN), and field infrastructure records. It does NOT issue disaster warnings, declare landslide/flood hazards, or designate official evacuation sites. Official hazard assessments, forecasts, and emergency directives belong exclusively to BNPB, ${REGION.authorities.bpbdLabel}, BMKG, PVMBG, and ${REGION.authorities.localAuthorityShort}.`
-                      : `Aplikasi ini hanya berfungsi sebagai media tampilan data spasial terbuka, komputasi topografi (HAND / D8 / SCS-CN), dan inventaris saluran lapangan. Aplikasi ini TIDAK menetapkan status bahaya, potensi longsor/banjir, maupun titik evakuasi resmi. Seluruh pernyataan potensi bahaya, peringatan dini cuaca, dan arahan evakuasi hanya bersumber dari BNPB, ${REGION.authorities.bpbdLabel}, BMKG, PVMBG, peneliti berwenang, serta ${REGION.authorities.localAuthorityShort}.`}
+                      ? `This application strictly displays open spatial data, topographic computations (HAND / D8 / SCS-CN), and field infrastructure records. It does NOT issue disaster warnings, declare landslide/flood hazards, or designate official evacuation sites. Official hazard assessments, forecasts, and emergency directives belong exclusively to BNPB, ${region.authorities.bpbdLabel}, BMKG, PVMBG, and ${region.authorities.localAuthorityShort}.`
+                      : `Aplikasi ini hanya berfungsi sebagai media tampilan data spasial terbuka, komputasi topografi (HAND / D8 / SCS-CN), dan inventaris saluran lapangan. Aplikasi ini TIDAK menetapkan status bahaya, potensi longsor/banjir, maupun titik evakuasi resmi. Seluruh pernyataan potensi bahaya, peringatan dini cuaca, dan arahan evakuasi hanya bersumber dari BNPB, ${region.authorities.bpbdLabel}, BMKG, PVMBG, peneliti berwenang, serta ${region.authorities.localAuthorityShort}.`}
                   </span>
                 </div>
               </div>

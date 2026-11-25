@@ -1,5 +1,5 @@
 import { History, Map as MapIcon, MapPin, Waves } from 'lucide-react';
-import { I18N } from '../i18n/translations';
+import { useT } from '../context/RegionContext';
 import type { DemClient } from '../lib/demClient';
 import { AuditLogPanel } from './AuditLogPanel';
 import { JorongEditorPanel, type ActiveEditingJorong } from './JorongEditorPanel';
@@ -121,7 +121,7 @@ export function EditorTab({
   onRevertAuditLog,
   onFlyToAuditLog
 }: EditorTabProps) {
-  const t = I18N[lang];
+  const t = useT(lang);
 
   const subTabs: [EditorSubTab, string, typeof Waves][] = [
     ['waterways', t.subWaterways, Waves],

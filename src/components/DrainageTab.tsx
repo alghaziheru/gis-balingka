@@ -1,7 +1,6 @@
 import { useId } from 'react';
 import { Building2, ExternalLink } from 'lucide-react';
-import { REGION } from '../config/region';
-import { I18N } from '../i18n/translations';
+import { useActiveRegion, useT } from '../context/RegionContext';
 import type { DrainageStatus, Language, LayerToggles, ViewMode } from '../types/gis';
 import { InfoTooltip } from './InfoTooltip';
 import { LegendIcon, type LegendIconKind } from './LegendIcon';
@@ -32,7 +31,8 @@ export function DrainageTab({
   onFocusEvac
 }: DrainageTabProps) {
   const uid = useId();
-  const t = I18N[lang];
+  const region = useActiveRegion();
+  const t = useT(lang);
   const isEn = lang === 'en';
   const isDetail = viewMode === 'detail';
 
@@ -59,7 +59,7 @@ export function DrainageTab({
       href: 'https://www.bmkg.go.id'
     },
     {
-      name: `${REGION.authorities.bpbdLabel} & BNPB`,
+      name: `${region.authorities.bpbdLabel} & BNPB`,
       role: isEn
         ? 'Official disaster status declarations, early warnings & evacuation directives'
         : 'Penetapan status bencana, informasi potensi bahaya & arahan evakuasi resmi',
@@ -73,7 +73,7 @@ export function DrainageTab({
       href: 'https://vsi.esdm.go.id'
     },
     {
-      name: isEn ? REGION.authorities.localOfficeEn : REGION.authorities.localOfficeId,
+      name: isEn ? region.authorities.localOfficeEn : region.authorities.localOfficeId,
       role: isEn
         ? 'Local coordination, field infrastructure verification & community updates'
         : 'Koordinasi lapangan, verifikasi saluran setempat & informasi resmi nagari',

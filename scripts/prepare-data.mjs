@@ -44,40 +44,32 @@ import {
   buildDatasetMetadata
 } from './lib/export-helpers.mjs';
 
+import { loadRegionsManifest, resolveRegionPaths } from '../server/regions.mjs';
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
-const OUT_DIR = path.join(ROOT, 'public', 'data');
 
-function loadRegionConfig() {
-  const cfgPath = path.join(ROOT, 'region.config.json');
-  if (fs.existsSync(cfgPath)) {
-    return JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
-  }
-  return {
-    name: 'Nagari Balingka',
-    bbox: { west: 100.278, south: -0.408, east: 100.345, north: -0.314 },
-    dataCenter: [100.319, -0.345],
-    regionalOverlays: {
-      enabled: true,
-      sentinelChangeAvailable: true,
-      localDemFilename: 'demnas-balingka.tif'
-    }
-  };
+function getCliArgValue(flag) {
+  const idx = process.argv.indexOf(flag);
+  return idx !== -1 && process.argv[idx + 1] ? process.argv[idx + 1] : null;
 }
 
-const REGION_CFG = loadRegionConfig();
-const BBOX = {
-  west: Number(REGION_CFG.bbox.west),
-  south: Number(REGION_CFG.bbox.south),
-  east: Number(REGION_CFG.bbox.east),
-  north: Number(REGION_CFG.bbox.north)
-};
+async function prepareRegion(regionCfg, defaultRegionId) {
+  const { publicDataDir: OUT_DIR, rawDataDir: RAW_DIR, dbPath: DB_PATH } = resolveRegionPaths(regionCfg, {
+    rootDir: ROOT,
+    defaultRegionId
+  });
+  const BBOX = {
+    west: Number(regionCfg.bbox.west),
+    south: Number(regionCfg.bbox.south),
+    east: Number(regionCfg.bbox.east),
+    north: Number(regionCfg.bbox.north)
+  };
+  const REGION_NAME = String(regionCfg.name || 'Nagari Balingka');
+  const COPERNICUS_TILES = listCopernicusTiles(BBOX);
+  const WORLDCOVER_TILES = listWorldCoverTiles(BBOX);
 
-const REGION_NAME = String(REGION_CFG.name || 'Nagari Balingka');
-const COPERNICUS_TILES = listCopernicusTiles(BBOX);
-const WORLDCOVER_TILES = listWorldCoverTiles(BBOX);
-
-async function main() {
+  console.log(`\n=== Preparing region: ${REGION_NAME} (${regionCfg.id}) -> ${path.relative(ROOT, OUT_DIR)} ===`);
   fs.mkdirSync(OUT_DIR, { recursive: true });
 
   // Clean up old blocky polygon GeoJSONs if present
@@ -88,7 +80,7 @@ async function main() {
 
   const dem = await fetchDEM({
     rootDir: ROOT,
-    regionCfg: REGION_CFG,
+    regionCfg,
     bbox: BBOX,
     regionName: REGION_NAME,
     copernicusTiles: COPERNICUS_TILES
@@ -103,7 +95,7 @@ async function main() {
 
   console.log(`DEM ready: ${width}x${height} cells (~${cellSizeX.toFixed(1)}m x ${cellSizeY.toFixed(1)}m), bbox=${JSON.stringify(bbox)}`);
 
-  const nagariBoundary = await fetchNagariBoundary(ROOT, REGION_CFG);
+  const nagariBoundary = await fetchNagariBoundary(ROOT, regionCfg, RAW_DIR);
   const nagariMask = nagariBoundary ? buildPolygonMaskGrid(nagariBoundary, gridMeta) : null;
   const inNagariPt = pt => !nagariBoundary || isPointInFeatureCollection(pt, nagariBoundary);
   const lineTouchesNagari = coords => !nagariBoundary || coords.some(c => isPointInFeatureCollection(c, nagariBoundary));
@@ -115,7 +107,7 @@ async function main() {
     if (elev[i] > maxElev) maxElev = elev[i];
   }
 
-  const verified = loadVerifiedWaterwaysForBurning(ROOT, OUT_DIR);
+  const verified = loadVerifiedWaterwaysForBurning(ROOT, OUT_DIR, DB_PATH, RAW_DIR);
   let hydroElev = elev;
   let hydroConditioned = false;
   if (verified.features.length > 0) {
@@ -144,7 +136,7 @@ async function main() {
   };
   const contours = extractContoursGeoJSON(elev, gridMeta, 25);
 
-  const bigRbiPath = path.join(ROOT, 'raw-data', 'big-rbi-2022.json');
+  const bigRbiPath = path.join(RAW_DIR, 'big-rbi-2022.json');
   let bigRbi = null;
   if (fs.existsSync(bigRbiPath)) {
     try {
@@ -153,14 +145,16 @@ async function main() {
     } catch {}
   }
 
-  const useRegional = Boolean(REGION_CFG.regionalOverlays?.enabled);
-  const useSentinel = Boolean(REGION_CFG.regionalOverlays?.sentinelChangeAvailable);
+  const useRegional = Boolean(regionCfg.regionalOverlays?.enabled);
+  const useSentinel = Boolean(regionCfg.regionalOverlays?.sentinelChangeAvailable);
   const [osm, landCover, scourChange, googleBuildings, agamGis] = await Promise.all([
     fetchRealOSM(bbox, REGION_NAME),
     fetchLandCover(bbox, width, height, WORLDCOVER_TILES, REGION_NAME, nagariMask),
     useSentinel ? fetchSentinel2ScourChange(bbox, hand, gridMeta, nagariMask) : Promise.resolve(null),
-    useRegional ? fetchGoogleOpenBuildings(ROOT, bbox) : Promise.resolve([]),
-    useRegional ? fetchAgamOfficialGis(ROOT, OUT_DIR, bbox) : Promise.resolve(null)
+    useRegional ? fetchGoogleOpenBuildings(ROOT, bbox, RAW_DIR) : Promise.resolve([]),
+    useRegional
+      ? fetchAgamOfficialGis(ROOT, OUT_DIR, bbox, RAW_DIR, regionCfg.regionalOverlays?.bigRbiDasName || 'MASANG KIRI')
+      : Promise.resolve(null)
   ]);
 
   const activeFlowFeatures = flowPaths.features.filter(f => !verified.suppressedIds.has(f.properties.id));
@@ -183,9 +177,9 @@ async function main() {
     inNagariPt
   });
 
-  // Render smooth anti-aliased CutSheetRX-style Terrain & HAND PNG overlays
+  // Render smooth anti-aliased CutSheetRX-style Terrain & HAND PNG overlays (clipped to territory polygon)
   console.log('Rendering smooth 1024x1024 CutSheetRX terrain rasters & HAND flood overlays...');
-  const terrainRasters = renderSmoothTerrainRasters(elev, slope, gridMeta, 1024);
+  const terrainRasters = renderSmoothTerrainRasters(elev, slope, gridMeta, 1024, nagariMask);
   const handRasters = renderSmoothHandFloodRasters(hand, slope, bottlenecks, gridMeta, 768, nagariMask);
 
   fs.writeFileSync(path.join(OUT_DIR, 'raster-relief.png'), terrainRasters.reliefPng);
@@ -268,8 +262,8 @@ async function main() {
     ? computeFeatureCollectionAreaKm2(nagariBoundary)
     : Number(((totalWidthM * totalHeightM) / 1e6).toFixed(2));
   const totalStreamKm = flowPaths.features.reduce((s, f) => s + f.properties.length_m, 0) / 1000;
-  const center = Array.isArray(REGION_CFG.dataCenter)
-    ? REGION_CFG.dataCenter
+  const center = Array.isArray(regionCfg.dataCenter)
+    ? regionCfg.dataCenter
     : [Number(((bbox.west + bbox.east) / 2).toFixed(5)), Number(((bbox.south + bbox.north) / 2).toFixed(5))];
 
   const writeJson = (name, obj) => fs.writeFileSync(path.join(OUT_DIR, name), JSON.stringify(obj));
@@ -334,6 +328,12 @@ async function main() {
   } else if (!useRegional || !fs.existsSync(nagariPath)) {
     writeJson('nagari-boundary.geojson', { type: 'FeatureCollection', features: [] });
   }
+  const rawSubPath = path.join(RAW_DIR, 'big-sub-boundaries-2026.geojson');
+  if (fs.existsSync(rawSubPath)) {
+    fs.copyFileSync(rawSubPath, path.join(OUT_DIR, 'sub-boundaries.geojson'));
+  } else if (!fs.existsSync(path.join(OUT_DIR, 'sub-boundaries.geojson'))) {
+    writeJson('sub-boundaries.geojson', { type: 'FeatureCollection', features: [] });
+  }
 
   let existingMeta = {};
   const metaPath = path.join(OUT_DIR, 'metadata.json');
@@ -355,12 +355,12 @@ async function main() {
 
   const nagariSrcLabel =
     nagariBoundary?.features?.[0]?.properties?.source ||
-    (REGION_CFG.officialBoundaryCode
-      ? `Batas Administrasi ${REGION_NAME} (${REGION_CFG.officialBoundaryCode})`
+    (regionCfg.officialBoundaryCode
+      ? `Batas Administrasi ${REGION_NAME} (${regionCfg.officialBoundaryCode})`
       : `Batas Administrasi ${REGION_NAME}`);
 
   const metadata = buildDatasetMetadata({
-    regionCfg: REGION_CFG,
+    regionCfg,
     regionName: REGION_NAME,
     center,
     bbox,
@@ -400,13 +400,48 @@ async function main() {
   writeJson('settlements.geojson', settlements);
   writeJson('drainage-draft.geojson', drainageDraft);
 
-  console.log(`Generated spatial assets for ${REGION_NAME} in public/data/:`);
+  // Ensure optional static seed files exist so static mode triggers zero 404s
+  const emptyFc = { type: 'FeatureCollection', features: [] };
+  if (!fs.existsSync(path.join(OUT_DIR, 'verified-waterways.geojson'))) {
+    writeJson('verified-waterways.geojson', emptyFc);
+  }
+  if (!fs.existsSync(path.join(OUT_DIR, 'verified-structures.geojson'))) {
+    writeJson('verified-structures.geojson', emptyFc);
+  }
+  if (!fs.existsSync(path.join(OUT_DIR, 'suppressed-dem.json'))) {
+    writeJson('suppressed-dem.json', []);
+  }
+
+  console.log(`Generated spatial assets for ${REGION_NAME} in ${path.relative(ROOT, OUT_DIR)}/:`);
   console.log(`  Block: ${metadata.studyAreaKm2} km2 (${metadata.gridDimensions}, ${metadata.minElevM}..${metadata.maxElevM}m)`);
   console.log(`  Smooth streams: ${flowPaths.features.length} reaches (${metadata.streamNetworkKm} km, snapped=${deduped.snappedCount})`);
   console.log(`  Smooth contours: ${contours.features.length} polylines`);
   console.log(`  OSM places: ${osm.placeFeatures.length}, roads: ${osm.roadFeatures.length}, buildings: ${osm.buildingFeatures.length}, residential zones: ${osm.residentialFeatures.length}, crossings: ${crossings.length}`);
   if (landCoverStats) console.log('  ESA WorldCover 10m (%):', JSON.stringify(landCoverStats));
   console.log(`  HAND areas (ha):`, JSON.stringify(metadata.simAreasHa));
+}
+
+async function main() {
+  const { defaultRegionId, regions } = loadRegionsManifest(ROOT);
+  const allFlag = process.argv.includes('--all-regions');
+  const regionArg = getCliArgValue('--region');
+
+  let targets;
+  if (allFlag) {
+    targets = regions;
+  } else if (regionArg) {
+    targets = regions.filter(r => r.id === regionArg);
+    if (targets.length === 0) {
+      throw new Error(`Unknown region '${regionArg}'. Available: ${regions.map(r => r.id).join(', ')}`);
+    }
+  } else {
+    const def = regions.find(r => r.id === defaultRegionId) || regions[0];
+    targets = [def];
+  }
+
+  for (const reg of targets) {
+    await prepareRegion(reg, defaultRegionId);
+  }
 }
 
 main().catch(err => {

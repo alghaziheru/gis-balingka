@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Extracts official BIG Nagari boundary (June 2026) and BIG Agam RBI 50K layers (Dec 2022)
-for the Nagari Balingka extent into compact 2D WGS84 GeoJSON/JSON under raw-data/.
+Extracts official BIG Nagari/Desa boundary (June 2026) and BIG RBI 50K layers (Dec 2022)
+for one or all regions in regions.config.json (or region.config.json) into raw-data/.
 """
 
 import argparse
@@ -19,35 +19,39 @@ RAW_DIR = ROOT / "raw-data"
 DEFAULT_REF_DIR = os.environ.get("BIG_REF_DIR") or str(RAW_DIR / "big-ref")
 
 
-def load_region_config():
+def load_regions_manifest():
+    manifest_path = ROOT / "regions.config.json"
+    if manifest_path.exists():
+        data = json.loads(manifest_path.read_text(encoding="utf-8"))
+        regions = data.get("regions") or []
+        if regions:
+            return data.get("defaultRegionId") or regions[0]["id"], regions
     cfg_path = ROOT / "region.config.json"
     if cfg_path.exists():
-        return json.loads(cfg_path.read_text(encoding="utf-8"))
-    return {
-        "name": "Nagari Balingka",
-        "district": "Kec. IV Koto",
-        "regency": "Kab. Agam",
-        "officialBoundaryCode": "13.06.05.2003",
-        "officialBoundaryNameMatch": "BALINGKA",
-        "bbox": {"west": 100.278, "south": -0.408, "east": 100.345, "north": -0.314},
-        "regionalOverlays": {
-            "bigRbiZipName": "Agam.zip",
-            "bigRbiGdbName": "RBI50K_AGAM_KUGI50_20221231.gdb",
-            "bigDesaGdbName": "BATASWILAYAH_DESA_20260601.gdb",
-            "bigRbiDasName": "MASANG KIRI",
-        },
-    }
-
-
-REGION_CFG = load_region_config()
-_bb = REGION_CFG["bbox"]
-BBOX = (float(_bb["west"]), float(_bb["south"]), float(_bb["east"]), float(_bb["north"]))
-PAD_BBOX = (BBOX[0] - 0.003, BBOX[1] - 0.003, BBOX[2] + 0.003, BBOX[3] + 0.003)
+        cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+        return cfg.get("id") or "nagari-balingka", [cfg]
+    return "nagari-balingka", [
+        {
+            "id": "nagari-balingka",
+            "name": "Nagari Balingka",
+            "district": "Kec. IV Koto",
+            "regency": "Kab. Agam",
+            "officialBoundaryCode": "13.06.05.2003",
+            "officialBoundaryNameMatch": "BALINGKA",
+            "bbox": {"west": 100.278, "south": -0.408, "east": 100.345, "north": -0.314},
+            "regionalOverlays": {
+                "bigRbiZipName": "Agam.zip",
+                "bigRbiGdbName": "RBI50K_AGAM_KUGI50_20221231.gdb",
+                "bigDesaGdbName": "BATASWILAYAH_DESA_20260601.gdb",
+                "bigRbiDasName": "MASANG KIRI",
+            },
+        }
+    ]
 
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Extract official BIG Desa/Nagari boundary and optional RBI 50K layers for region.config.json into raw-data/."
+        description="Extract official BIG Desa/Nagari boundary and optional RBI 50K layers into raw-data/."
     )
     parser.add_argument(
         "--ref-dir",
@@ -58,6 +62,16 @@ def parse_args():
         "--desa-only",
         action="store_true",
         help="Extract only the official Desa/Nagari boundary and skip RBI 50K rivers/structures.",
+    )
+    parser.add_argument(
+        "--region",
+        default=None,
+        help="Region ID from regions.config.json to extract (defaults to defaultRegionId).",
+    )
+    parser.add_argument(
+        "--all-regions",
+        action="store_true",
+        help="Extract BIG boundaries & RBI 50K for all regions in regions.config.json.",
     )
     return parser.parse_args()
 
@@ -146,21 +160,240 @@ def read_gdb_layer(gdb_path: str, layer: str, bbox=None):
     return rows
 
 
+def extract_for_region(region_cfg, default_region_id, desa_gdb, rbi_gdb):
+    import pyogrio
+    from shapely.ops import unary_union
+
+    region_id = str(region_cfg.get("id") or "nagari-balingka")
+    out_dir = RAW_DIR if region_id == default_region_id else RAW_DIR / region_id
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    bb = region_cfg["bbox"]
+    bbox = (float(bb["west"]), float(bb["south"]), float(bb["east"]), float(bb["north"]))
+    pad_bbox = (bbox[0] - 0.003, bbox[1] - 0.003, bbox[2] + 0.003, bbox[3] + 0.003)
+
+    ro = region_cfg.get("regionalOverlays") or {}
+    target_code = str(region_cfg.get("officialBoundaryCode") or "").strip()
+    target_codes = {str(c).strip() for c in (region_cfg.get("officialBoundaryCodes") or []) if str(c).strip()}
+    if target_code and not target_codes:
+        target_codes.add(target_code)
+    target_name = str(region_cfg.get("officialBoundaryNameMatch") or "").strip().upper()
+    region_name = str(region_cfg.get("name") or "Wilayah")
+    regency_name = str(region_cfg.get("regency") or "")
+    das_name = str(ro.get("bigRbiDasName") or "")
+
+    matched_rows = []
+    bbox_candidates = []
+    for geom, attrs in read_gdb_layer(str(desa_gdb), "BATAS_DESAKEL_AR", bbox=bbox):
+        code = str(attrs.get("KDEPUM") or "").strip()
+        name = str(attrs.get("NAMOBJ") or attrs.get("WADMKD") or "").strip()
+        kec = str(attrs.get("WADMKC") or "").strip()
+        kab = str(attrs.get("WADMKK") or "").strip()
+        bbox_candidates.append({"KDEPUM": code, "NAMOBJ": name, "WADMKC": kec, "WADMKK": kab})
+        code_match = bool(target_codes) and code in target_codes
+        name_match = (not target_codes or len(target_codes) <= 1) and bool(target_name) and name.upper() == target_name
+        if not (code_match or name_match):
+            continue
+        matched_rows.append((geom, attrs, code, name, kec, kab))
+
+    nagari_features = []
+    sub_features = []
+    if len(matched_rows) == 1:
+        geom, attrs, code, name, kec, kab = matched_rows[0]
+        gj = json.loads(pyogrio.to_geojson(geom) if hasattr(pyogrio, "to_geojson") else json.dumps(geom.__geo_interface__))
+        coords = round_coords(gj["coordinates"])
+        nagari_features.append(
+            {
+                "type": "Feature",
+                "properties": {
+                    "name_id": f"Batas Administrasi {region_name}",
+                    "name_en": f"{region_name} Administrative Boundary",
+                    "code": code or target_code,
+                    "kecamatan": kec or str(region_cfg.get("district") or ""),
+                    "kabupaten": kab or regency_name,
+                    "source": "BIG — Batas Wilayah Desa/Nagari",
+                    "official": True,
+                },
+                "geometry": {"type": gj["type"], "coordinates": coords},
+            }
+        )
+    elif len(matched_rows) > 1:
+        for geom, attrs, code, name, kec, kab in matched_rows:
+            gj = json.loads(pyogrio.to_geojson(geom) if hasattr(pyogrio, "to_geojson") else json.dumps(geom.__geo_interface__))
+            coords = round_coords(gj["coordinates"])
+            sub_features.append(
+                {
+                    "type": "Feature",
+                    "properties": {
+                        "name_id": f"Nagari {name}",
+                        "name_en": f"Nagari {name}",
+                        "code": code,
+                        "kecamatan": kec or str(region_cfg.get("district") or ""),
+                        "kabupaten": kab or regency_name,
+                        "area_km2": round(float(attrs.get("LUASWH") or 0), 2),
+                        "source": "BIG — Batas Wilayah Desa/Nagari",
+                        "official": True,
+                    },
+                    "geometry": {"type": gj["type"], "coordinates": coords},
+                }
+            )
+        dissolved = unary_union([r[0].buffer(0) for r in matched_rows]).buffer(0.00002).buffer(-0.00002)
+        gj = json.loads(
+            pyogrio.to_geojson(dissolved)
+            if hasattr(pyogrio, "to_geojson")
+            else json.dumps(dissolved.__geo_interface__)
+        )
+        coords = round_coords(gj["coordinates"])
+        nagari_features.append(
+            {
+                "type": "Feature",
+                "properties": {
+                    "name_id": f"Batas Administrasi {region_name}",
+                    "name_en": f"{region_name} Administrative Boundary",
+                    "code": target_code,
+                    "kecamatan": str(region_cfg.get("district") or ""),
+                    "kabupaten": regency_name,
+                    "subRegionCount": len(matched_rows),
+                    "source": "BIG — Batas Wilayah Desa/Nagari",
+                    "official": True,
+                },
+                "geometry": {"type": gj["type"], "coordinates": coords},
+            }
+        )
+
+    if not nagari_features:
+        print(
+            f"[extract-big-ref] WARNING ({region_id}): No boundary matched officialBoundaryCode='{target_code}' "
+            f"or officialBoundaryNameMatch='{target_name}' inside bbox {bbox}."
+        )
+        if bbox_candidates:
+            print("[extract-big-ref] Villages found inside bbox:")
+            for cand in bbox_candidates[:25]:
+                print(f"  - {cand['KDEPUM']} | {cand['NAMOBJ']} ({cand['WADMKC']}, {cand['WADMKK']})")
+
+    out_nagari = out_dir / "big-nagari-2026.geojson"
+    out_nagari.write_text(json.dumps({"type": "FeatureCollection", "features": nagari_features}))
+    if sub_features:
+        out_sub = out_dir / "big-sub-boundaries-2026.geojson"
+        out_sub.write_text(json.dumps({"type": "FeatureCollection", "features": sub_features}))
+
+    rivers = []
+    culverts = []
+    bridges = []
+    weirs = []
+    toponyms = []
+    facilities = []
+
+    if rbi_gdb is not None:
+        for idx, (geom, attrs) in enumerate(read_gdb_layer(str(rbi_gdb), "SUNGAI_LN_50K", bbox=pad_bbox), 1):
+            raw_name = str(attrs.get("NAMOBJ") or "").strip()
+            remark = str(attrs.get("REMARK") or "").strip()
+            parts = list(geom.geoms) if geom.geom_type == "MultiLineString" else [geom]
+            for pi, line in enumerate(parts):
+                coords = round_coords(line.__geo_interface__["coordinates"])
+                if len(coords) < 2:
+                    continue
+                rivers.append(
+                    {
+                        "type": "Feature",
+                        "properties": {
+                            "id": f"rbi22-{idx}" + (f"-{pi + 1}" if len(parts) > 1 else ""),
+                            "name": raw_name or f"Anak Sungai RBI #{idx}",
+                            "kind": "river" if raw_name.lower().startswith("sungai") else "stream",
+                            "das": das_name,
+                            "remark": remark,
+                            "source": "BIG — Peta RBI 1:50.000",
+                        },
+                        "geometry": {"type": "LineString", "coordinates": coords},
+                    }
+                )
+
+        def extract_points(layer_name):
+            pts = []
+            try:
+                rows = read_gdb_layer(str(rbi_gdb), layer_name, bbox=bbox)
+            except Exception:
+                return pts
+            for idx, (geom, attrs) in enumerate(rows, 1):
+                c = round_coords([geom.x, geom.y])
+                pts.append(
+                    {
+                        "idx": idx,
+                        "name": str(attrs.get("NAMOBJ") or "").strip(),
+                        "remark": str(attrs.get("REMARK") or "").strip(),
+                        "coords": c,
+                    }
+                )
+            return pts
+
+        culverts = extract_points("GORONG_PT_50K")
+        bridges = extract_points("JEMBATAN_PT_50K")
+        weirs = extract_points("BENDUNG_PT_50K")
+        toponyms = extract_points("TOPONIMI_PT_50K")
+
+        for layer, cat in [
+            ("SARANAIBADAH_PT_50K", "worship"),
+            ("PENDIDIKAN_PT_50K", "school"),
+            ("PUSKESMAS_PT_50K", "health"),
+            ("PEMERINTAHAN_PT_50K", "gov"),
+        ]:
+            for pt in extract_points(layer):
+                facilities.append({**pt, "category": cat})
+
+        out_rbi = out_dir / "big-rbi-2022.json"
+        rbi_label = f"BIG RBI 1:50.000 {regency_name}".strip()
+        out_rbi.write_text(
+            json.dumps(
+                {
+                    "source": f"{rbi_label} (KUGI50)",
+                    "rivers": rivers,
+                    "culverts": culverts,
+                    "bridges": bridges,
+                    "weirs": weirs,
+                    "facilities": facilities,
+                    "toponyms": toponyms,
+                }
+            )
+        )
+
+    print(
+        json.dumps(
+            {
+                "regionId": region_id,
+                "outDir": str(out_dir.relative_to(ROOT)),
+                "nagariFeatures": len(nagari_features),
+                "rbiExtracted": rbi_gdb is not None,
+                "rivers": len(rivers),
+                "culverts": len(culverts),
+                "bridges": len(bridges),
+                "weirs": len(weirs),
+                "facilities": len(facilities),
+                "toponyms": len(toponyms),
+            },
+            indent=2,
+        )
+    )
+
+
 def main():
     args = parse_args()
-    import pyogrio
+    default_region_id, regions = load_regions_manifest()
+
+    if args.all_regions:
+        targets = regions
+    elif args.region:
+        targets = [r for r in regions if r.get("id") == args.region]
+        if not targets:
+            raise SystemExit(f"Unknown region '{args.region}'. Available: {[r.get('id') for r in regions]}")
+    else:
+        targets = [r for r in regions if r.get("id") == default_region_id] or [regions[0]]
 
     ref_dir = Path(args.ref_dir)
     RAW_DIR.mkdir(parents=True, exist_ok=True)
-    ro = REGION_CFG.get("regionalOverlays") or {}
-    rbi_zip_name = str(ro.get("bigRbiZipName") or "").strip()
-    rbi_gdb_name = str(ro.get("bigRbiGdbName") or "").strip()
-    desa_gdb_name = str(ro.get("bigDesaGdbName") or "BATASWILAYAH_DESA_20260601.gdb").strip()
-    target_code = str(REGION_CFG.get("officialBoundaryCode") or "").strip()
-    target_name = str(REGION_CFG.get("officialBoundaryNameMatch") or "").strip().upper()
-    region_name = str(REGION_CFG.get("name") or "Wilayah")
-    regency_name = str(REGION_CFG.get("regency") or "")
-    das_name = str(ro.get("bigRbiDasName") or "")
+    ro0 = targets[0].get("regionalOverlays") or {}
+    rbi_zip_name = str(ro0.get("bigRbiZipName") or "Agam.zip").strip()
+    rbi_gdb_name = str(ro0.get("bigRbiGdbName") or "RBI50K_AGAM_KUGI50_20221231.gdb").strip()
+    desa_gdb_name = str(ro0.get("bigDesaGdbName") or "BATASWILAYAH_DESA_20260601.gdb").strip()
 
     with tempfile.TemporaryDirectory(prefix="big-ref-") as tmp:
         desa_gdb = resolve_gdb(
@@ -187,145 +420,8 @@ def main():
                     "extracting official Desa/Nagari boundary only."
                 )
 
-        # 1. Extract BIG official village/nagari boundary from region.config.json
-        nagari_features = []
-        bbox_candidates = []
-        for geom, attrs in read_gdb_layer(str(desa_gdb), "BATAS_DESAKEL_AR", bbox=BBOX):
-            code = str(attrs.get("KDEPUM") or "").strip()
-            name = str(attrs.get("NAMOBJ") or attrs.get("WADMKD") or "").strip()
-            kec = str(attrs.get("WADMKC") or "").strip()
-            kab = str(attrs.get("WADMKK") or "").strip()
-            bbox_candidates.append({"KDEPUM": code, "NAMOBJ": name, "WADMKC": kec, "WADMKK": kab})
-            code_match = bool(target_code) and code == target_code
-            name_match = bool(target_name) and name.upper() == target_name
-            if not (code_match or name_match):
-                continue
-            gj = json.loads(pyogrio.to_geojson(geom) if hasattr(pyogrio, "to_geojson") else json.dumps(geom.__geo_interface__))
-            coords = round_coords(gj["coordinates"])
-            nagari_features.append(
-                {
-                    "type": "Feature",
-                    "properties": {
-                        "name_id": f"Batas Administrasi {region_name}",
-                        "name_en": f"{region_name} Administrative Boundary",
-                        "code": code or target_code,
-                        "kecamatan": kec or str(REGION_CFG.get("district") or ""),
-                        "kabupaten": kab or regency_name,
-                        "source": "BIG — Batas Wilayah Desa/Nagari",
-                        "official": True,
-                    },
-                    "geometry": {"type": gj["type"], "coordinates": coords},
-                }
-            )
-
-        if not nagari_features:
-            print(
-                f"[extract-big-ref] WARNING: No boundary matched officialBoundaryCode='{target_code}' "
-                f"or officialBoundaryNameMatch='{target_name}' inside bbox {BBOX}."
-            )
-            if bbox_candidates:
-                print("[extract-big-ref] Villages found inside your bbox (copy KDEPUM/NAMOBJ to region.config.json):")
-                for cand in bbox_candidates[:25]:
-                    print(f"  - {cand['KDEPUM']} | {cand['NAMOBJ']} ({cand['WADMKC']}, {cand['WADMKK']})")
-
-        out_nagari = RAW_DIR / "big-nagari-2026.geojson"
-        out_nagari.write_text(json.dumps({"type": "FeatureCollection", "features": nagari_features}))
-
-        # 2. Extract optional BIG RBI 50K layers if archive is present
-        rivers = []
-        culverts = []
-        bridges = []
-        weirs = []
-        toponyms = []
-        facilities = []
-
-        if rbi_gdb is not None:
-            for idx, (geom, attrs) in enumerate(read_gdb_layer(str(rbi_gdb), "SUNGAI_LN_50K", bbox=PAD_BBOX), 1):
-                raw_name = str(attrs.get("NAMOBJ") or "").strip()
-                remark = str(attrs.get("REMARK") or "").strip()
-                parts = list(geom.geoms) if geom.geom_type == "MultiLineString" else [geom]
-                for pi, line in enumerate(parts):
-                    coords = round_coords(line.__geo_interface__["coordinates"])
-                    if len(coords) < 2:
-                        continue
-                    rivers.append(
-                        {
-                            "type": "Feature",
-                            "properties": {
-                                "id": f"rbi22-{idx}" + (f"-{pi + 1}" if len(parts) > 1 else ""),
-                                "name": raw_name or f"Anak Sungai RBI #{idx}",
-                                "kind": "river" if raw_name.lower().startswith("sungai") else "stream",
-                                "das": das_name,
-                                "remark": remark,
-                                "source": "BIG — Peta RBI 1:50.000",
-                            },
-                            "geometry": {"type": "LineString", "coordinates": coords},
-                        }
-                    )
-
-            def extract_points(layer_name):
-                pts = []
-                try:
-                    rows = read_gdb_layer(str(rbi_gdb), layer_name, bbox=BBOX)
-                except Exception:
-                    return pts
-                for idx, (geom, attrs) in enumerate(rows, 1):
-                    c = round_coords([geom.x, geom.y])
-                    pts.append(
-                        {
-                            "idx": idx,
-                            "name": str(attrs.get("NAMOBJ") or "").strip(),
-                            "remark": str(attrs.get("REMARK") or "").strip(),
-                            "coords": c,
-                        }
-                    )
-                return pts
-
-            culverts = extract_points("GORONG_PT_50K")
-            bridges = extract_points("JEMBATAN_PT_50K")
-            weirs = extract_points("BENDUNG_PT_50K")
-            toponyms = extract_points("TOPONIMI_PT_50K")
-
-            for layer, cat in [
-                ("SARANAIBADAH_PT_50K", "worship"),
-                ("PENDIDIKAN_PT_50K", "school"),
-                ("PUSKESMAS_PT_50K", "health"),
-                ("PEMERINTAHAN_PT_50K", "gov"),
-            ]:
-                for pt in extract_points(layer):
-                    facilities.append({**pt, "category": cat})
-
-            out_rbi = RAW_DIR / "big-rbi-2022.json"
-            rbi_label = f"BIG RBI 1:50.000 {regency_name}".strip()
-            out_rbi.write_text(
-                json.dumps(
-                    {
-                        "source": f"{rbi_label} (KUGI50)",
-                        "rivers": rivers,
-                        "culverts": culverts,
-                        "bridges": bridges,
-                        "weirs": weirs,
-                        "facilities": facilities,
-                        "toponyms": toponyms,
-                    }
-                )
-            )
-
-        print(
-            json.dumps(
-                {
-                    "nagariFeatures": len(nagari_features),
-                    "rbiExtracted": rbi_gdb is not None,
-                    "rivers": len(rivers),
-                    "culverts": len(culverts),
-                    "bridges": len(bridges),
-                    "weirs": len(weirs),
-                    "facilities": len(facilities),
-                    "toponyms": len(toponyms),
-                },
-                indent=2,
-            )
-        )
+        for reg in targets:
+            extract_for_region(reg, default_region_id, desa_gdb, rbi_gdb)
 
 
 if __name__ == "__main__":

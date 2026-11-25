@@ -164,20 +164,21 @@ export function MapView(props: MapViewProps) {
   useEffect(() => {
     if (!containerRef.current) return;
     const { bbox, center } = props.datasets;
-    const pad = 0.015;
+    const pad = 0.02;
+    const centerPreset = props.region.cameraPresets[0];
     const map = new MapLibreMap({
       container: containerRef.current,
-      style: createInitialMapStyle(bbox),
+      style: createInitialMapStyle(bbox, props.dataBasePath),
       center,
-      zoom: 15.6,
+      zoom: props.region.defaultView.zoom ?? 15.6,
       minZoom: 11.4,
       maxZoom: 19,
       maxBounds: [
         [bbox.west - pad, bbox.south - pad],
         [bbox.east + pad, bbox.north + pad]
       ],
-      pitch: 36,
-      bearing: -12,
+      pitch: props.is3D ? (centerPreset?.pitch3D ?? 36) : 0,
+      bearing: props.is3D ? (centerPreset?.bearing3D ?? -12) : 0,
       maxPitch: 66,
       attributionControl: false
     });
@@ -220,6 +221,7 @@ export function MapView(props: MapViewProps) {
       const ds = props.datasets;
       addDataSourcesAndLayers(map, ds, props.basemap);
       contourMarkersRef.current = addStaticPlaceAndContourMarkers(map, ds, {
+        region: props.region,
         activeToolRef,
         onSelectJorongPillRef
       });
@@ -285,6 +287,12 @@ export function MapView(props: MapViewProps) {
 
     map.setLayoutProperty('nagari-boundary-casing', 'visibility', vis(props.layers.das));
     map.setLayoutProperty('nagari-boundary-line', 'visibility', vis(props.layers.das));
+    if (map.getLayer('sub-boundaries-casing')) {
+      map.setLayoutProperty('sub-boundaries-casing', 'visibility', vis(props.layers.das));
+    }
+    if (map.getLayer('sub-boundaries-line')) {
+      map.setLayoutProperty('sub-boundaries-line', 'visibility', vis(props.layers.das));
+    }
     map.setLayoutProperty('jorong-fill', 'visibility', vis(props.layers.das));
     map.setLayoutProperty('jorong-casing', 'visibility', vis(props.layers.das));
     map.setLayoutProperty('jorong-line', 'visibility', vis(props.layers.das));
@@ -610,11 +618,12 @@ export function MapView(props: MapViewProps) {
 
     if (props.dataVersion > 0) {
       const imgCoords = buildImageCoords(props.datasets.bbox);
+      const base = props.dataBasePath.replace(/\/+$/, '');
       for (const hid of HAND_LAYERS) {
         const imgSrc = map.getSource(`img-${hid}`) as ImageSource | undefined;
         if (imgSrc && typeof imgSrc.updateImage === 'function') {
           imgSrc.updateImage({
-            url: `/data/raster-${hid}.png?v=${props.dataVersion}`,
+            url: `${base}/raster-${hid}.png?v=${props.dataVersion}`,
             coordinates: imgCoords
           });
         }

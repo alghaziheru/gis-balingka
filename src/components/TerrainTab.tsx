@@ -1,7 +1,6 @@
 import { useId } from 'react';
 import { Droplets, MapPin, RotateCcw, SlidersHorizontal, TrendingUp, X } from 'lucide-react';
-import { REGION } from '../config/region';
-import { I18N } from '../i18n/translations';
+import { useActiveRegion, useT } from '../context/RegionContext';
 import type {
   ActiveTool,
   AgamStats,
@@ -61,7 +60,8 @@ export function TerrainTab({
   onSwitchToDetail
 }: TerrainTabProps) {
   const uid = useId();
-  const t = I18N[lang];
+  const region = useActiveRegion();
+  const t = useT(lang);
   const isEn = lang === 'en';
   const isDetail = viewMode === 'detail';
 
@@ -134,9 +134,9 @@ export function TerrainTab({
     </div>
   );
 
-  const jorongPresets = REGION.cameraPresets.map(p => ({ id: p.id, label: p.label }));
-  const hasRegionalOverlays = REGION.regionalOverlays.enabled;
-  const hasSentinelChange = REGION.regionalOverlays.sentinelChangeAvailable;
+  const jorongPresets = region.cameraPresets.map(p => ({ id: p.id, label: p.label }));
+  const hasRegionalOverlays = region.regionalOverlays.enabled;
+  const hasSentinelChange = region.regionalOverlays.sentinelChangeAvailable;
 
   const detailLayerItems: {
     key: keyof LayerToggles;
