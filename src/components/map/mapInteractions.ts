@@ -145,6 +145,7 @@ export interface MapInteractionRefs {
   onPromoteDemRef: MutableRefObject<(segId: string, coords: [number, number][]) => void>;
   onSuppressDemRef: MutableRefObject<(segId: string) => void>;
   onPromoteRbiRef: MutableRefObject<(name: string, kind: WaterwayKind, coords: [number, number][]) => void>;
+  onSetStructureBlockageOverrideRef: MutableRefObject<((structureId: string, pct: number | null) => void) | undefined>;
   onSnapFeedbackRef: MutableRefObject<((msg: string) => void) | undefined>;
 }
 
@@ -165,10 +166,13 @@ export function attachInteractiveLayerHandlers(map: MapLibreMap, refs: MapIntera
     popupRef: refs.popupRef,
     lang: refs.langRef.current,
     viewMode: refs.viewModeRef.current,
+    tab: refs.tabRef.current,
     demClient: refs.demRef.current,
     editorUnlocked: refs.editorUnlockedRef.current,
     apiAvailable: refs.apiAvailableRef.current,
     requiresPassphrase: refs.requiresPassphraseRef.current,
+    structureBlockageOverrides: refs.cascadeParamsRef.current.structureBlockageOverrides,
+    onSetStructureBlockageOverride: (stId, pct) => refs.onSetStructureBlockageOverrideRef.current?.(stId, pct),
     onVerifyCrossing: (draftId, coords, name, kind) =>
       refs.onVerifyCrossingRef.current(draftId, coords, name, kind),
     onOpenUnlock: () => refs.onOpenUnlockRef.current(),
@@ -227,11 +231,21 @@ export function attachMapClickAndCursorHandlers(map: MapLibreMap, refs: MapInter
       const hits = hitLayers.length > 0 ? map.queryRenderedFeatures(e.point, { layers: hitLayers }) : [];
       if (hits.length > 0) return;
 
-      // Click-to-explain corridor water zone during active simulation
-      if (refs.tabRef.current === 'sim' && refs.simProgressRef.current > 0.02 && refs.cascadeEngineRef.current) {
-        const poolLayers = ['sim-pools-shallow-fill', 'sim-pools-deep-fill'].filter(lid => Boolean(map.getLayer(lid)));
-        const poolHits = poolLayers.length > 0 ? map.queryRenderedFeatures(e.point, { layers: poolLayers }) : [];
-        if (poolHits.length > 0) {
+      // Click-to-explain corridor water zone / scour / survey / agreement during active simulation
+      if (refs.tabRef.current === 'sim' && refs.cascadeEngineRef.current) {
+        const simLayers = [
+          'sim-pools-shallow-fill',
+          'sim-pools-deep-fill',
+          'sim-scour-reaches-line',
+          'sim-survey-reaches-line'
+        ].filter(lid => Boolean(map.getLayer(lid)));
+        const simHits = simLayers.length > 0 ? map.queryRenderedFeatures(e.point, { layers: simLayers }) : [];
+        const sample = refs.cascadeEngineRef.current.sampleAtLngLat(e.lngLat.lng, e.lngLat.lat);
+        const hasActiveSignal =
+          refs.simProgressRef.current > 0.02 &&
+          sample.insideNagari &&
+          (sample.depthP90M > 0.1 || sample.fos < 1.35 || sample.streamPowerWm2 >= 280);
+        if (simHits.length > 0 || hasActiveSignal) {
           openCorridorExplainPopup(map, refs.popupRef, [e.lngLat.lng, e.lngLat.lat], {
             lang: refs.langRef.current,
             demClient: refs.demRef.current,

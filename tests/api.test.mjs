@@ -833,3 +833,172 @@ test('waterway cross-sections & Jorong boundary API enforce auth, persist to SQL
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('Structured culvert dimensions, field calibration marks, and calibration profile persist, enforce auth, export, and revert cleanly', async () => {
+  const { dir, dbPath } = makeTempDb('balingka-api-calib-');
+  const { dataDir, osmPath } = makeSyntheticPublicData(dir);
+  const secret = 'calib-pass-2026';
+  const { server } = createAppServer({
+    dbPath,
+    publicDataDir: dataDir,
+    seedGeoJsonPath: osmPath,
+    distDir: null,
+    adminPassphrase: secret
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const { port } = server.address();
+  const base = `http://127.0.0.1:${port}`;
+
+  try {
+    // 1. Structure with structured opening dimensions + default blockage persists & updates
+    const stRes = await fetch(`${base}/api/structures`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Admin-Passphrase': secret },
+      body: JSON.stringify({
+        name: 'Box Culvert Pasar Balingka',
+        kind: 'culvert',
+        status: 'clogged',
+        size_note: 'Box 1.4m x 1.1m',
+        opening_width_m: 1.4,
+        opening_height_m: 1.1,
+        default_blockage_pct: 45,
+        notes: 'Diukur meteran',
+        coordinates: [100.319, -0.338],
+        actor: 'Surveyor',
+        reason: 'Pengukuran dimensi bukaan gorong-gorong'
+      })
+    });
+    assert.equal(stRes.status, 201);
+    const stJson = await stRes.json();
+    assert.equal(stJson.feature.properties.opening_width_m, 1.4);
+    assert.equal(stJson.feature.properties.opening_height_m, 1.1);
+    assert.equal(stJson.feature.properties.default_blockage_pct, 45);
+
+    // 2. Public GET /api/calibration succeeds; mutations without passphrase fail with 401
+    const pubCal = await fetch(`${base}/api/calibration`);
+    assert.equal(pubCal.status, 200);
+    const pubCalJson = await pubCal.json();
+    assert.equal(pubCalJson.calibrationMarks.features.length, 0);
+    assert.equal(pubCalJson.calibrationProfile, null);
+
+    const unauthMark = await fetch(`${base}/api/calibration-marks`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'HWM Unauth', kind: 'hwm', coordinates: [100.32, -0.34] })
+    });
+    assert.equal(unauthMark.status, 401);
+
+    const unauthProf = await fetch(`${base}/api/calibration-profile`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ manningMult: 1.1, cnOffset: 2, cohesionMult: 0.95 })
+    });
+    assert.equal(unauthProf.status, 401);
+
+    // 3. Create, update, delete, and audit-revert a field calibration mark
+    const cmCreate = await fetch(`${base}/api/calibration-marks`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Admin-Passphrase': secret },
+      body: JSON.stringify({
+        name: 'Garis Lumpur Pilar Jembatan',
+        kind: 'hwm',
+        observed_depth_m: 1.25,
+        rain_mm_hr: 110,
+        duration_min: 180,
+        antecedent_5d_mm: 135,
+        notes: 'Terukur di dinding beton hilir',
+        coordinates: [100.3185, -0.3395],
+        actor: 'Surveyor',
+        reason: 'Catat benchmark tinggi muka air'
+      })
+    });
+    assert.equal(cmCreate.status, 201);
+    const cmCreated = await cmCreate.json();
+    assert.equal(cmCreated.feature.properties.observed_depth_m, 1.25);
+    const cmId = cmCreated.feature.properties.id;
+
+    const cmUpd = await fetch(`${base}/api/calibration-marks/${encodeURIComponent(cmId)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', 'X-Admin-Passphrase': secret },
+      body: JSON.stringify({
+        observed_depth_m: 1.35,
+        actor: 'Surveyor',
+        reason: 'Koreksi hasil ukur ulang'
+      })
+    });
+    assert.equal(cmUpd.status, 200);
+    const cmUpdated = await cmUpd.json();
+    assert.equal(cmUpdated.feature.properties.observed_depth_m, 1.35);
+
+    const cmDel = await fetch(`${base}/api/calibration-marks/${encodeURIComponent(cmId)}`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json', 'X-Admin-Passphrase': secret },
+      body: JSON.stringify({ actor: 'Admin', reason: 'Uji hapus benchmark' })
+    });
+    assert.equal(cmDel.status, 200);
+    const cmDelJson = await cmDel.json();
+    assert.equal((await (await fetch(`${base}/api/calibration`)).json()).calibrationMarks.features.length, 0);
+
+    // Revert delete -> restores mark with 1.35m depth
+    const cmRev = await fetch(`${base}/api/audit/${cmDelJson.log.id}/revert`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Admin-Passphrase': secret },
+      body: JSON.stringify({ actor: 'Admin', reason: 'Pulihkan benchmark' })
+    });
+    assert.equal(cmRev.status, 200);
+    const afterCmRev = await (await fetch(`${base}/api/calibration`)).json();
+    assert.equal(afterCmRev.calibrationMarks.features.length, 1);
+    assert.equal(afterCmRev.calibrationMarks.features[0].properties.observed_depth_m, 1.35);
+
+    // 4. Save calibration profile, verify export bundle, then revert back to null
+    const profRes = await fetch(`${base}/api/calibration-profile`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', 'X-Admin-Passphrase': secret },
+      body: JSON.stringify({
+        manningMult: 1.08,
+        cnOffset: 2,
+        cohesionMult: 0.95,
+        rmseM: 0.28,
+        scourCsi: 18,
+        landslideAuc: 0.74,
+        actor: 'Surveyor',
+        reason: 'Simpan hasil kalibrasi lokal'
+      })
+    });
+    assert.equal(profRes.status, 200);
+    const profJson = await profRes.json();
+    assert.equal(profJson.profile.manningMult, 1.08);
+    assert.equal(profJson.profile.cnOffset, 2);
+
+    const bundle = await (await fetch(`${base}/api/export/bundle`)).json();
+    assert.equal(bundle.calibrationMarks.features.length, 1);
+    assert.equal(bundle.calibrationProfile.manningMult, 1.08);
+
+    // Trigger recompute to verify static seed export includes calibration files & structured dimensions
+    const recRes = await fetch(`${base}/api/hydrology/recompute`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Admin-Passphrase': secret },
+      body: JSON.stringify({ actor: 'Surveyor' })
+    });
+    assert.equal(recRes.status, 200);
+    const exportedMarks = JSON.parse(fs.readFileSync(path.join(dataDir, 'calibration-marks.geojson'), 'utf8'));
+    const exportedProf = JSON.parse(fs.readFileSync(path.join(dataDir, 'calibration-profile.json'), 'utf8'));
+    const exportedStructs = JSON.parse(fs.readFileSync(path.join(dataDir, 'verified-structures.geojson'), 'utf8'));
+    assert.equal(exportedMarks.features.length, 1);
+    assert.equal(exportedProf.manningMult, 1.08);
+    assert.equal(exportedStructs.features[0].properties.opening_width_m, 1.4);
+
+    // Revert calibration profile update -> restores null
+    const profRev = await fetch(`${base}/api/audit/${profJson.log.id}/revert`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Admin-Passphrase': secret },
+      body: JSON.stringify({ actor: 'Admin', reason: 'Reset profil via revert' })
+    });
+    assert.equal(profRev.status, 200);
+    const afterProfRev = await (await fetch(`${base}/api/calibration`)).json();
+    assert.equal(afterProfRev.calibrationProfile, null);
+  } finally {
+    await new Promise(resolve => server.close(resolve));
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

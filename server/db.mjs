@@ -36,6 +36,7 @@ export const DEFAULT_SEED_PATH = path.join(ROOT, 'public', 'data', 'osm-context.
 const VALID_KINDS = new Set(['river', 'stream', 'canal', 'drain', 'culvert']);
 const VALID_STRUCTURE_KINDS = new Set(['culvert', 'bridge']);
 const VALID_JORONG_STATUSES = new Set(['indicative', 'verified']);
+const VALID_CALIBRATION_KINDS = new Set(['hwm', 'scour', 'landslide_scar']);
 const VALID_STATUSES = new Set(['normal', 'clogged', 'damaged', 'critical']);
 const VALID_SUGGESTION_STATUSES = new Set(['open', 'reviewing', 'resolved', 'rejected']);
 
@@ -194,6 +195,61 @@ function jorongRowToSnapshot(row) {
   };
 }
 
+function normalizePercent(val) {
+  if (val === null || val === undefined || val === '') return null;
+  const n = Number(val);
+  if (!Number.isFinite(n) || n < 0 || n > 100) {
+    throw new Error('Percentage must be between 0 and 100.');
+  }
+  return Number(n.toFixed(1));
+}
+
+function normalizeCalibrationKind(kind, fallback = 'hwm') {
+  const k = String(kind || fallback).trim().toLowerCase();
+  return VALID_CALIBRATION_KINDS.has(k) ? k : fallback;
+}
+
+function calibrationMarkRowToFeature(row) {
+  return {
+    type: 'Feature',
+    properties: {
+      id: row.id,
+      name: row.name,
+      kind: row.kind,
+      observed_depth_m: row.observed_depth_m ?? null,
+      rain_mm_hr: Number(row.rain_mm_hr || 80),
+      duration_min: Number(row.duration_min || 180),
+      antecedent_5d_mm: Number(row.antecedent_5d_mm ?? 90),
+      notes: row.notes || '',
+      updated_by: row.updated_by,
+      updated_at: row.updated_at
+    },
+    geometry: {
+      type: 'Point',
+      coordinates: [row.lng, row.lat]
+    }
+  };
+}
+
+function calibrationMarkRowToSnapshot(row) {
+  return {
+    id: row.id,
+    name: row.name,
+    kind: row.kind,
+    observed_depth_m: row.observed_depth_m ?? null,
+    rain_mm_hr: Number(row.rain_mm_hr || 80),
+    duration_min: Number(row.duration_min || 180),
+    antecedent_5d_mm: Number(row.antecedent_5d_mm ?? 90),
+    notes: row.notes || '',
+    lng: row.lng,
+    lat: row.lat,
+    coordinates: [row.lng, row.lat],
+    updated_by: row.updated_by,
+    updated_at: row.updated_at,
+    deleted: Boolean(row.deleted)
+  };
+}
+
 function structureRowToFeature(row) {
   return {
     type: 'Feature',
@@ -205,6 +261,9 @@ function structureRowToFeature(row) {
       source: row.source,
       source_ref: row.source_ref || null,
       size_note: row.size_note || '',
+      opening_width_m: row.opening_width_m ?? null,
+      opening_height_m: row.opening_height_m ?? null,
+      default_blockage_pct: row.default_blockage_pct ?? null,
       notes: row.notes || '',
       updated_by: row.updated_by,
       updated_at: row.updated_at
@@ -225,6 +284,9 @@ function structureRowToSnapshot(row) {
     source: row.source,
     source_ref: row.source_ref || null,
     size_note: row.size_note || '',
+    opening_width_m: row.opening_width_m ?? null,
+    opening_height_m: row.opening_height_m ?? null,
+    default_blockage_pct: row.default_blockage_pct ?? null,
     notes: row.notes || '',
     lng: row.lng,
     lat: row.lat,
@@ -388,12 +450,33 @@ export function createStore(dbPath = DEFAULT_DB_PATH, seedGeoJsonPath = DEFAULT_
       updated_at TEXT NOT NULL,
       deleted INTEGER NOT NULL DEFAULT 0
     );
+
+    CREATE TABLE IF NOT EXISTS calibration_marks (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      kind TEXT NOT NULL DEFAULT 'hwm',
+      observed_depth_m REAL,
+      rain_mm_hr REAL NOT NULL DEFAULT 80,
+      duration_min INTEGER NOT NULL DEFAULT 180,
+      antecedent_5d_mm REAL NOT NULL DEFAULT 90,
+      notes TEXT NOT NULL DEFAULT '',
+      lng REAL NOT NULL,
+      lat REAL NOT NULL,
+      updated_by TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      deleted INTEGER NOT NULL DEFAULT 0
+    );
   `);
 
   const wwCols = new Set(db.prepare('PRAGMA table_info(waterways)').all().map(c => c.name));
   if (!wwCols.has('width_pre_m')) db.exec('ALTER TABLE waterways ADD COLUMN width_pre_m REAL;');
   if (!wwCols.has('width_post_m')) db.exec('ALTER TABLE waterways ADD COLUMN width_post_m REAL;');
   if (!wwCols.has('depth_m')) db.exec('ALTER TABLE waterways ADD COLUMN depth_m REAL;');
+
+  const stCols = new Set(db.prepare('PRAGMA table_info(structures)').all().map(c => c.name));
+  if (!stCols.has('opening_width_m')) db.exec('ALTER TABLE structures ADD COLUMN opening_width_m REAL;');
+  if (!stCols.has('opening_height_m')) db.exec('ALTER TABLE structures ADD COLUMN opening_height_m REAL;');
+  if (!stCols.has('default_blockage_pct')) db.exec('ALTER TABLE structures ADD COLUMN default_blockage_pct REAL;');
 
   function getMeta(key, fallback = null) {
     const row = db.prepare('SELECT value FROM app_meta WHERE key = ?').get(key);
@@ -462,9 +545,9 @@ export function createStore(dbPath = DEFAULT_DB_PATH, seedGeoJsonPath = DEFAULT_
     `);
     const insertSt = db.prepare(`
       INSERT INTO structures (
-        id, name, kind, status, source, source_ref, size_note, notes,
+        id, name, kind, status, source, source_ref, size_note, opening_width_m, opening_height_m, default_blockage_pct, notes,
         lng, lat, updated_by, updated_at, deleted
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
     `);
     const insertSup = db.prepare(`
       INSERT INTO suppressed_dem_segments (seg_id, reason, replaced_by_waterway_id, updated_by, updated_at)
@@ -523,10 +606,16 @@ export function createStore(dbPath = DEFAULT_DB_PATH, seedGeoJsonPath = DEFAULT_
         const source = ['manual', 'crossing_promoted', 'osm'].includes(p.source) ? p.source : 'manual';
         const sourceRef = p.source_ref ? String(p.source_ref) : null;
         const sizeNote = String(p.size_note || '');
+        const openingWidthM = normalizePositiveMeters(p.opening_width_m);
+        const openingHeightM = normalizePositiveMeters(p.opening_height_m);
+        const defaultBlockagePct = normalizePercent(p.default_blockage_pct);
         const notes = String(p.notes || '');
         const updatedBy = String(p.updated_by || 'System (Git Seed)');
         const updatedAt = String(p.updated_at || now);
-        insertSt.run(id, name, kind, status, source, sourceRef, sizeNote, notes, pt[0], pt[1], updatedBy, updatedAt);
+        insertSt.run(
+          id, name, kind, status, source, sourceRef, sizeNote, openingWidthM, openingHeightM, defaultBlockagePct, notes,
+          pt[0], pt[1], updatedBy, updatedAt
+        );
         seededStructures += 1;
       }
 
@@ -629,6 +718,16 @@ export function createStore(dbPath = DEFAULT_DB_PATH, seedGeoJsonPath = DEFAULT_
       const jbRows = db
         .prepare('SELECT * FROM jorong_boundaries WHERE deleted = 0 ORDER BY name ASC')
         .all();
+      const calRows = db
+        .prepare('SELECT * FROM calibration_marks WHERE deleted = 0 ORDER BY updated_at DESC, name ASC')
+        .all();
+      let calibrationProfile = null;
+      const rawProf = getMeta('calibration_profile_json', null);
+      if (rawProf) {
+        try {
+          calibrationProfile = JSON.parse(rawProf);
+        } catch {}
+      }
       return {
         waterways: {
           type: 'FeatureCollection',
@@ -642,6 +741,11 @@ export function createStore(dbPath = DEFAULT_DB_PATH, seedGeoJsonPath = DEFAULT_
           type: 'FeatureCollection',
           features: jbRows.map(jorongRowToFeature)
         },
+        calibrationMarks: {
+          type: 'FeatureCollection',
+          features: calRows.map(calibrationMarkRowToFeature)
+        },
+        calibrationProfile,
         suppressedDem: supRows.map(r => ({
           seg_id: r.seg_id,
           reason: r.reason || '',
@@ -651,6 +755,173 @@ export function createStore(dbPath = DEFAULT_DB_PATH, seedGeoJsonPath = DEFAULT_
         })),
         hydroStatus: this.getHydroStatus()
       };
+    },
+
+    createCalibrationMark(payload) {
+      const name = String(payload?.name || '').trim();
+      if (!name) throw new Error('Calibration mark name is required.');
+      const coordInput = Array.isArray(payload?.coordinates)
+        ? payload.coordinates
+        : [payload?.lng, payload?.lat];
+      const [lng, lat] = normalizePoint(coordInput[0], coordInput[1]);
+      const kind = normalizeCalibrationKind(payload?.kind, 'hwm');
+      const observedDepthM =
+        payload?.observed_depth_m !== undefined && payload?.observed_depth_m !== null && payload?.observed_depth_m !== ''
+          ? normalizePositiveMeters(payload.observed_depth_m)
+          : null;
+      const rainMmHr = Math.max(10, Math.min(250, Number(payload?.rain_mm_hr) || 80));
+      const durationMin = Math.max(15, Math.min(720, Math.round(Number(payload?.duration_min) || 180)));
+      const antecedent5dMm = Math.max(0, Math.min(300, Number(payload?.antecedent_5d_mm ?? 90) || 0));
+      const notes = String(payload?.notes || '').trim().slice(0, 600);
+      const actor = String(payload?.actor || 'Editor').trim() || 'Editor';
+      const reason = String(payload?.reason || '').trim() || 'Tambah titik benchmark kalibrasi lapangan';
+      const id = `cal-${crypto.randomUUID().slice(0, 8)}`;
+      const now = new Date().toISOString();
+
+      db.prepare(`
+        INSERT INTO calibration_marks (
+          id, name, kind, observed_depth_m, rain_mm_hr, duration_min, antecedent_5d_mm, notes,
+          lng, lat, updated_by, updated_at, deleted
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+      `).run(id, name.slice(0, 120), kind, observedDepthM, rainMmHr, durationMin, antecedent5dMm, notes, lng, lat, actor, now);
+
+      const row = db.prepare('SELECT * FROM calibration_marks WHERE id = ?').get(id);
+      const log = appendAudit({
+        createdAt: now,
+        actor,
+        action: 'create_calibration_mark',
+        entityType: 'calibration_mark',
+        entityId: id,
+        entityName: name,
+        reason,
+        before: null,
+        after: calibrationMarkRowToSnapshot(row)
+      });
+      return { feature: calibrationMarkRowToFeature(row), log };
+    },
+
+    updateCalibrationMark(id, payload) {
+      const existing = db.prepare('SELECT * FROM calibration_marks WHERE id = ? AND deleted = 0').get(id);
+      if (!existing) {
+        const err = new Error('Calibration mark not found.');
+        err.statusCode = 404;
+        throw err;
+      }
+      const before = calibrationMarkRowToSnapshot(existing);
+      const name = payload?.name !== undefined ? String(payload.name).trim() : existing.name;
+      if (!name) throw new Error('Calibration mark name cannot be empty.');
+      const kind = payload?.kind !== undefined ? normalizeCalibrationKind(payload.kind, existing.kind) : existing.kind;
+      const observedDepthM =
+        payload?.observed_depth_m !== undefined
+          ? payload.observed_depth_m === null || payload.observed_depth_m === ''
+            ? null
+            : normalizePositiveMeters(payload.observed_depth_m)
+          : existing.observed_depth_m;
+      const rainMmHr =
+        payload?.rain_mm_hr !== undefined ? Math.max(10, Math.min(250, Number(payload.rain_mm_hr) || existing.rain_mm_hr)) : existing.rain_mm_hr;
+      const durationMin =
+        payload?.duration_min !== undefined ? Math.max(15, Math.min(720, Math.round(Number(payload.duration_min) || existing.duration_min))) : existing.duration_min;
+      const antecedent5dMm =
+        payload?.antecedent_5d_mm !== undefined ? Math.max(0, Math.min(300, Number(payload.antecedent_5d_mm) || 0)) : existing.antecedent_5d_mm;
+      const notes = payload?.notes !== undefined ? String(payload.notes).trim().slice(0, 600) : existing.notes;
+      let lng = existing.lng;
+      let lat = existing.lat;
+      if (Array.isArray(payload?.coordinates) && payload.coordinates.length >= 2) {
+        [lng, lat] = normalizePoint(payload.coordinates[0], payload.coordinates[1]);
+      }
+      const actor = String(payload?.actor || 'Editor').trim() || 'Editor';
+      const reason = String(payload?.reason || '').trim() || 'Perbarui titik benchmark kalibrasi';
+      const now = new Date().toISOString();
+
+      db.prepare(`
+        UPDATE calibration_marks
+        SET name = ?, kind = ?, observed_depth_m = ?, rain_mm_hr = ?, duration_min = ?, antecedent_5d_mm = ?,
+            notes = ?, lng = ?, lat = ?, updated_by = ?, updated_at = ?
+        WHERE id = ?
+      `).run(name.slice(0, 120), kind, observedDepthM, rainMmHr, durationMin, antecedent5dMm, notes, lng, lat, actor, now, id);
+
+      const updated = db.prepare('SELECT * FROM calibration_marks WHERE id = ?').get(id);
+      const log = appendAudit({
+        createdAt: now,
+        actor,
+        action: 'update_calibration_mark',
+        entityType: 'calibration_mark',
+        entityId: id,
+        entityName: name,
+        reason,
+        before,
+        after: calibrationMarkRowToSnapshot(updated)
+      });
+      return { feature: calibrationMarkRowToFeature(updated), log };
+    },
+
+    deleteCalibrationMark(id, payload = {}) {
+      const existing = db.prepare('SELECT * FROM calibration_marks WHERE id = ? AND deleted = 0').get(id);
+      if (!existing) {
+        const err = new Error('Calibration mark not found.');
+        err.statusCode = 404;
+        throw err;
+      }
+      const before = calibrationMarkRowToSnapshot(existing);
+      const actor = String(payload?.actor || 'Editor').trim() || 'Editor';
+      const reason = String(payload?.reason || '').trim() || 'Hapus titik benchmark kalibrasi';
+      const now = new Date().toISOString();
+      db.prepare('UPDATE calibration_marks SET deleted = 1, updated_by = ?, updated_at = ? WHERE id = ?').run(actor, now, id);
+      const log = appendAudit({
+        createdAt: now,
+        actor,
+        action: 'delete_calibration_mark',
+        entityType: 'calibration_mark',
+        entityId: id,
+        entityName: existing.name,
+        reason,
+        before,
+        after: null
+      });
+      return { deletedId: id, log };
+    },
+
+    saveCalibrationProfile(payload) {
+      const manningMult = Math.max(0.65, Math.min(1.5, Number(payload?.manningMult) || 1.0));
+      const cnOffset = Math.max(-8, Math.min(8, Number(payload?.cnOffset) || 0));
+      const cohesionMult = Math.max(0.7, Math.min(1.4, Number(payload?.cohesionMult) || 1.0));
+      const actor = String(payload?.actor || 'Editor').trim() || 'Editor';
+      const reason = String(payload?.reason || '').trim() || 'Simpan profil kalibrasi parameter hidrologi';
+      const now = new Date().toISOString();
+
+      let before = null;
+      const prevRaw = getMeta('calibration_profile_json', null);
+      if (prevRaw) {
+        try {
+          before = JSON.parse(prevRaw);
+        } catch {}
+      }
+
+      const nextProfile = {
+        manningMult: Number(manningMult.toFixed(3)),
+        cnOffset: Number(cnOffset.toFixed(1)),
+        cohesionMult: Number(cohesionMult.toFixed(3)),
+        rmseM: payload?.rmseM != null && Number.isFinite(Number(payload.rmseM)) ? Number(Number(payload.rmseM).toFixed(2)) : null,
+        scourCsi: payload?.scourCsi != null && Number.isFinite(Number(payload.scourCsi)) ? Number(Number(payload.scourCsi).toFixed(1)) : null,
+        landslideAuc: payload?.landslideAuc != null && Number.isFinite(Number(payload.landslideAuc)) ? Number(Number(payload.landslideAuc).toFixed(3)) : null,
+        notes: String(payload?.notes || '').trim().slice(0, 300),
+        updatedBy: actor,
+        updatedAt: now
+      };
+      setMeta('calibration_profile_json', JSON.stringify(nextProfile));
+
+      const log = appendAudit({
+        createdAt: now,
+        actor,
+        action: 'update_calibration_profile',
+        entityType: 'calibration_profile',
+        entityId: 'regional-profile',
+        entityName: 'Profil Kalibrasi Hidrologi',
+        reason,
+        before,
+        after: nextProfile
+      });
+      return { profile: nextProfile, log };
     },
 
     createStructure(payload) {
@@ -667,6 +938,9 @@ export function createStore(dbPath = DEFAULT_DB_PATH, seedGeoJsonPath = DEFAULT_
         : 'manual';
       const sourceRef = payload?.source_ref ? String(payload.source_ref).trim() : null;
       const sizeNote = String(payload?.size_note || '').trim().slice(0, 120);
+      const openingWidthM = normalizePositiveMeters(payload?.opening_width_m);
+      const openingHeightM = normalizePositiveMeters(payload?.opening_height_m);
+      const defaultBlockagePct = normalizePercent(payload?.default_blockage_pct);
       const notes = String(payload?.notes || '').trim();
       const actor = String(payload?.actor || 'Editor').trim() || 'Editor';
       const reason =
@@ -679,10 +953,13 @@ export function createStore(dbPath = DEFAULT_DB_PATH, seedGeoJsonPath = DEFAULT_
 
       db.prepare(`
         INSERT INTO structures (
-          id, name, kind, status, source, source_ref, size_note, notes,
+          id, name, kind, status, source, source_ref, size_note, opening_width_m, opening_height_m, default_blockage_pct, notes,
           lng, lat, updated_by, updated_at, deleted
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
-      `).run(id, name, kind, status, source, sourceRef, sizeNote, notes, lng, lat, actor, now);
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+      `).run(
+        id, name, kind, status, source, sourceRef, sizeNote, openingWidthM, openingHeightM, defaultBlockagePct, notes,
+        lng, lat, actor, now
+      );
 
       const row = db.prepare('SELECT * FROM structures WHERE id = ?').get(id);
       const snapshot = structureRowToSnapshot(row);
@@ -714,6 +991,12 @@ export function createStore(dbPath = DEFAULT_DB_PATH, seedGeoJsonPath = DEFAULT_
       const kind = payload?.kind !== undefined ? normalizeStructureKind(payload.kind, existing.kind) : existing.kind;
       const status = payload?.status !== undefined ? normalizeStatus(payload.status, existing.status) : existing.status;
       const sizeNote = payload?.size_note !== undefined ? String(payload.size_note).trim().slice(0, 120) : existing.size_note;
+      const openingWidthM =
+        payload?.opening_width_m !== undefined ? normalizePositiveMeters(payload.opening_width_m) : existing.opening_width_m ?? null;
+      const openingHeightM =
+        payload?.opening_height_m !== undefined ? normalizePositiveMeters(payload.opening_height_m) : existing.opening_height_m ?? null;
+      const defaultBlockagePct =
+        payload?.default_blockage_pct !== undefined ? normalizePercent(payload.default_blockage_pct) : existing.default_blockage_pct ?? null;
       const notes = payload?.notes !== undefined ? String(payload.notes).trim() : existing.notes;
       let lng = existing.lng;
       let lat = existing.lat;
@@ -728,9 +1011,13 @@ export function createStore(dbPath = DEFAULT_DB_PATH, seedGeoJsonPath = DEFAULT_
 
       db.prepare(`
         UPDATE structures
-        SET name = ?, kind = ?, status = ?, size_note = ?, notes = ?, lng = ?, lat = ?, updated_by = ?, updated_at = ?
+        SET name = ?, kind = ?, status = ?, size_note = ?, opening_width_m = ?, opening_height_m = ?, default_blockage_pct = ?,
+            notes = ?, lng = ?, lat = ?, updated_by = ?, updated_at = ?
         WHERE id = ?
-      `).run(name, kind, status, sizeNote, notes, lng, lat, actor, now, id);
+      `).run(
+        name, kind, status, sizeNote, openingWidthM, openingHeightM, defaultBlockagePct,
+        notes, lng, lat, actor, now, id
+      );
 
       const updated = db.prepare('SELECT * FROM structures WHERE id = ?').get(id);
       const after = structureRowToSnapshot(updated);
@@ -1268,9 +1555,9 @@ export function createStore(dbPath = DEFAULT_DB_PATH, seedGeoJsonPath = DEFAULT_
         const [lng, lat] = normalizePoint(snap.lng ?? snap.coordinates?.[0], snap.lat ?? snap.coordinates?.[1]);
         db.prepare(`
           INSERT INTO structures (
-            id, name, kind, status, source, source_ref, size_note, notes,
+            id, name, kind, status, source, source_ref, size_note, opening_width_m, opening_height_m, default_blockage_pct, notes,
             lng, lat, updated_by, updated_at, deleted
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
           ON CONFLICT(id) DO UPDATE SET
             name = excluded.name,
             kind = excluded.kind,
@@ -1278,6 +1565,9 @@ export function createStore(dbPath = DEFAULT_DB_PATH, seedGeoJsonPath = DEFAULT_
             source = excluded.source,
             source_ref = excluded.source_ref,
             size_note = excluded.size_note,
+            opening_width_m = excluded.opening_width_m,
+            opening_height_m = excluded.opening_height_m,
+            default_blockage_pct = excluded.default_blockage_pct,
             notes = excluded.notes,
             lng = excluded.lng,
             lat = excluded.lat,
@@ -1292,6 +1582,9 @@ export function createStore(dbPath = DEFAULT_DB_PATH, seedGeoJsonPath = DEFAULT_
           snap.source || 'manual',
           snap.source_ref || null,
           snap.size_note || '',
+          normalizePositiveMeters(snap.opening_width_m),
+          normalizePositiveMeters(snap.opening_height_m),
+          normalizePercent(snap.default_blockage_pct),
           snap.notes || '',
           lng,
           lat,
@@ -1377,6 +1670,104 @@ export function createStore(dbPath = DEFAULT_DB_PATH, seedGeoJsonPath = DEFAULT_
           reason,
           before: currentSnapshot,
           after: jorongRowToSnapshot(restoredRow),
+          revertedLogId: target.id
+        });
+        return { log, state: this.getState() };
+      }
+
+      if (target.entity_type === 'calibration_mark') {
+        const curRow = db.prepare('SELECT * FROM calibration_marks WHERE id = ?').get(target.entity_id);
+        const currentSnapshot = curRow && !curRow.deleted ? calibrationMarkRowToSnapshot(curRow) : null;
+
+        if (!target.before) {
+          db.prepare('UPDATE calibration_marks SET deleted = 1, updated_by = ?, updated_at = ? WHERE id = ?').run(
+            actor,
+            now,
+            target.entity_id
+          );
+          const log = appendAudit({
+            createdAt: now,
+            actor,
+            action: 'revert',
+            entityType: 'calibration_mark',
+            entityId: target.entity_id,
+            entityName: target.entity_name,
+            reason,
+            before: currentSnapshot,
+            after: null,
+            revertedLogId: target.id
+          });
+          return { log, state: this.getState() };
+        }
+
+        const snap = target.before;
+        const [lng, lat] = normalizePoint(snap.lng ?? snap.coordinates?.[0], snap.lat ?? snap.coordinates?.[1]);
+        db.prepare(`
+          INSERT INTO calibration_marks (
+            id, name, kind, observed_depth_m, rain_mm_hr, duration_min, antecedent_5d_mm, notes,
+            lng, lat, updated_by, updated_at, deleted
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+          ON CONFLICT(id) DO UPDATE SET
+            name = excluded.name,
+            kind = excluded.kind,
+            observed_depth_m = excluded.observed_depth_m,
+            rain_mm_hr = excluded.rain_mm_hr,
+            duration_min = excluded.duration_min,
+            antecedent_5d_mm = excluded.antecedent_5d_mm,
+            notes = excluded.notes,
+            lng = excluded.lng,
+            lat = excluded.lat,
+            updated_by = excluded.updated_by,
+            updated_at = excluded.updated_at,
+            deleted = 0
+        `).run(
+          snap.id,
+          snap.name,
+          normalizeCalibrationKind(snap.kind, 'hwm'),
+          snap.observed_depth_m ?? null,
+          Number(snap.rain_mm_hr || 80),
+          Number(snap.duration_min || 180),
+          Number(snap.antecedent_5d_mm ?? 90),
+          snap.notes || '',
+          lng,
+          lat,
+          actor,
+          now
+        );
+        const restoredRow = db.prepare('SELECT * FROM calibration_marks WHERE id = ?').get(snap.id);
+        const log = appendAudit({
+          createdAt: now,
+          actor,
+          action: 'revert',
+          entityType: 'calibration_mark',
+          entityId: snap.id,
+          entityName: snap.name,
+          reason,
+          before: currentSnapshot,
+          after: calibrationMarkRowToSnapshot(restoredRow),
+          revertedLogId: target.id
+        });
+        return { log, state: this.getState() };
+      }
+
+      if (target.entity_type === 'calibration_profile') {
+        const prevRaw = getMeta('calibration_profile_json', null);
+        const currentProfile = prevRaw ? JSON.parse(prevRaw) : null;
+        if (!target.before) {
+          db.prepare('DELETE FROM app_meta WHERE key = ?').run('calibration_profile_json');
+        } else {
+          setMeta('calibration_profile_json', JSON.stringify(target.before));
+        }
+        const log = appendAudit({
+          createdAt: now,
+          actor,
+          action: 'revert',
+          entityType: 'calibration_profile',
+          entityId: 'regional-profile',
+          entityName: 'Profil Kalibrasi Hidrologi',
+          reason,
+          before: currentProfile,
+          after: target.before || null,
           revertedLogId: target.id
         });
         return { log, state: this.getState() };
@@ -1530,9 +1921,9 @@ export function createStore(dbPath = DEFAULT_DB_PATH, seedGeoJsonPath = DEFAULT_
       `);
       const upsertSt = db.prepare(`
         INSERT INTO structures (
-          id, name, kind, status, source, source_ref, size_note, notes,
+          id, name, kind, status, source, source_ref, size_note, opening_width_m, opening_height_m, default_blockage_pct, notes,
           lng, lat, updated_by, updated_at, deleted
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
         ON CONFLICT(id) DO UPDATE SET
           name = excluded.name,
           kind = excluded.kind,
@@ -1540,6 +1931,9 @@ export function createStore(dbPath = DEFAULT_DB_PATH, seedGeoJsonPath = DEFAULT_
           source = excluded.source,
           source_ref = excluded.source_ref,
           size_note = excluded.size_note,
+          opening_width_m = COALESCE(excluded.opening_width_m, structures.opening_width_m),
+          opening_height_m = COALESCE(excluded.opening_height_m, structures.opening_height_m),
+          default_blockage_pct = COALESCE(excluded.default_blockage_pct, structures.default_blockage_pct),
           notes = excluded.notes,
           lng = excluded.lng,
           lat = excluded.lat,
@@ -1601,10 +1995,16 @@ export function createStore(dbPath = DEFAULT_DB_PATH, seedGeoJsonPath = DEFAULT_
           const source = ['manual', 'crossing_promoted', 'osm'].includes(p.source) ? p.source : 'manual';
           const sourceRef = p.source_ref ? String(p.source_ref) : null;
           const sizeNote = String(p.size_note || '');
+          const openingWidthM = normalizePositiveMeters(p.opening_width_m);
+          const openingHeightM = normalizePositiveMeters(p.opening_height_m);
+          const defaultBlockagePct = normalizePercent(p.default_blockage_pct);
           const notes = String(p.notes || '');
           const updatedBy = String(p.updated_by || actor);
           const updatedAt = String(p.updated_at || now);
-          upsertSt.run(id, name, kind, status, source, sourceRef, sizeNote, notes, pt[0], pt[1], updatedBy, updatedAt);
+          upsertSt.run(
+            id, name, kind, status, source, sourceRef, sizeNote, openingWidthM, openingHeightM, defaultBlockagePct, notes,
+            pt[0], pt[1], updatedBy, updatedAt
+          );
           importedStructures += 1;
         }
 
@@ -1649,6 +2049,8 @@ export function createStore(dbPath = DEFAULT_DB_PATH, seedGeoJsonPath = DEFAULT_
         verifiedWaterways: state.waterways,
         verifiedStructures: state.structures,
         jorongBoundaries: state.jorongBoundaries,
+        calibrationMarks: state.calibrationMarks,
+        calibrationProfile: state.calibrationProfile,
         suppressedDem: state.suppressedDem,
         auditLogs,
         suggestionsCount

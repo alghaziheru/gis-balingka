@@ -1,4 +1,5 @@
-import type { SoilMoisture } from '../types/gis';
+import type { SimNetworkData, SoilMoisture } from '../types/gis';
+import { adjustCnForAntecedent } from './reachRouter.ts';
 
 export interface ChannelHydraulicInput {
   widthM: number;
@@ -7,7 +8,9 @@ export interface ChannelHydraulicInput {
   slopePct: number;
   catchmentKm2: number;
   soilMoisture: SoilMoisture;
+  antecedent5dMm?: number;
   manningN?: number;
+  sedimentCv?: number;
 }
 
 export interface ChannelHydraulicResult {
@@ -17,6 +20,7 @@ export interface ChannelHydraulicResult {
   widthDeltaPct: number | null;
   depthM: number;
   slopePct: number;
+  catchmentKm2: number;
   bankfullVelocityMs: number;
   bankfullDischargeM3s: number;
   overflowRainMmHr: number;
@@ -27,6 +31,41 @@ export interface ChannelHydraulicResult {
   severeScourRange: [number, number];
 }
 
+/**
+ * Look up true DEMNAS-derived upstream catchment area (km²) and average slope (%)
+ * for a verified waterway from the topological reach network instead of using hardcoded defaults.
+ */
+export function resolveWaterwayCatchmentFromNetwork(
+  waterwayId: string,
+  network: SimNetworkData | null | undefined,
+  fallbackKind: string
+): { catchmentKm2: number; slopePct: number | null; fromDemNetwork: boolean } {
+  if (network?.reaches?.length) {
+    let maxArea = 0;
+    let weightedSlope = 0;
+    let totalLen = 0;
+    for (const r of network.reaches) {
+      if (r.verifiedWaterwayId === waterwayId) {
+        if (r.upstreamAreaKm2 > maxArea) maxArea = r.upstreamAreaKm2;
+        weightedSlope += r.slope * 100 * r.lengthM;
+        totalLen += r.lengthM;
+      }
+    }
+    if (maxArea > 0.05) {
+      return {
+        catchmentKm2: Number(maxArea.toFixed(2)),
+        slopePct: totalLen > 0 ? Number((weightedSlope / totalLen).toFixed(1)) : null,
+        fromDemNetwork: true
+      };
+    }
+  }
+  return {
+    catchmentKm2: fallbackKind === 'river' ? 3.8 : 1.4,
+    slopePct: null,
+    fromDemNetwork: false
+  };
+}
+
 export function estimateChannelThresholds(input: ChannelHydraulicInput): ChannelHydraulicResult {
   const widthM = Math.max(0.5, Math.min(120, Number(input.widthM) || 4));
   const widthPreM =
@@ -35,11 +74,19 @@ export function estimateChannelThresholds(input: ChannelHydraulicInput): Channel
       : null;
   const depthM = Math.max(0.2, Math.min(20, Number(input.depthM) || 1.2));
   const slopePct = Math.max(0.5, Math.min(35, Number(input.slopePct) || 4));
-  const catchmentKm2 = Math.max(0.2, Math.min(25, Number(input.catchmentKm2) || 2.8));
-  const manningN = Math.max(0.02, Math.min(0.12, Number(input.manningN) || 0.045));
+  const catchmentKm2 = Math.max(0.1, Math.min(80, Number(input.catchmentKm2) || 2.8));
+  const cv = Math.max(0, Math.min(0.4, Number(input.sedimentCv) || 0));
+  const manningN = Math.max(0.02, Math.min(0.14, (Number(input.manningN) || 0.045) * (1 + 1.8 * cv)));
 
-  const runoffCoeff =
-    input.soilMoisture === 'dry' ? 0.34 : input.soilMoisture === 'saturated' ? 0.76 : 0.54;
+  let runoffCoeff: number;
+  if (typeof input.antecedent5dMm === 'number' && Number.isFinite(input.antecedent5dMm)) {
+    // Derive effective runoff ratio directly from continuous SCS-CN antecedent state
+    const cn = adjustCnForAntecedent(74, input.antecedent5dMm, 0);
+    runoffCoeff = Math.max(0.25, Math.min(0.86, (cn - 35) / 68));
+  } else {
+    runoffCoeff =
+      input.soilMoisture === 'dry' ? 0.34 : input.soilMoisture === 'saturated' ? 0.76 : 0.54;
+  }
 
   const areaCs = widthM * depthM;
   const wettedP = widthM + 2 * depthM;
@@ -49,12 +96,15 @@ export function estimateChannelThresholds(input: ChannelHydraulicInput): Channel
   const bankfullVelocityMs = (1 / manningN) * Math.pow(rh, 2 / 3) * Math.sqrt(slopeFrac);
   const bankfullDischargeM3s = areaCs * bankfullVelocityMs;
 
-  // Specific stream power omega = rho * g * Q * S / W (rho*g = 9810 N/m3)
+  // Specific stream power omega = rho_m * g * Q * S / W
   // 300 W/m2 = active bank erosion & widening threshold; 1000 W/m2 = severe galodo scour
-  const qWidenM3s = (300 * widthM) / (9810 * slopeFrac);
-  const qSevereM3s = (1000 * widthM) / (9810 * slopeFrac);
+  const rhoG = (1000 * (1 - cv) + 2650 * cv) * 9.81;
+  const qWidenM3s = (300 * widthM) / (rhoG * slopeFrac);
+  const qSevereM3s = (1000 * widthM) / (rhoG * slopeFrac);
 
-  const qToRainMmHr = (q: number) => (3.6 * q) / (runoffCoeff * catchmentKm2);
+  // Account for debris bulking reducing the clear-water rain required to reach Q_bulk
+  const bulkFactor = 1 / Math.max(0.6, 1 - cv);
+  const qToRainMmHr = (q: number) => (3.6 * q) / (runoffCoeff * catchmentKm2 * bulkFactor);
 
   const overflowRainMmHr = qToRainMmHr(bankfullDischargeM3s);
   const wideningRainMmHr = qToRainMmHr(Math.max(qWidenM3s, bankfullDischargeM3s * 0.85));
@@ -76,6 +126,7 @@ export function estimateChannelThresholds(input: ChannelHydraulicInput): Channel
     widthDeltaPct,
     depthM: Number(depthM.toFixed(2)),
     slopePct: Number(slopePct.toFixed(1)),
+    catchmentKm2: Number(catchmentKm2.toFixed(2)),
     bankfullVelocityMs: Number(bankfullVelocityMs.toFixed(2)),
     bankfullDischargeM3s: Number(bankfullDischargeM3s.toFixed(1)),
     overflowRainMmHr: Number(overflowRainMmHr.toFixed(1)),

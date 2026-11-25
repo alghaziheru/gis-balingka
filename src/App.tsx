@@ -150,12 +150,6 @@ export function App() {
     }
   }, [initialTelemetry]);
 
-  const sim = useSimulationController({
-    simFields,
-    settlements: datasets?.settlements,
-    metadata
-  });
-
   const editor = useEditorActions({
     datasets,
     demClient,
@@ -168,6 +162,14 @@ export function App() {
     notify,
     flyTo,
     reloadHydrologyData
+  });
+
+  const sim = useSimulationController({
+    simFields,
+    settlements: datasets?.settlements,
+    metadata,
+    calibrationMarks: editor.calibrationMarks,
+    calibrationProfile: editor.calibrationProfile
   });
 
   useEffect(() => {
@@ -266,6 +268,27 @@ export function App() {
         source: 'manual',
         sourceRef: null,
         sizeNote: '',
+        openingWidthM: null,
+        openingHeightM: null,
+        defaultBlockagePct: null,
+        notes: '',
+        coordinates: lngLat
+      });
+      setActiveTool(null);
+    } else if (activeTool === 'placeStormCore') {
+      sim.setStormCore(lngLat);
+      sim.setRainPattern('storm_core');
+      setActiveTool(null);
+      notify(lang === 'en' ? 'Localized storm core placed (~2.4 km).' : 'Pusat badai lokal diletakkan (~2,4 km).');
+    } else if (activeTool === 'placeCalibrationMark') {
+      editor.setEditingCalibrationMark({
+        id: null,
+        name: '',
+        kind: 'hwm',
+        observedDepthM: 0.8,
+        rainMmHr: sim.simRain,
+        durationMin: sim.simDurationMin,
+        antecedent5dMm: sim.antecedent5dMm,
         notes: '',
         coordinates: lngLat
       });
@@ -293,6 +316,8 @@ export function App() {
     if (activeTool === 'redrawWaterway') return t.bannerRedrawWaterway;
     if (activeTool === 'placeStructure') return t.bannerPlaceStructure;
     if (activeTool === 'drawJorong') return t.bannerDrawJorong;
+    if (activeTool === 'placeStormCore') return t.bannerPlaceStormCore;
+    if (activeTool === 'placeCalibrationMark') return t.bannerPlaceCalibrationMark;
     return '';
   })();
 
@@ -349,6 +374,7 @@ export function App() {
           simProgress={sim.simProgress}
           simScenario={sim.drainCondition === 'cleared' ? 'cleared' : 'clogged'}
           rainAnimEnabled={sim.rainAnimEnabled}
+          simMapViewMode={sim.simMapViewMode}
           cascadeEngine={sim.cascadeEngine}
           cascadeParams={sim.cascadeParams}
           drainFilter={drainFilter}
@@ -358,6 +384,7 @@ export function App() {
           verifiedWaterways={editor.verifiedWaterways}
           verifiedStructures={editor.verifiedStructures}
           jorongBoundaries={editor.jorongBoundaries}
+          calibrationMarks={editor.calibrationMarks}
           suppressedDemIds={editor.suppressedDemIds}
           dataVersion={editor.dataVersion}
           apiAvailable={editor.apiAvailable}
@@ -374,6 +401,7 @@ export function App() {
           onOpenUnlock={() => editor.setUnlockModalOpen(true)}
           onSelectWaterway={editor.selectWaterwayFromMap}
           onSelectStructure={editor.selectStructureFromMap}
+          onSetStructureBlockageOverride={sim.setStructureBlockageOverride}
           onVerifyCrossing={editor.verifyCrossingFromMap}
           onMoveEditingStructure={coords => {
             editor.setEditingStructure(prev => (prev ? { ...prev, coordinates: coords } : prev));
@@ -404,6 +432,8 @@ export function App() {
         intensityMmHr={sim.simRain}
         rainPattern={sim.rainPattern}
         uplandBbox={sim.uplandBbox}
+        stormCore={sim.stormCore}
+        isRecession={sim.cascadeKpis.isRecession}
         mapControlRef={mapControlRef}
       />
 
@@ -569,15 +599,26 @@ export function App() {
               durationMin={sim.simDurationMin}
               progress={sim.simProgress}
               soilMoisture={sim.soilMoisture}
+              antecedent5dMm={sim.antecedent5dMm}
               rainPattern={sim.rainPattern}
               drainCondition={sim.drainCondition}
+              culvertBlockagePct={sim.culvertBlockagePct}
+              structureBlockageOverrides={sim.structureBlockageOverrides}
               forestScenario={sim.forestScenario}
+              hyetograph={sim.hyetograph}
+              orographicPctPerKm={sim.orographicPctPerKm}
+              stormCore={sim.stormCore}
+              debrisCoupling={sim.debrisCoupling}
+              simMapViewMode={sim.simMapViewMode}
+              isPlacingStormCore={activeTool === 'placeStormCore'}
               forestActualPct={metadata?.landCoverStats?.forestPct ?? 74}
               rainAnimEnabled={sim.rainAnimEnabled}
               showVerifiedWaterways={sim.simShowVerifiedWaterways}
               showRbiRivers={sim.simShowRbiRivers}
               verifiedIssueCount={editor.verifiedIssueCount}
               verifiedWaterways={editor.verifiedWaterways}
+              simNetwork={simFields?.network ?? null}
+              hasCalibrationProfile={Boolean(editor.calibrationProfile)}
               demClient={demClient}
               agamStats={metadata?.agamStats}
               kpis={sim.cascadeKpis}
@@ -587,9 +628,23 @@ export function App() {
               onChangeRain={sim.setSimRain}
               onChangeDuration={sim.setSimDurationMin}
               onChangeSoilMoisture={sim.setSoilMoisture}
+              onChangeAntecedent5dMm={sim.setAntecedent5dMm}
               onChangeRainPattern={sim.setRainPattern}
               onChangeDrainCondition={sim.setDrainCondition}
+              onChangeCulvertBlockagePct={sim.setCulvertBlockagePct}
+              onClearStructureBlockageOverrides={sim.clearStructureBlockageOverrides}
               onChangeForestScenario={sim.setForestScenario}
+              onChangeHyetograph={sim.setHyetograph}
+              onChangeOrographicPctPerKm={sim.setOrographicPctPerKm}
+              onTogglePlaceStormCore={() =>
+                setActiveTool(prev => (prev === 'placeStormCore' ? null : 'placeStormCore'))
+              }
+              onClearStormCore={() => {
+                sim.setStormCore(null);
+                if (sim.rainPattern === 'storm_core') sim.setRainPattern('uniform');
+              }}
+              onChangeDebrisCoupling={sim.setDebrisCoupling}
+              onChangeSimMapViewMode={sim.setSimMapViewMode}
               onApplyPreset={preset => sim.applyPreset(preset, viewMode)}
               onToggleRainAnim={sim.setRainAnimEnabled}
               onToggleVerifiedWaterways={sim.setSimShowVerifiedWaterways}
@@ -639,10 +694,15 @@ export function App() {
               verifiedWaterways={editor.verifiedWaterways}
               verifiedStructures={editor.verifiedStructures}
               jorongBoundaries={editor.jorongBoundaries}
+              calibrationMarks={editor.calibrationMarks}
+              calibrationProfile={editor.calibrationProfile}
+              validationMetrics={sim.cascadeKpis.validation}
+              cascadeEngine={sim.cascadeEngine}
               suppressedDem={editor.suppressedDem}
               editingWaterway={editor.editingWaterway}
               editingStructure={editor.editingStructure}
               editingJorong={editor.editingJorong}
+              editingCalibrationMark={editor.editingCalibrationMark}
               hydroStatus={editor.hydroStatus}
               recomputingHydro={editor.recomputingHydro}
               auditLogs={editor.auditLogs}
@@ -678,15 +738,19 @@ export function App() {
         onOpenFeedback={() => setFeedbackOpen(true)}
         onOpenInfo={() => setInfoModalTab('guide')}
       >
-        {tab === 'sim' && sim.rainAnimEnabled && sim.simProgress > 0.01 && sim.rainPattern === 'upland' && (
-          <div
-            data-testid="upland-rain-pill"
-            className="surface-panel pointer-events-none relative z-10 inline-flex items-center gap-2 rounded-full px-3.5 py-1.5 text-[12px] leading-none font-bold text-[#0369a1] max-md:hidden"
-          >
-            <CloudRain className="h-3.5 w-3.5 shrink-0" />
-            <span>{t.uplandRainPill}</span>
-          </div>
-        )}
+        {tab === 'sim' &&
+          sim.rainAnimEnabled &&
+          sim.simProgress > 0.01 &&
+          !sim.cascadeKpis.isRecession &&
+          (sim.rainPattern === 'upland' || (sim.rainPattern === 'storm_core' && Boolean(sim.stormCore))) && (
+            <div
+              data-testid="upland-rain-pill"
+              className="surface-panel pointer-events-none relative z-10 inline-flex items-center gap-2 rounded-full px-3.5 py-1.5 text-[12px] leading-none font-bold text-[#0369a1] max-md:hidden"
+            >
+              <CloudRain className="h-3.5 w-3.5 shrink-0" />
+              <span>{sim.rainPattern === 'storm_core' ? t.stormCoreRainPill : t.uplandRainPill}</span>
+            </div>
+          )}
 
         <ActiveMapLegend
           lang={lang}
@@ -696,6 +760,7 @@ export function App() {
           layers={effectiveLayers}
           flowDensity={flowDensity}
           simProgress={sim.simProgress}
+          simMapViewMode={sim.simMapViewMode}
           drainFilter={drainFilter}
           elevRange={metadata ? [metadata.minElevM, metadata.maxElevM] : undefined}
           landCoverStats={metadata?.landCoverStats}

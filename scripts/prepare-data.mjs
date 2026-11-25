@@ -20,6 +20,7 @@ import {
   computeCascadeFields,
   haversineMeters
 } from './lib/hydrology.mjs';
+import { decodeScourMaskFromPng } from './lib/reach-network.mjs';
 import {
   listCopernicusTiles,
   listWorldCoverTiles
@@ -309,6 +310,26 @@ async function main() {
     });
   }
 
+  let agamContextForSim = agamGis?.agamContext || null;
+  if (!agamContextForSim) {
+    const existingAgamPath = path.join(OUT_DIR, 'agam-context.json');
+    if (fs.existsSync(existingAgamPath)) {
+      try {
+        agamContextForSim = JSON.parse(fs.readFileSync(existingAgamPath, 'utf8'));
+      } catch {}
+    }
+  }
+
+  let scourMaskForSim = scourChange?.demScourMask || null;
+  if (!scourMaskForSim) {
+    const existingScourPng = path.join(OUT_DIR, 'raster-scour-change.png');
+    if (fs.existsSync(existingScourPng)) {
+      try {
+        scourMaskForSim = decodeScourMaskFromPng(fs.readFileSync(existingScourPng), width, height);
+      } catch {}
+    }
+  }
+
   const simFields = computeCascadeFields({
     rawElev: elev,
     filled,
@@ -319,10 +340,15 @@ async function main() {
     landCoverClasses: lcClasses,
     soilErodibility: agamGrids?.soilErodibility || null,
     officialLandslide: agamGrids?.officialLandslide || null,
+    agamContext: agamContextForSim,
+    scourMask: scourMaskForSim,
     nagariMask,
     agamSummary: agamGrids?.summary || null,
+    verifiedWaterways: verified.features || [],
+    verifiedStructures: verified.structures || [],
     bottlenecks,
-    gridMeta
+    gridMeta,
+    handStreamThreshold
   });
   writeJson('sim-fields.json', simFields);
   if (scourChange) {

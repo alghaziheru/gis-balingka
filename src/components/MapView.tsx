@@ -87,6 +87,7 @@ export function MapView(props: MapViewProps) {
   const [poolGlintPoints, setPoolGlintPoints] = useState<[number, number][]>([]);
   const lastSkyKeyRef = useRef('');
   const landslideCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const agreementCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const lastCascadeTsRef = useRef(0);
   const lastCascadeKeyRef = useRef('');
 
@@ -152,6 +153,8 @@ export function MapView(props: MapViewProps) {
   onOpenUnlockRef.current = props.onOpenUnlock;
   const onRedrawDemRef = useRef(props.onRedrawDemSegment);
   onRedrawDemRef.current = props.onRedrawDemSegment;
+  const onSetStructureBlockageOverrideRef = useRef(props.onSetStructureBlockageOverride);
+  onSetStructureBlockageOverrideRef.current = props.onSetStructureBlockageOverride;
   const onSnapFeedbackRef = useRef(props.onSnapFeedback);
   onSnapFeedbackRef.current = props.onSnapFeedback;
   const animPathsRef = useRef<GeoFeature[]>([]);
@@ -212,6 +215,7 @@ export function MapView(props: MapViewProps) {
       onPromoteDemRef,
       onSuppressDemRef,
       onPromoteRbiRef,
+      onSetStructureBlockageOverrideRef,
       onSnapFeedbackRef
     };
 
@@ -465,9 +469,26 @@ export function MapView(props: MapViewProps) {
       })
       .slice(0, 60);
 
+    const calSrc = map.getSource('src-calibration-marks') as GeoJSONSource | undefined;
+    if (calSrc) {
+      calSrc.setData(
+        asGeoInput({
+          type: 'FeatureCollection',
+          features: props.calibrationMarks as unknown as GeoFeature[]
+        })
+      );
+    }
+    const showCalMarks =
+      props.calibrationMarks.length > 0 && (props.tab === 'editor' || (props.tab === 'sim' && props.viewMode === 'detail'));
+    if (map.getLayer('calibration-marks-circle')) {
+      map.setLayoutProperty('calibration-marks-circle', 'visibility', vis(showCalMarks));
+    }
+
     const cleanupCascade = syncSimulationOverlays({
       map,
+      tab: props.tab,
       isRaining,
+      simMapViewMode: props.simMapViewMode,
       datasets: props.datasets,
       layers: props.layers,
       simRain: props.simRain,
@@ -480,6 +501,7 @@ export function MapView(props: MapViewProps) {
       lastCascadeKeyRef,
       lastCascadeTsRef,
       landslideCanvasRef,
+      agreementCanvasRef,
       setPoolGlintPoints
     });
 
@@ -553,13 +575,16 @@ export function MapView(props: MapViewProps) {
     props.simProgress,
     props.simScenario,
     props.lang,
+    props.viewMode,
     props.rainAnimEnabled,
+    props.simMapViewMode,
     props.cascadeEngine,
     props.cascadeParams,
     props.drainFilter,
     props.verifiedWaterways,
     props.verifiedStructures,
     props.jorongBoundaries,
+    props.calibrationMarks,
     props.datasets.drainageDraft,
     props.datasets.flowPaths,
     props.suppressedDemIds

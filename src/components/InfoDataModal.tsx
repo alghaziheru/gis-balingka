@@ -308,17 +308,21 @@ function InfoDataModalContent({
                 </p>
                 <p className="m-0 text-[13px] text-[#434d49]">
                   <strong className="text-[#161c1a]">
-                    {isEn ? '2. D8 Flow & HAND Model:' : '2. Penelusuran Aliran D8 & Indeks HAND:'}
+                    {isEn
+                      ? '2. 1D Muskingum-Cunge Routing & DEMNAS Rating Curves:'
+                      : '2. Penelusuran 1D Muskingum-Cunge & Kurva Kapasitas DEMNAS:'}
                   </strong>{' '}
                   {isEn
-                    ? 'Priority-Flood depression filling and D8 routing compute topographic flow paths and HAND (Height Above Nearest Drainage) elevation-relative indices.'
-                    : 'Pengisian cekungan Priority-Flood dan penelusuran arah aliran D8 menghitung arah kemiringan topografi serta indeks HAND (ketinggian relatif terhadap alur terdekat).'}
+                    ? 'Priority-Flood D8 routing builds a reach network with full-resolution HAND Synthetic Rating Curves (overridden by field-measured cross-sections), directional upstream culvert backwater, coupled leakage-free Infinite-Slope stability (FoS) with debris bulking, and a 7-member deterministic uncertainty ensemble (P10–P90).'
+                    : 'Penelusuran Priority-Flood D8 membentuk jaringan segmen sungai dengan Synthetic Rating Curves HAND beresolusi penuh (mengikuti ukuran penampang lapangan bila tersedia), efek balik air (backwater) arah hulu di gorong-gorong, analisis kestabilan lereng Infinite-Slope (FoS) terkopel konsentrasi sedimen, serta ansambel ketidakpastian 7 anggota (P10–P90).'}
                 </p>
                 <p className="m-0 text-[13px] text-[#434d49]">
-                  <strong className="text-[#161c1a]">3. {isEn ? 'Known Accuracy Limits:' : 'Batas Akurasi:'}</strong>{' '}
+                  <strong className="text-[#161c1a]">
+                    {isEn ? '3. Independent Validation & Accuracy Limits:' : '3. Validasi Independen & Batas Akurasi:'}
+                  </strong>{' '}
                   {isEn
-                    ? 'Computed DEMNAS 8m D8 lines (dashed) can differ from narrow roadside drains and culverts in the field. Use Detailed mode → Waterways to verify or correct them.'
-                    : 'Garis komputasi dari DEMNAS 8 m (garis putus-putus) dapat berbeda dari parit atau gorong-gorong sempit di lapangan. Gunakan mode Lengkap → Jalur Air untuk verifikasi data lapangan.'}
+                    ? 'Model outputs are benchmarked independently against Sentinel-2 river-corridor NDVI scour, held-out Pemkab Agam polygons, and field High-Water Marks without leaking reference polygons into the physics formulas. Use Detailed mode → Editor to enter measured channel/culvert dimensions and raise local Data Confidence.'
+                    : 'Keluaran model diuji secara independen terhadap perubahan vegetasi koridor sungai Sentinel-2, poligon terbuka Pemkab Agam (dipisah dari rumus fisika), serta tanda tinggi air lapangan. Gunakan mode Lengkap → Editor untuk memasukkan ukuran saluran/gorong-gorong nyata dan meningkatkan skor Kepercayaan Data.'}
                 </p>
               </div>
             </div>

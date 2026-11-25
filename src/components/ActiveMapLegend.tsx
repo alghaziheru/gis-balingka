@@ -8,6 +8,7 @@ import type {
   Language,
   LayerToggles,
   ScourStats,
+  SimMapViewMode,
   TabId,
   ViewMode
 } from '../types/gis';
@@ -22,6 +23,7 @@ export interface ActiveMapLegendProps {
   layers: LayerToggles;
   flowDensity: number;
   simProgress: number;
+  simMapViewMode?: SimMapViewMode;
   drainFilter: 'all' | DrainageStatus;
   elevRange?: [number, number];
   landCoverStats?: LandCoverStats;
@@ -41,6 +43,7 @@ export function ActiveMapLegend({
   layers,
   flowDensity,
   simProgress,
+  simMapViewMode = 'depth',
   drainFilter,
   elevRange,
   landCoverStats,
@@ -53,56 +56,133 @@ export function ActiveMapLegend({
 
   const modelRows: LegendRow[] = [];
   if (isRaining) {
-    modelRows.push(
-      {
-        key: 'model-flow',
-        node: (
-          <div className="flex items-center gap-2 text-[#161c1a]">
-            <span
-              className="inline-flex h-3.5 w-6 shrink-0 items-center justify-center rounded-[3px] bg-[#1e293b]"
-              aria-hidden="true"
-            >
-              <svg viewBox="0 0 24 12" className="h-3 w-5">
-                <path d="M2 3.5 C8 2.5, 16 4.5, 22 3.5" stroke="#ffffff" strokeWidth="1.2" fill="none" strokeLinecap="round" />
-                <path d="M2 6.5 C8 5.5, 16 7.5, 22 6.5" stroke="#e0f2fe" strokeWidth="1.1" fill="none" strokeLinecap="round" />
-                <path d="M2 9.5 C8 8.5, 16 10.5, 22 9.5" stroke="#ffffff" strokeWidth="1.0" fill="none" strokeLinecap="round" />
-              </svg>
-            </span>
-            <span>{isEn ? 'Simulated runoff flow' : 'Aliran limpasan simulasi'}</span>
-          </div>
-        )
-      },
-      {
-        key: 'model-hand-deep',
-        node: (
-          <div className="flex items-center gap-2 text-[#161c1a]">
-            <span className="h-3 w-3 shrink-0 rounded-[3px] bg-[#0284c7]/75" />
-            <span className="flex min-w-0 items-center gap-1">
-              <span>{isEn ? 'River-corridor swelling (deep)' : 'Genangan koridor sungai (utama)'}</span>
-              <InfoTooltip
-                text={t.infoLegendDeep}
-                label={isEn ? 'Deep HAND corridor' : 'Genangan koridor sungai utama'}
-              />
-            </span>
-          </div>
-        )
-      },
-      {
-        key: 'model-hand-shallow',
-        node: (
-          <div className="flex items-center gap-2 text-[#161c1a]">
-            <span className="h-3 w-3 shrink-0 rounded-[3px] bg-[#38bdf8]/55" />
-            <span>{isEn ? 'River-corridor swelling (shallow)' : 'Genangan koridor sungai (dangkal)'}</span>
-          </div>
-        )
-      },
-      {
+    if (simMapViewMode === 'confidence') {
+      modelRows.push(
+        {
+          key: 'model-conf-high',
+          node: (
+            <div className="flex items-center gap-2 text-[#161c1a]">
+              <span className="h-3 w-3 shrink-0 rounded-[3px] bg-[#0369a1]/80" />
+              <span>{isEn ? 'High ensemble agreement (≥80%)' : 'Kesepakatan ansambel tinggi (≥80%)'}</span>
+            </div>
+          )
+        },
+        {
+          key: 'model-conf-mid',
+          node: (
+            <div className="flex items-center gap-2 text-[#161c1a]">
+              <span className="h-3 w-3 shrink-0 rounded-[3px] bg-[#38bdf8]/55" />
+              <span>{isEn ? 'Uncertain margin (20–80%)' : 'Batas ketidakpastian (20–80%)'}</span>
+            </div>
+          )
+        }
+      );
+    } else if (simMapViewMode === 'scour') {
+      modelRows.push(
+        {
+          key: 'model-scour-severe',
+          node: (
+            <div className="flex items-center gap-2 text-[#161c1a]">
+              <span className="h-1.5 w-5 shrink-0 rounded-full bg-[#b91c1c]" />
+              <span>{isEn ? 'Extreme stream power (ω ≥ 1000 W/m²)' : 'Energi gerusan ekstrem (ω ≥ 1000 W/m²)'}</span>
+            </div>
+          )
+        },
+        {
+          key: 'model-scour-mod',
+          node: (
+            <div className="flex items-center gap-2 text-[#161c1a]">
+              <span className="h-1.5 w-5 shrink-0 rounded-full bg-[#d97706]" />
+              <span>{isEn ? 'High bank-scour energy (ω ≥ 300 W/m²)' : 'Energi gerusan tebing (ω ≥ 300 W/m²)'}</span>
+            </div>
+          )
+        }
+      );
+    } else if (simMapViewMode === 'survey') {
+      modelRows.push(
+        {
+          key: 'model-surv-low',
+          node: (
+            <div className="flex items-center gap-2 text-[#161c1a]">
+              <span className="h-1.5 w-5 shrink-0 rounded-full bg-[#b45309]" />
+              <span>{isEn ? 'Low confidence (priority for field survey)' : 'Prioritas survei (belum terukur)'}</span>
+            </div>
+          )
+        },
+        {
+          key: 'model-surv-med',
+          node: (
+            <div className="flex items-center gap-2 text-[#161c1a]">
+              <span className="h-1.5 w-5 shrink-0 rounded-full bg-[#0369a1]" />
+              <span>{isEn ? 'Medium (verified alignment, est. width)' : 'Menengah (jalur terverifikasi)'}</span>
+            </div>
+          )
+        },
+        {
+          key: 'model-surv-high',
+          node: (
+            <div className="flex items-center gap-2 text-[#161c1a]">
+              <span className="h-1.5 w-5 shrink-0 rounded-full bg-[#047857]" />
+              <span>{isEn ? 'High (field-measured cross-section)' : 'Tinggi (penampang terukur lapangan)'}</span>
+            </div>
+          )
+        }
+      );
+    } else {
+      modelRows.push(
+        {
+          key: 'model-flow',
+          node: (
+            <div className="flex items-center gap-2 text-[#161c1a]">
+              <span
+                className="inline-flex h-3.5 w-6 shrink-0 items-center justify-center rounded-[3px] bg-[#1e293b]"
+                aria-hidden="true"
+              >
+                <svg viewBox="0 0 24 12" className="h-3 w-5">
+                  <path d="M2 3.5 C8 2.5, 16 4.5, 22 3.5" stroke="#ffffff" strokeWidth="1.2" fill="none" strokeLinecap="round" />
+                  <path d="M2 6.5 C8 5.5, 16 7.5, 22 6.5" stroke="#e0f2fe" strokeWidth="1.1" fill="none" strokeLinecap="round" />
+                  <path d="M2 9.5 C8 8.5, 16 10.5, 22 9.5" stroke="#ffffff" strokeWidth="1.0" fill="none" strokeLinecap="round" />
+                </svg>
+              </span>
+              <span>{isEn ? 'Simulated runoff flow' : 'Aliran limpasan simulasi'}</span>
+            </div>
+          )
+        },
+        {
+          key: 'model-hand-deep',
+          node: (
+            <div className="flex items-center gap-2 text-[#161c1a]">
+              <span className="h-3 w-3 shrink-0 rounded-[3px] bg-[#0284c7]/75" />
+              <span className="flex min-w-0 items-center gap-1">
+                <span>{isEn ? 'River-corridor swelling (deep)' : 'Genangan koridor sungai (utama)'}</span>
+                <InfoTooltip
+                  text={t.infoLegendDeep}
+                  label={isEn ? 'Deep HAND corridor' : 'Genangan koridor sungai utama'}
+                />
+              </span>
+            </div>
+          )
+        },
+        {
+          key: 'model-hand-shallow',
+          node: (
+            <div className="flex items-center gap-2 text-[#161c1a]">
+              <span className="h-3 w-3 shrink-0 rounded-[3px] bg-[#38bdf8]/55" />
+              <span>{isEn ? 'River-corridor swelling (shallow)' : 'Genangan koridor sungai (dangkal)'}</span>
+            </div>
+          )
+        }
+      );
+    }
+
+    if (simMapViewMode !== 'survey') {
+      modelRows.push({
         key: 'model-steep-slope',
         node: (
           <div className="flex items-center gap-2 text-[#161c1a]">
             <span className="h-3 w-3 shrink-0 rounded-[3px] bg-[#ea580c]" />
             <span className="flex min-w-0 items-center gap-1">
-              <span>{isEn ? 'Steep slope (model)' : 'Lereng curam jenuh air'}</span>
+              <span>{isEn ? 'Steep slope FoS < 1.1 (model)' : 'Lereng curam FoS < 1,1 (model)'}</span>
               <InfoTooltip
                 text={t.infoLegendLandslide}
                 label={isEn ? 'Saturated steep slope (model)' : 'Lereng curam jenuh air'}
@@ -110,8 +190,8 @@ export function ActiveMapLegend({
             </span>
           </div>
         )
-      }
-    );
+      });
+    }
   }
 
   const overlayRows: LegendRow[] = [];

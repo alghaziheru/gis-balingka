@@ -9,8 +9,40 @@ export function loadVerifiedWaterwaysForBurning(rootDir, outDir) {
   if (fs.existsSync(dbPath)) {
     try {
       const db = new DatabaseSync(dbPath, { open: true });
-      const rows = db.prepare('SELECT id, name, kind, coordinates_json FROM waterways WHERE deleted = 0').all();
+      const wwCols = new Set(db.prepare('PRAGMA table_info(waterways)').all().map(c => c.name));
+      const extraWw = [
+        wwCols.has('width_pre_m') ? 'width_pre_m' : 'NULL AS width_pre_m',
+        wwCols.has('width_post_m') ? 'width_post_m' : 'NULL AS width_post_m',
+        wwCols.has('depth_m') ? 'depth_m' : 'NULL AS depth_m'
+      ].join(', ');
+      const rows = db.prepare(`SELECT id, name, kind, status, coordinates_json, ${extraWw} FROM waterways WHERE deleted = 0`).all();
       const supRows = db.prepare('SELECT seg_id FROM suppressed_dem_segments').all();
+      let structures = [];
+      try {
+        const stCols = new Set(db.prepare('PRAGMA table_info(structures)').all().map(c => c.name));
+        const extraSt = [
+          stCols.has('opening_width_m') ? 'opening_width_m' : 'NULL AS opening_width_m',
+          stCols.has('opening_height_m') ? 'opening_height_m' : 'NULL AS opening_height_m',
+          stCols.has('default_blockage_pct') ? 'default_blockage_pct' : 'NULL AS default_blockage_pct'
+        ].join(', ');
+        const stRows = db
+          .prepare(`SELECT id, name, kind, status, size_note, lng, lat, ${extraSt} FROM structures WHERE deleted = 0`)
+          .all();
+        structures = stRows.map(s => ({
+          type: 'Feature',
+          properties: {
+            id: s.id,
+            name: s.name,
+            kind: s.kind,
+            status: s.status,
+            size_note: s.size_note || '',
+            opening_width_m: s.opening_width_m ?? null,
+            opening_height_m: s.opening_height_m ?? null,
+            default_blockage_pct: s.default_blockage_pct ?? null
+          },
+          geometry: { type: 'Point', coordinates: [s.lng, s.lat] }
+        }));
+      } catch {}
       db.close();
       return {
         source: 'sqlite',
@@ -20,11 +52,16 @@ export function loadVerifiedWaterwaysForBurning(rootDir, outDir) {
             id: r.id,
             name: r.name,
             kind: r.kind,
+            status: r.status || 'normal',
+            width_pre_m: r.width_pre_m ?? null,
+            width_post_m: r.width_post_m ?? null,
+            depth_m: r.depth_m ?? null,
             tier: r.kind === 'river' ? 1 : 2,
             catchment_ha: r.kind === 'river' ? 280 : 110
           },
           geometry: { type: 'LineString', coordinates: JSON.parse(r.coordinates_json) }
         })),
+        structures,
         suppressedIds: new Set(supRows.map(s => s.seg_id))
       };
     } catch (err) {
@@ -43,14 +80,25 @@ export function loadVerifiedWaterwaysForBurning(rootDir, outDir) {
         const arr = JSON.parse(fs.readFileSync(supPath, 'utf8'));
         if (Array.isArray(arr)) suppressedIds = new Set(arr.map(s => s.seg_id).filter(Boolean));
       }
+      let structures = [];
+      const stPath = path.join(path.dirname(geoPath), 'verified-structures.geojson');
+      if (fs.existsSync(stPath)) {
+        try {
+          const stFc = JSON.parse(fs.readFileSync(stPath, 'utf8'));
+          if (Array.isArray(stFc?.features)) {
+            structures = stFc.features.filter(f => f?.geometry?.type === 'Point');
+          }
+        } catch {}
+      }
       return {
         source: 'geojson',
         features: (fc.features || []).filter(f => f?.geometry?.type === 'LineString'),
+        structures,
         suppressedIds
       };
     }
   }
-  return { source: 'none', features: [], suppressedIds: new Set() };
+  return { source: 'none', features: [], structures: [], suppressedIds: new Set() };
 }
 
 const HIGHWAY_ID = {

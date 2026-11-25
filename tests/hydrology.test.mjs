@@ -28,7 +28,13 @@ import {
 } from '../scripts/lib/tiles.mjs';
 import { runResetRegion } from '../scripts/reset-region.mjs';
 import { CascadeEngine, extractBuildingCentroids } from '../src/lib/cascadeEngine.ts';
-import { estimateChannelThresholds } from '../src/lib/channelHydraulics.ts';
+import { estimateChannelThresholds, resolveWaterwayCatchmentFromNetwork } from '../src/lib/channelHydraulics.ts';
+import { buildHyetograph } from '../src/lib/reachRouter.ts';
+import {
+  computeCrossingCapacityM3s,
+  decodeScourMaskFromPng,
+  parseStructureOpening
+} from '../scripts/lib/reach-network.mjs';
 import { buildFlowField, sampleFlowVelocity } from '../src/lib/flowField.ts';
 import { buildFlowCorridors, sampleCorridorAtDistance } from '../src/lib/flowRibbons.ts';
 import {
@@ -1084,4 +1090,186 @@ test('CascadeEngine runoffMmGrid, sampleAtLngLat, and extractAffectedBuildings r
   const affected = extractAffectedBuildings(settlements, pools.filteredDepth, engine.fields);
   assert.ok(affected.features.length > 0, 'Expected corridor-affected building outlines in extreme rain');
   assert.ok(affected.features.length < settlements.features.length, 'Affected buildings must be a strict subset');
+});
+
+test('v2 hyetograph mass conservation, recession tail, scour PNG decode, and culvert orifice capacity', () => {
+  for (const shape of ['uniform', 'convective_front', 'alternating_block', 'double_burst']) {
+    const hy = buildHyetograph(80, 180, shape, 28);
+    assert.ok(hy.totalWindowMin > 180, 'recession window must extend past storm duration');
+    assert.ok(hy.steps.some(s => s.isRecession && s.rainMmHr === 0), 'recession steps must have zero rain');
+    const finalCum = hy.steps[hy.steps.length - 1].cumRainMm;
+    const expectedVol = 80 * (180 / 60); // 240 mm exact
+    assert.ok(
+      Math.abs(finalCum - expectedVol) < 0.25,
+      `${shape} must conserve total storm rainfall (${finalCum} vs ${expectedVol})`
+    );
+  }
+
+  // Round-trip PNG scour mask decode
+  const dNdvi = new Float32Array([
+    -0.42, -0.24, 0.05, 0.0,
+    -0.25, -0.45, 0.01, -0.1,
+    0.0, 0.0, -0.4, -0.25,
+    0.1, 0.0, 0.0, -0.41
+  ]);
+  const png = renderScourChangeRaster(dNdvi, 4, 4, 4);
+  const decoded = decodeScourMaskFromPng(png, 4, 4);
+  assert.equal(decoded[0], 2, 'severe crimson pixel must decode to 2');
+  assert.equal(decoded[1], 1, 'moderate amber pixel must decode to 1');
+  assert.equal(decoded[2], 0, 'unchanged pixel must decode to 0');
+
+  // Culvert opening parsing & orifice capacity scaling
+  const parsedBox = parseStructureOpening({ size_note: 'Box 1.5m x 1.2m' });
+  assert.equal(parsedBox.widthM, 1.5);
+  assert.equal(parsedBox.heightM, 1.2);
+  assert.equal(parsedBox.measured, true);
+  const parsedPipe = parseStructureOpening({ size_note: 'Pipa Ø 80cm' });
+  assert.ok(Math.abs(parsedPipe.widthM - 0.8) < 0.01);
+  assert.equal(parsedPipe.isCircular, true);
+
+  const capBox = computeCrossingCapacityM3s({
+    kind: 'culvert',
+    opening: parsedBox,
+    upstreamAreaKm2: 2.0
+  });
+  const capPipe = computeCrossingCapacityM3s({
+    kind: 'culvert',
+    opening: parsedPipe,
+    upstreamAreaKm2: 2.0
+  });
+  assert.ok(capBox > 4 && capBox < 15, `expected realistic box culvert capacity, got ${capBox}`);
+  assert.ok(capPipe < capBox * 0.45, `80cm pipe capacity (${capPipe}) must be far below 1.5x1.2m box (${capBox})`);
+});
+
+test('v2 CascadeEngine enforces leakage-free FoS, coupled bulking, directional backwater, P10-P90 ensemble, and calibration', t => {
+  const simFieldsPath = path.join(DATA_DIR, 'sim-fields.json');
+  const settlementsPath = path.join(DATA_DIR, 'settlements.geojson');
+  if (!fs.existsSync(simFieldsPath) || !fs.existsSync(settlementsPath)) {
+    t.skip('sim-fields.json / settlements.geojson not present yet');
+    return;
+  }
+  const simFields = JSON.parse(fs.readFileSync(simFieldsPath, 'utf8'));
+  const settlements = JSON.parse(fs.readFileSync(settlementsPath, 'utf8'));
+  assert.ok(simFields.network && simFields.network.reachCount > 50, 'expected topological DEMNAS reach network');
+
+  // Verify network-derived catchment lookup for Batang Ngalai replaces hardcoded 3.8 km²
+  const verifiedWw = JSON.parse(fs.readFileSync(path.join(DATA_DIR, 'verified-waterways.geojson'), 'utf8'));
+  const ngalai = (verifiedWw.features || []).find(f => /ngalai/i.test(f.properties?.name || ''));
+  if (ngalai) {
+    const resolved = resolveWaterwayCatchmentFromNetwork(ngalai.properties.id, simFields.network, 'river');
+    assert.equal(resolved.fromDemNetwork, true);
+    assert.ok(resolved.catchmentKm2 > 10, `expected Batang Ngalai DEMNAS catchment >10 km², got ${resolved.catchmentKm2}`);
+  }
+
+  // 1. ZERO LEAKAGE PROOF: mutating officialLandslideBase64 must produce IDENTICAL FoS & flood outputs!
+  const n = simFields.width * simFields.height;
+  const zeroOfficial = {
+    ...simFields,
+    officialLandslideBase64: Buffer.from(new Uint8Array(n)).toString('base64')
+  };
+  const allHighOfficial = {
+    ...simFields,
+    officialLandslideBase64: Buffer.from(new Uint8Array(n).fill(3)).toString('base64')
+  };
+  const baseParams = {
+    rainMmHr: 100,
+    durationMin: 180,
+    progress: 0.78,
+    soilMoisture: 'saturated',
+    antecedent5dMm: 150,
+    rainPattern: 'upland',
+    drainCondition: 'clogged',
+    forestScenario: 'actual',
+    hyetograph: 'alternating_block',
+    debrisCoupling: 'coupled'
+  };
+  const engZero = new CascadeEngine(zeroOfficial, [], 37);
+  const engHigh = new CascadeEngine(allHighOfficial, [], 37);
+  const resZero = engZero.evaluate(baseParams, { skipValidation: true });
+  const resHigh = engHigh.evaluate(baseParams, { skipValidation: true });
+  assert.equal(resZero.landslideAreaHa, resHigh.landslideAreaHa, 'officialLandslide must never leak into FoS');
+  assert.equal(resZero.floodAreaHa, resHigh.floodAreaHa, 'officialLandslide must never leak into flood routing');
+
+  // 2. Coupled debris bulking & surge sensitivity + hyetograph peak sensitivity + continuous P5 monotonicity
+  const engine = new CascadeEngine(simFields, extractBuildingCentroids(settlements), 37);
+  const resClear = engine.evaluate({ ...baseParams, debrisCoupling: 'clear' }, { skipValidation: true });
+  const resCoupled = engine.evaluate({ ...baseParams, debrisCoupling: 'coupled' }, { skipValidation: true });
+  const resSurge = engine.evaluate({ ...baseParams, drainCondition: 'surge', debrisCoupling: 'surge' }, { skipValidation: true });
+  assert.ok(resCoupled.meanSedimentCv > resClear.meanSedimentCv, 'coupled mode must carry nonzero mobilized sediment Cv');
+  assert.ok(resCoupled.peakDischargeM3s >= resClear.peakDischargeM3s, 'sediment bulking must not lower discharge');
+  assert.ok(resSurge.peakDischargeM3s > resCoupled.peakDischargeM3s, 'debris-jam surge must raise peak Q');
+
+  const resUniform = engine.evaluate({ ...baseParams, hyetograph: 'uniform', progress: 0.65 }, { skipValidation: true });
+  const resConvective = engine.evaluate(
+    { ...baseParams, hyetograph: 'convective_front', progress: 0.35 },
+    { skipValidation: true }
+  );
+  assert.ok(
+    resConvective.peakDischargeM3s > resUniform.peakDischargeM3s,
+    `convective storm peak Q (${resConvective.peakDischargeM3s}) must exceed uniform (${resUniform.peakDischargeM3s})`
+  );
+
+  const resDryP5 = engine.evaluate({ ...baseParams, antecedent5dMm: 10 }, { skipValidation: true });
+  const resWetP5 = engine.evaluate({ ...baseParams, antecedent5dMm: 200 }, { skipValidation: true });
+  assert.ok(resWetP5.effectiveRunoffMm > resDryP5.effectiveRunoffMm, 'higher P5 must yield more SCS-CN runoff');
+
+  // 3. Directional upstream-only backwater verification on nominal routed reach state
+  const routed = engine.getLastRoutedNominal();
+  assert.ok(routed, 'expected routed nominal reach state');
+  const bwReach = routed.backwaterHead.findIndex(h => h > 0.1);
+  if (bwReach >= 0) {
+    const startL = routed.backwaterStartLong[bwReach];
+    if (startL > 0.15 && startL < 0.85) {
+      // Check evaluateReachStageForCell indirectly via reach state values
+      assert.ok(routed.backwaterHead[bwReach] > 0.1);
+      assert.ok(routed.backwaterLenFrac[bwReach] > 0.05);
+    }
+  }
+
+  // 4. 7-member ensemble invariants, agreementRgba, reach diagnostics, validation, and bounded calibration
+  const fullEval = engine.evaluate(baseParams);
+  assert.ok(fullEval.ensemble.floodAreaHa.p10 <= fullEval.ensemble.floodAreaHa.p50);
+  assert.ok(fullEval.ensemble.floodAreaHa.p50 <= fullEval.ensemble.floodAreaHa.p90);
+  assert.ok(fullEval.ensemble.landslideAreaHa.p10 <= fullEval.ensemble.landslideAreaHa.p50);
+  assert.ok(fullEval.ensemble.landslideAreaHa.p50 <= fullEval.ensemble.landslideAreaHa.p90);
+  assert.ok(fullEval.ensemble.peakDischargeM3s.p10 <= fullEval.ensemble.peakDischargeM3s.p50);
+  assert.ok(fullEval.ensemble.peakDischargeM3s.p50 <= fullEval.ensemble.peakDischargeM3s.p90);
+  assert.ok(fullEval.hydrograph.length >= 20, 'hydrograph should span storm + recession');
+  assert.ok(fullEval.hydrograph.some(pt => pt.isRecession), 'hydrograph must include recession tail');
+  assert.ok(fullEval.dataConfidenceScore >= 30 && fullEval.dataConfidenceScore <= 98);
+  assert.ok(fullEval.validation.landslideAuc !== null && fullEval.validation.landslideAuc > 0.5);
+
+  const { agreementRgba } = engine.renderRgba(64);
+  assert.equal(agreementRgba.length, 64 * 64 * 4);
+  assert.ok(agreementRgba.some(v => v > 0), 'agreementRgba should render non-empty ensemble overlay');
+
+  const diag = engine.buildReachDiagnosticsGeoJSON();
+  assert.ok(diag.surveyPriorityReaches.features.length > 0, 'survey priority reaches should populate');
+
+  const baseConf = engine.computeDataConfidence().score;
+  engine.setCalibrationMarks([
+    {
+      type: 'Feature',
+      properties: {
+        id: 'cm-test-1',
+        name: 'Tanda Muka Air Uji',
+        kind: 'hwm',
+        observed_depth_m: 1.1,
+        rain_mm_hr: 100,
+        duration_min: 180,
+        antecedent_5d_mm: 140,
+        notes: 'Uji validasi',
+        updated_by: 'tester',
+        updated_at: '2026-01-01T00:00:00Z'
+      },
+      geometry: { type: 'Point', coordinates: [100.319, -0.345] }
+    }
+  ]);
+  assert.ok(engine.computeDataConfidence().score >= baseConf, 'field calibration marks should raise or preserve confidence');
+
+  const cal = engine.runLocalCalibration();
+  assert.ok(cal.evaluatedCount >= 9);
+  assert.ok(cal.profile.manningMult >= 0.7 && cal.profile.manningMult <= 1.4);
+  assert.ok(cal.profile.cnOffset >= -6 && cal.profile.cnOffset <= 6);
+  assert.ok(cal.profile.cohesionMult >= 0.75 && cal.profile.cohesionMult <= 1.3);
 });

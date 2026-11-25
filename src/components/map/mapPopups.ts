@@ -10,6 +10,7 @@ import type {
   GeoProperties,
   Language,
   StructureKind,
+  TabId,
   VerifiedStructureFeature,
   VerifiedWaterwayFeature,
   ViewMode,
@@ -22,10 +23,13 @@ export interface MapPopupContext {
   popupRef: MutableRefObject<Popup | null>;
   lang: Language;
   viewMode: ViewMode;
+  tab: TabId;
   demClient: DemClient;
   editorUnlocked: boolean;
   apiAvailable: boolean;
   requiresPassphrase: boolean;
+  structureBlockageOverrides?: Record<string, number>;
+  onSetStructureBlockageOverride?: (structureId: string, pct: number | null) => void;
   onVerifyCrossing: (
     draftId: string,
     coords: [number, number],
@@ -194,6 +198,39 @@ export function openVerifiedStructurePopup(
     critical: { id: 'Rusak Berat', en: 'Severe', color: '#b91c1c', bg: 'rgba(185,28,28,0.14)' }
   };
   const stInfo = statusLabels[String(propsObj.status)] || statusLabels.normal;
+  const ow = fullSt?.properties.opening_width_m ?? (typeof propsObj.opening_width_m === 'number' ? propsObj.opening_width_m : null);
+  const oh = fullSt?.properties.opening_height_m ?? (typeof propsObj.opening_height_m === 'number' ? propsObj.opening_height_m : null);
+  const defBlk =
+    fullSt?.properties.default_blockage_pct ??
+    (typeof propsObj.default_blockage_pct === 'number' ? propsObj.default_blockage_pct : null);
+  const dimSummary =
+    ow != null && oh != null
+      ? `${ow}×${oh} m${defBlk != null ? ` · ${isEn ? 'def. block' : 'sumbat'} ${defBlk}%` : ''}`
+      : propsObj.size_note
+        ? String(propsObj.size_note)
+        : '';
+
+  const showSimOverride =
+    isDetail && ctx.tab === 'sim' && Boolean(ctx.onSetStructureBlockageOverride) && Boolean(stId);
+  const activeOv =
+    ctx.structureBlockageOverrides && stId in ctx.structureBlockageOverrides
+      ? ctx.structureBlockageOverrides[stId]
+      : null;
+
+  const simOverrideHtml = showSimOverride
+    ? `<div style="margin-top:8px;padding:7px 8px;border-radius:8px;border:1px solid rgba(3,105,161,0.22);background:#fafaf8;">
+        <div style="font-size:11px;font-weight:700;color:#0369a1;margin-bottom:5px;">
+          ${isEn ? 'Simulation Blockage Override' : 'Simulasi Sumbatan Titik Ini'}${activeOv !== null ? ` (${activeOv}%)` : ''}
+        </div>
+        <div style="display:flex;gap:4px;">
+          <button data-ov="0" type="button" style="flex:1;padding:4px 0;border-radius:6px;border:1px solid ${activeOv === 0 ? '#0369a1' : 'rgba(22,28,26,0.18)'};background:${activeOv === 0 ? '#0369a1' : '#fff'};color:${activeOv === 0 ? '#fff' : '#161c1a'};font-size:11px;font-weight:700;cursor:pointer;">0%</button>
+          <button data-ov="50" type="button" style="flex:1;padding:4px 0;border-radius:6px;border:1px solid ${activeOv === 50 ? '#b45309' : 'rgba(22,28,26,0.18)'};background:${activeOv === 50 ? '#b45309' : '#fff'};color:${activeOv === 50 ? '#fff' : '#161c1a'};font-size:11px;font-weight:700;cursor:pointer;">50%</button>
+          <button data-ov="85" type="button" style="flex:1;padding:4px 0;border-radius:6px;border:1px solid ${activeOv === 85 ? '#b91c1c' : 'rgba(22,28,26,0.18)'};background:${activeOv === 85 ? '#b91c1c' : '#fff'};color:${activeOv === 85 ? '#fff' : '#161c1a'};font-size:11px;font-weight:700;cursor:pointer;">85%</button>
+          <button data-ov="reset" type="button" style="padding:4px 6px;border-radius:6px;border:1px solid rgba(22,28,26,0.18);background:#f2f3ef;color:#434d49;font-size:11px;font-weight:600;cursor:pointer;">${isEn ? 'Reset' : 'Reset'}</button>
+        </div>
+      </div>`
+    : '';
+
   let actionHtml = '';
   if (canEdit) {
     actionHtml = `<button id="popup-edit-st" type="button" style="margin-top:8px;width:100%;padding:7px 10px;border-radius:8px;border:1px solid #0369a1;background:#0369a1;color:#fff;font-size:12px;font-weight:700;cursor:pointer;">
@@ -211,15 +248,25 @@ export function openVerifiedStructurePopup(
       </span>
       <h4 style="margin:0 0 4px;font-size:14px;font-weight:700;color:#161c1a;">${escapeHtml(propsObj.name)}</h4>
       <div style="font-size:12.5px;color:#434d49;margin-bottom:6px;">
-        ${escapeHtml(kindLabel)}${propsObj.size_note ? ` · ${escapeHtml(propsObj.size_note)}` : ''}
+        ${escapeHtml(kindLabel)}${dimSummary ? ` · ${escapeHtml(dimSummary)}` : ''}
       </div>
       ${propsObj.notes ? `<p style="margin:0 0 6px;font-size:12.5px;line-height:1.45;color:#434d49;">${escapeHtml(propsObj.notes)}</p>` : ''}
       ${isDetail && propsObj.updated_by ? `<div style="font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#636f6a;">${escapeHtml(propsObj.updated_by)}</div>` : ''}
+      ${simOverrideHtml}
       ${actionHtml}
     </div>
   `;
   const pop = new Popup({ offset: 12 }).setLngLat(lngLat).setHTML(html).addTo(map);
   popupRef.current = pop;
+  if (showSimOverride && ctx.onSetStructureBlockageOverride) {
+    pop.getElement()?.querySelectorAll<HTMLButtonElement>('button[data-ov]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const raw = btn.getAttribute('data-ov');
+        ctx.onSetStructureBlockageOverride?.(stId, raw === 'reset' ? null : Number(raw));
+        pop.remove();
+      });
+    });
+  }
   if (canEdit && fullSt) {
     pop.getElement()?.querySelector('#popup-edit-st')?.addEventListener('click', () => {
       pop.remove();
@@ -455,6 +502,7 @@ export function openCorridorExplainPopup(
   const isEn = opts.lang === 'en';
   const elev = Math.round(opts.demClient.getElevation(lngLat[0], lngLat[1]));
   const sample = opts.cascadeEngine.sampleAtLngLat(lngLat[0], lngLat[1]);
+  const gridResM = Math.round(opts.cascadeEngine.fields.cellSizeX || 33);
   const cp = opts.cascadeParams;
   const drainLabel =
     cp.drainCondition === 'cleared'
@@ -480,40 +528,92 @@ export function openCorridorExplainPopup(
         : isEn
           ? 'Saturated'
           : 'Jenuh';
+  const confStyle =
+    sample.dataConfidence === 'high'
+      ? 'background:rgba(4,120,87,0.12);color:#047857'
+      : sample.dataConfidence === 'medium'
+        ? 'background:rgba(3,105,161,0.12);color:#0369a1'
+        : 'background:rgba(180,83,9,0.14);color:#92400e';
+  const confLabel =
+    sample.dataConfidence === 'high'
+      ? isEn
+        ? 'High Data Conf.'
+        : 'Data Tinggi'
+      : sample.dataConfidence === 'medium'
+        ? isEn
+          ? 'Med Data Conf.'
+          : 'Data Menengah'
+        : isEn
+          ? 'Low Data Conf.'
+          : 'Data Rendah';
+  const row = (label: string, valHtml: string) =>
+    `<div style="display:flex;justify-content:space-between;gap:8px;padding:3px 0;border-bottom:1px solid rgba(22,28,26,0.08);font-size:11.5px;">
+      <span style="color:#636f6a;">${escapeHtml(label)}</span>
+      <strong style="color:#161c1a;text-align:right;font-family:'JetBrains Mono',monospace;">${valHtml}</strong>
+    </div>`;
+
   const html = `
-    <div style="min-width:235px;max-width:290px;">
-      <div style="font-size:11px;font-weight:700;color:#0369a1;margin-bottom:4px;padding-right:18px;line-height:1.35;">
-        ${
-          isEn
-            ? 'Low-Lying River Corridor Zone (~40 m Model)'
-            : 'Zona Elevasi Rendah Koridor Sungai (Model ~40 m)'
-        }
+    <div style="min-width:245px;max-width:305px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;margin-bottom:4px;padding-right:18px;">
+        <span style="font-size:11px;font-weight:700;color:#0369a1;line-height:1.3;">
+          ${escapeHtml(
+            sample.reachName
+              ? sample.reachName
+              : isEn
+                ? `Model Diagnostic (~${gridResM} m)`
+                : `Diagnostik Model (~${gridResM} m)`
+          )}
+        </span>
+        <span style="padding:1px 6px;border-radius:999px;font-size:10px;font-weight:700;white-space:nowrap;${confStyle}">
+          ${escapeHtml(confLabel)}
+        </span>
       </div>
       <div style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#434d49;margin-bottom:6px;">
-        ${elev} mdpl · HAND ~${sample.handM.toFixed(1)} m
+        ${elev} mdpl · HAND ${sample.handM.toFixed(1)} m${sample.upstreamAreaKm2 > 0 ? ` · DAS ${sample.upstreamAreaKm2.toFixed(2)} km²` : ''}
       </div>
-      <div style="display:flex;justify-content:space-between;gap:8px;padding:3px 0;border-bottom:1px solid rgba(22,28,26,0.08);font-size:11.5px;">
-        <span style="color:#636f6a;">${isEn ? 'Scenario' : 'Skenario'}</span>
-        <strong style="color:#161c1a;text-align:right;">${cp.rainMmHr} mm/${isEn ? 'hr' : 'jam'} · ${drainLabel} · ${soilLabel}</strong>
-      </div>
-      <div style="display:flex;justify-content:space-between;gap:8px;padding:3px 0;border-bottom:1px solid rgba(22,28,26,0.08);font-size:11.5px;">
-        <span style="color:#636f6a;">${isEn ? 'Effective runoff' : 'Limpasan efektif'}</span>
-        <strong style="color:#161c1a;">~${Math.round(sample.runoffMm)} mm</strong>
-      </div>
-      <div style="display:flex;justify-content:space-between;gap:8px;padding:3px 0;border-bottom:1px solid rgba(22,28,26,0.08);font-size:11.5px;">
-        <span style="color:#636f6a;">${isEn ? 'Indicative depth' : 'Kedalaman indikatif'}</span>
-        <strong style="color:#0369a1;">~${sample.depthM.toFixed(1)} m</strong>
-      </div>
+      ${row(
+        isEn ? 'Scenario' : 'Skenario',
+        `<span style="font-family:inherit;">${cp.rainMmHr} mm/${isEn ? 'hr' : 'jam'} · ${escapeHtml(drainLabel)} · ${escapeHtml(soilLabel)}</span>`
+      )}
+      ${row(
+        isEn ? 'Depth P50 [P10–P90]' : 'Kedalaman P50 [P10–P90]',
+        `<span style="color:#0369a1;">${sample.depthM.toFixed(2)} m</span> <span style="font-weight:500;color:#636f6a;">[${sample.depthP10M.toFixed(1)}–${sample.depthP90M.toFixed(1)}]</span>`
+      )}
+      ${row(isEn ? 'Ensemble agreement' : 'Kesepakatan ansambel', `${sample.agreementPct}%`)}
+      ${
+        sample.dischargeM3s > 0
+          ? row(
+              isEn ? 'Routed Q · Cv' : 'Debit Q · Sedimen Cv',
+              `${sample.dischargeM3s.toFixed(1)} m³/s · ${(sample.sedimentCv * 100).toFixed(1)}%`
+            )
+          : ''
+      }
+      ${
+        sample.streamPowerWm2 > 0
+          ? row(
+              isEn ? 'Stream power (ω)' : 'Energi arus (ω)',
+              `<span style="color:${sample.streamPowerWm2 >= 1000 ? '#b91c1c' : sample.streamPowerWm2 >= 300 ? '#b45309' : '#161c1a'};">${sample.streamPowerWm2} W/m²</span>`
+            )
+          : ''
+      }
+      ${
+        sample.fos < 2.8
+          ? row(
+              isEn ? 'Slope stability (FoS)' : 'Kestabilan lereng (FoS)',
+              `<span style="color:${sample.fos < 1.1 ? '#b91c1c' : sample.fos < 1.35 ? '#b45309' : '#047857'};">${sample.fos.toFixed(2)}</span>`
+            )
+          : ''
+      }
       <div style="margin-top:6px;font-size:10.5px;line-height:1.4;color:#434d49;">
         ${
           isEn
-            ? 'This shaded zone marks low-lying valley/river-corridor cells (~40 m grid) relative to the nearest drainage channel. When culverts clog during heavy rain, runoff can spread around this corridor. It is NOT a house-level flood survey or an official BNPB/BPBD/BMKG warning.'
-            : 'Area biru ini menandakan koridor lembah/sungai yang elevasinya rendah terhadap alur air terdekat pada skala grid ~40 m. Bila gorong-gorong/saluran tersumbat saat hujan deras, limpasan berpotensi meluas ke sekitar area ini. Ini BUKAN pengukuran banjir per rumah dan bukan peringatan resmi BNPB/BPBD/BMKG.'
+            ? `Computed via 1D Muskingum-Cunge + DEMNAS HAND rating curves (~${gridResM} m grid) and 7-member ensemble. Exploratory computational output — NOT a house-level survey or official BNPB/BPBD/BMKG warning.`
+            : `Dihitung dengan 1D Muskingum-Cunge + kurva HAND DEMNAS (grid ~${gridResM} m) dan ansambel 7 anggota. Keluaran komputasi eksploratif — BUKAN survei per rumah maupun peringatan resmi BNPB/BPBD/BMKG.`
         }
       </div>
     </div>
   `;
-  const pop = new Popup({ offset: 12, maxWidth: '320px' })
+  const pop = new Popup({ offset: 12, maxWidth: '330px' })
     .setLngLat(lngLat)
     .setHTML(html)
     .addTo(map);

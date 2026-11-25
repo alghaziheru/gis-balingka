@@ -6,7 +6,9 @@ import { extractAffectedBuildings, extractFloodPoolPolygons } from '../../lib/po
 import type {
   CascadeSimParams,
   GeoFeature,
+  GeoFeatureCollection,
   LayerToggles,
+  SimMapViewMode,
   TabId,
   VerifiedWaterwayFeature
 } from '../../types/gis';
@@ -19,6 +21,35 @@ import {
   lerpHex,
   type LoadedDatasets
 } from './types';
+
+function buildStormCoreGeoJson(stormCore: [number, number] | null | undefined, active: boolean): GeoFeatureCollection {
+  if (!active || !stormCore) return EMPTY_FC;
+  const [lng, lat] = stormCore;
+  const radiusKm = 2.4;
+  const dLat = radiusKm / 111.32;
+  const dLng = radiusKm / (111.32 * Math.max(0.2, Math.cos((lat * Math.PI) / 180)));
+  const ring: [number, number][] = [];
+  const segs = 32;
+  for (let i = 0; i <= segs; i++) {
+    const a = (i / segs) * Math.PI * 2;
+    ring.push([lng + Math.cos(a) * dLng, lat + Math.sin(a) * dLat]);
+  }
+  return {
+    type: 'FeatureCollection',
+    features: [
+      {
+        type: 'Feature',
+        properties: { kind: 'ring' },
+        geometry: { type: 'Polygon', coordinates: [ring] }
+      },
+      {
+        type: 'Feature',
+        properties: { kind: 'center' },
+        geometry: { type: 'Point', coordinates: [lng, lat] }
+      }
+    ]
+  };
+}
 
 export function syncWaterwaySimStyling(map: MapLibreMap, isRaining: boolean): void {
   map.setPaintProperty('verified-waterways-casing', 'line-color', [
@@ -48,7 +79,9 @@ export function syncWaterwaySimStyling(map: MapLibreMap, isRaining: boolean): vo
 
 export function syncSimulationOverlays(opts: {
   map: MapLibreMap;
+  tab: TabId;
   isRaining: boolean;
+  simMapViewMode: SimMapViewMode;
   datasets: LoadedDatasets;
   layers: LayerToggles;
   simRain: number;
@@ -61,9 +94,10 @@ export function syncSimulationOverlays(opts: {
   lastCascadeKeyRef: MutableRefObject<string>;
   lastCascadeTsRef: MutableRefObject<number>;
   landslideCanvasRef: MutableRefObject<HTMLCanvasElement | null>;
+  agreementCanvasRef: MutableRefObject<HTMLCanvasElement | null>;
   setPoolGlintPoints: Dispatch<SetStateAction<[number, number][]>>;
 }): () => void {
-  const { map, isRaining } = opts;
+  const { map, isRaining, simMapViewMode, tab } = opts;
   const vis = (on: boolean) => (on ? 'visible' : 'none');
 
   const showFlood = isRaining;
@@ -84,65 +118,159 @@ export function syncSimulationOverlays(opts: {
     if (isOn) map.setPaintProperty(hid, 'raster-opacity', handOpacity);
   }
 
+  // Storm core footprint visual
+  const stormCoreVisible =
+    tab === 'sim' && opts.cascadeParams.rainPattern === 'storm_core' && Boolean(opts.cascadeParams.stormCore);
+  const stormCoreSrc = map.getSource('src-storm-core') as GeoJSONSource | undefined;
+  if (stormCoreSrc) {
+    stormCoreSrc.setData(asGeoInput(buildStormCoreGeoJson(opts.cascadeParams.stormCore, stormCoreVisible)));
+  }
+  if (map.getLayer('storm-core-fill')) map.setLayoutProperty('storm-core-fill', 'visibility', vis(stormCoreVisible));
+  if (map.getLayer('storm-core-ring')) map.setLayoutProperty('storm-core-ring', 'visibility', vis(stormCoreVisible));
+  if (map.getLayer('storm-core-dot')) map.setLayoutProperty('storm-core-dot', 'visibility', vis(stormCoreVisible));
+
   const showCascadeLayers = showFlood && useDynamicCascade;
-  map.setLayoutProperty('sim-pools-shallow-fill', 'visibility', vis(showCascadeLayers));
-  map.setLayoutProperty('sim-pools-deep-fill', 'visibility', vis(showCascadeLayers));
+  const showSurveyOnly = tab === 'sim' && simMapViewMode === 'survey' && useDynamicCascade;
+
+  map.setLayoutProperty('sim-pools-shallow-fill', 'visibility', vis(showCascadeLayers && simMapViewMode === 'depth'));
+  map.setLayoutProperty('sim-pools-deep-fill', 'visibility', vis(showCascadeLayers && simMapViewMode === 'depth'));
   map.setLayoutProperty(
     'sim-affected-buildings-line',
     'visibility',
-    vis(showCascadeLayers && opts.layers.settlements)
+    vis(showCascadeLayers && simMapViewMode === 'depth' && opts.layers.settlements)
   );
-  map.setLayoutProperty('cascade-landslide-overlay', 'visibility', vis(showCascadeLayers));
+  map.setLayoutProperty(
+    'cascade-agreement-overlay',
+    'visibility',
+    vis(showCascadeLayers && simMapViewMode === 'confidence')
+  );
+  map.setLayoutProperty(
+    'cascade-landslide-overlay',
+    'visibility',
+    vis(showCascadeLayers && simMapViewMode !== 'survey')
+  );
+  map.setLayoutProperty('sim-scour-reaches-line', 'visibility', vis(showCascadeLayers && simMapViewMode === 'scour'));
+  map.setLayoutProperty('sim-survey-reaches-line', 'visibility', vis(showSurveyOnly));
 
   let cascadeTimer: number | null = null;
-  if (!showCascadeLayers) {
+  if (!showCascadeLayers && !showSurveyOnly) {
     opts.lastCascadeKeyRef.current = '';
     const shallowSrc = map.getSource('src-sim-pools-shallow') as GeoJSONSource | undefined;
     const deepSrc = map.getSource('src-sim-pools-deep') as GeoJSONSource | undefined;
     const bldSrc = map.getSource('src-sim-affected-buildings') as GeoJSONSource | undefined;
+    const scourSrc = map.getSource('src-sim-scour-reaches') as GeoJSONSource | undefined;
+    const surveySrc = map.getSource('src-sim-survey-reaches') as GeoJSONSource | undefined;
     if (shallowSrc) shallowSrc.setData(asGeoInput(EMPTY_FC));
     if (deepSrc) deepSrc.setData(asGeoInput(EMPTY_FC));
     if (bldSrc) bldSrc.setData(asGeoInput(EMPTY_FC));
+    if (scourSrc) scourSrc.setData(asGeoInput(EMPTY_FC));
+    if (surveySrc) surveySrc.setData(asGeoInput(EMPTY_FC));
     opts.setPoolGlintPoints(prev => (prev.length > 0 ? [] : prev));
   } else if (opts.cascadeEngine) {
     const cp = opts.cascadeParams;
     const engine = opts.cascadeEngine;
-    const cacheKey = `${cp.rainMmHr}|${cp.durationMin}|${cp.progress.toFixed(3)}|${cp.soilMoisture}|${cp.rainPattern}|${cp.drainCondition}|${cp.forestScenario}|${opts.verifiedWaterways.length}`;
+    const ovKey = cp.structureBlockageOverrides
+      ? Object.entries(cp.structureBlockageOverrides)
+          .sort(([a], [b]) => a.localeCompare(b))
+          .map(([k, v]) => `${k}:${v}`)
+          .join(',')
+      : '';
+    const coreKey = cp.stormCore ? `${cp.stormCore[0].toFixed(4)},${cp.stormCore[1].toFixed(4)}` : '';
+    const calKey = cp.calibrationProfile
+      ? `${cp.calibrationProfile.manningMult}|${cp.calibrationProfile.cnOffset}|${cp.calibrationProfile.cohesionMult}`
+      : 'def';
+    const cacheKey = [
+      cp.rainMmHr,
+      cp.durationMin,
+      cp.progress.toFixed(3),
+      cp.soilMoisture,
+      cp.antecedent5dMm ?? '',
+      cp.rainPattern,
+      cp.hyetograph ?? '',
+      cp.orographicPctPerKm ?? '',
+      coreKey,
+      cp.drainCondition,
+      cp.culvertBlockagePct ?? '',
+      ovKey,
+      cp.debrisCoupling ?? '',
+      cp.forestScenario,
+      calKey,
+      simMapViewMode,
+      opts.verifiedWaterways.length
+    ].join('|');
+
     const renderCascade = () => {
       opts.lastCascadeKeyRef.current = cacheKey;
       opts.lastCascadeTsRef.current = performance.now();
       engine.evaluate(cp);
 
-      const pools = extractFloodPoolPolygons(engine, opts.verifiedWaterways);
       const shallowSrc = map.getSource('src-sim-pools-shallow') as GeoJSONSource | undefined;
       const deepSrc = map.getSource('src-sim-pools-deep') as GeoJSONSource | undefined;
       const bldSrc = map.getSource('src-sim-affected-buildings') as GeoJSONSource | undefined;
-      if (shallowSrc) shallowSrc.setData(asGeoInput(pools.shallow));
-      if (deepSrc) deepSrc.setData(asGeoInput(pools.deep));
-      if (bldSrc) {
-        bldSrc.setData(
-          asGeoInput(extractAffectedBuildings(opts.datasets.settlements, pools.filteredDepth, engine.fields))
-        );
-      }
-      opts.setPoolGlintPoints(pools.glintPoints);
+      const scourSrc = map.getSource('src-sim-scour-reaches') as GeoJSONSource | undefined;
+      const surveySrc = map.getSource('src-sim-survey-reaches') as GeoJSONSource | undefined;
 
-      const outSize = 256;
-      const { landslideRgba } = engine.renderRgba(outSize);
-
-      if (!opts.landslideCanvasRef.current) {
-        const c = document.createElement('canvas');
-        c.width = outSize;
-        c.height = outSize;
-        opts.landslideCanvasRef.current = c;
+      if (showCascadeLayers && simMapViewMode === 'depth') {
+        const pools = extractFloodPoolPolygons(engine, opts.verifiedWaterways);
+        if (shallowSrc) shallowSrc.setData(asGeoInput(pools.shallow));
+        if (deepSrc) deepSrc.setData(asGeoInput(pools.deep));
+        if (bldSrc) {
+          bldSrc.setData(
+            asGeoInput(extractAffectedBuildings(opts.datasets.settlements, pools.filteredDepth, engine.fields))
+          );
+        }
+        opts.setPoolGlintPoints(pools.glintPoints);
+      } else {
+        opts.setPoolGlintPoints(prev => (prev.length > 0 ? [] : prev));
       }
 
-      const imgCoords = buildImageCoords(opts.datasets.bbox);
-      const lCtx = opts.landslideCanvasRef.current.getContext('2d');
-      if (lCtx) {
-        lCtx.putImageData(new ImageData(new Uint8ClampedArray(landslideRgba), outSize, outSize), 0, 0);
-        const srcLs = map.getSource('img-cascade-landslide') as ImageSource | undefined;
-        if (srcLs && typeof srcLs.updateImage === 'function') {
-          srcLs.updateImage({ url: opts.landslideCanvasRef.current.toDataURL('image/png'), coordinates: imgCoords });
+      if (simMapViewMode === 'scour' || simMapViewMode === 'survey') {
+        const diag = engine.buildReachDiagnosticsGeoJSON();
+        if (scourSrc) scourSrc.setData(asGeoInput(diag.scourReaches));
+        if (surveySrc) surveySrc.setData(asGeoInput(diag.surveyPriorityReaches));
+      }
+
+      if (showCascadeLayers) {
+        const outSize = 256;
+        const { landslideRgba, agreementRgba } = engine.renderRgba(outSize);
+        const imgCoords = buildImageCoords(opts.datasets.bbox);
+
+        if (!opts.landslideCanvasRef.current) {
+          const c = document.createElement('canvas');
+          c.width = outSize;
+          c.height = outSize;
+          opts.landslideCanvasRef.current = c;
+        }
+        const lCtx = opts.landslideCanvasRef.current.getContext('2d');
+        if (lCtx) {
+          lCtx.putImageData(new ImageData(new Uint8ClampedArray(landslideRgba), outSize, outSize), 0, 0);
+          const srcLs = map.getSource('img-cascade-landslide') as ImageSource | undefined;
+          if (srcLs && typeof srcLs.updateImage === 'function') {
+            srcLs.updateImage({
+              url: opts.landslideCanvasRef.current.toDataURL('image/png'),
+              coordinates: imgCoords
+            });
+          }
+        }
+
+        if (simMapViewMode === 'confidence') {
+          if (!opts.agreementCanvasRef.current) {
+            const c = document.createElement('canvas');
+            c.width = outSize;
+            c.height = outSize;
+            opts.agreementCanvasRef.current = c;
+          }
+          const aCtx = opts.agreementCanvasRef.current.getContext('2d');
+          if (aCtx) {
+            aCtx.putImageData(new ImageData(new Uint8ClampedArray(agreementRgba), outSize, outSize), 0, 0);
+            const srcAg = map.getSource('img-cascade-agreement') as ImageSource | undefined;
+            if (srcAg && typeof srcAg.updateImage === 'function') {
+              srcAg.updateImage({
+                url: opts.agreementCanvasRef.current.toDataURL('image/png'),
+                coordinates: imgCoords
+              });
+            }
+          }
         }
       }
     };

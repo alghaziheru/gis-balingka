@@ -7,6 +7,8 @@ interface RainOverlayProps {
   intensityMmHr: number;
   rainPattern?: RainPattern;
   uplandBbox?: BBox | null;
+  stormCore?: [number, number] | null;
+  isRecession?: boolean;
   mapControlRef?: RefObject<MapControlHandle | null>;
 }
 
@@ -83,13 +85,15 @@ export function RainOverlay({
   intensityMmHr,
   rainPattern = 'uniform',
   uplandBbox = null,
+  stormCore = null,
+  isRecession = false,
   mapControlRef
 }: RainOverlayProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
   useEffect(() => {
     const canvas = canvasRef.current;
-    if (!canvas || !active || intensityMmHr <= 0) return;
+    if (!canvas || !active || intensityMmHr <= 0 || isRecession) return;
     if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
 
     const ctx = canvas.getContext('2d');
@@ -101,6 +105,8 @@ export function RainOverlay({
     const baseVy = 12 + norm * 16;
     const baseLen = 11 + norm * 22;
     const isUpland = rainPattern === 'upland';
+    const isStormCore = rainPattern === 'storm_core' && Boolean(stormCore);
+    const isTargeted = isUpland || isStormCore;
 
     let width = 0;
     let height = 0;
@@ -109,8 +115,18 @@ export function RainOverlay({
     let fadeAlpha = 0;
     let lastTs = performance.now();
 
-    const getRegion = () =>
-      getUplandScreenRegion(width, height, uplandBbox, mapControlRef?.current?.projectLngLat);
+    const getRegion = (): ScreenUplandRegion => {
+      if (isStormCore && stormCore) {
+        const coreBox: BBox = {
+          west: stormCore[0] - 0.015,
+          east: stormCore[0] + 0.015,
+          south: stormCore[1] - 0.015,
+          north: stormCore[1] + 0.015
+        };
+        return getUplandScreenRegion(width, height, coreBox, mapControlRef?.current?.projectLngLat);
+      }
+      return getUplandScreenRegion(width, height, uplandBbox, mapControlRef?.current?.projectLngLat);
+    };
 
     const spawnDrop = (randomY: boolean, uplandTarget: boolean, region: ScreenUplandRegion): Drop => {
       const rRoll = Math.random();
@@ -147,7 +163,7 @@ export function RainOverlay({
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       const region = getRegion();
       drops = Array.from({ length: dropCount }, (_, idx) =>
-        spawnDrop(true, isUpland && idx < dropCount * 0.8, region)
+        spawnDrop(true, isTargeted && idx < dropCount * 0.82, region)
       );
     };
 
@@ -169,7 +185,7 @@ export function RainOverlay({
       const pitchForeshorten = 0.76 + 0.24 * Math.cos(pitchRad);
       const windVx = baseWindVx + Math.sin(bearingRad) * (0.8 + norm * 1.2);
 
-      const region = isUpland ? getRegion() : null;
+      const region = isTargeted ? getRegion() : null;
 
       ctx.save();
       ctx.globalAlpha = fadeAlpha;
@@ -219,9 +235,9 @@ export function RainOverlay({
       ro.disconnect();
       ctx.clearRect(0, 0, width, height);
     };
-  }, [active, intensityMmHr, rainPattern, uplandBbox, mapControlRef]);
+  }, [active, intensityMmHr, rainPattern, uplandBbox, stormCore, isRecession, mapControlRef]);
 
-  if (!active || intensityMmHr <= 0) return null;
+  if (!active || intensityMmHr <= 0 || isRecession) return null;
 
   return (
     <canvas
