@@ -28,6 +28,8 @@ export interface ActiveMapLegendProps {
   elevRange?: [number, number];
   landCoverStats?: LandCoverStats;
   scourStats?: ScourStats;
+  collapsed?: boolean;
+  onToggleCollapsed?: (collapsed: boolean) => void;
 }
 
 interface LegendRow {
@@ -47,9 +49,16 @@ export function ActiveMapLegend({
   drainFilter,
   elevRange,
   landCoverStats,
-  scourStats
+  scourStats,
+  collapsed: controlledCollapsed,
+  onToggleCollapsed
 }: ActiveMapLegendProps) {
-  const [collapsed, setCollapsed] = useState(false);
+  const [internalCollapsed, setInternalCollapsed] = useState(false);
+  const collapsed = controlledCollapsed ?? internalCollapsed;
+  const setCollapsed = (next: boolean) => {
+    if (onToggleCollapsed) onToggleCollapsed(next);
+    else setInternalCollapsed(next);
+  };
   const t = I18N[lang];
   const isEn = lang === 'en';
   const isRaining = tab === 'sim' && simProgress > 0.02;
@@ -63,7 +72,7 @@ export function ActiveMapLegend({
           node: (
             <div className="flex items-center gap-2 text-[#161c1a]">
               <span className="h-3 w-3 shrink-0 rounded-[3px] bg-[#0369a1]/80" />
-              <span>{isEn ? 'High ensemble agreement (≥80%)' : 'Kesepakatan ansambel tinggi (≥80%)'}</span>
+              <span>{isEn ? 'High sensitivity agreement (≥80%)' : 'Kesepakatan sensitivitas tinggi (≥80%)'}</span>
             </div>
           )
         },
@@ -72,7 +81,7 @@ export function ActiveMapLegend({
           node: (
             <div className="flex items-center gap-2 text-[#161c1a]">
               <span className="h-3 w-3 shrink-0 rounded-[3px] bg-[#38bdf8]/55" />
-              <span>{isEn ? 'Uncertain margin (20–80%)' : 'Batas ketidakpastian (20–80%)'}</span>
+              <span>{isEn ? 'Moderate sensitivity spread (20–80%)' : 'Batas sensitivitas sedang (20–80%)'}</span>
             </div>
           )
         }
@@ -135,13 +144,13 @@ export function ActiveMapLegend({
           node: (
             <div className="flex items-center gap-2 text-[#161c1a]">
               <span
-                className="inline-flex h-3.5 w-6 shrink-0 items-center justify-center rounded-[3px] bg-[#1e293b]"
+                className="inline-flex h-3.5 w-6 shrink-0 items-center justify-center rounded-[3px] border border-[#0369a1]/25 bg-[#e0f2fe]"
                 aria-hidden="true"
               >
                 <svg viewBox="0 0 24 12" className="h-3 w-5">
-                  <path d="M2 3.5 C8 2.5, 16 4.5, 22 3.5" stroke="#ffffff" strokeWidth="1.2" fill="none" strokeLinecap="round" />
-                  <path d="M2 6.5 C8 5.5, 16 7.5, 22 6.5" stroke="#e0f2fe" strokeWidth="1.1" fill="none" strokeLinecap="round" />
-                  <path d="M2 9.5 C8 8.5, 16 10.5, 22 9.5" stroke="#ffffff" strokeWidth="1.0" fill="none" strokeLinecap="round" />
+                  <path d="M2 3.5 C8 2.5, 16 4.5, 22 3.5" stroke="#075985" strokeWidth="1.35" fill="none" strokeLinecap="round" />
+                  <path d="M2 6.5 C8 5.5, 16 7.5, 22 6.5" stroke="#0284c7" strokeWidth="1.2" fill="none" strokeLinecap="round" />
+                  <path d="M2 9.5 C8 8.5, 16 10.5, 22 9.5" stroke="#0e7490" strokeWidth="1.1" fill="none" strokeLinecap="round" />
                 </svg>
               </span>
               <span>{isEn ? 'Simulated runoff flow' : 'Aliran limpasan simulasi'}</span>
@@ -152,23 +161,32 @@ export function ActiveMapLegend({
           key: 'model-hand-deep',
           node: (
             <div className="flex items-center gap-2 text-[#161c1a]">
-              <span className="h-3 w-3 shrink-0 rounded-[3px] bg-[#0284c7]/75" />
+              <span className="h-3 w-3 shrink-0 rounded-[3px] bg-[#0369a1]/65" />
               <span className="flex min-w-0 items-center gap-1">
-                <span>{isEn ? 'River-corridor swelling (deep)' : 'Genangan koridor sungai (utama)'}</span>
+                <span>{isEn ? '> 1.0 m · Deep river channel' : '> 1,0 m · Alur sungai dalam'}</span>
                 <InfoTooltip
                   text={t.infoLegendDeep}
-                  label={isEn ? 'Deep HAND corridor' : 'Genangan koridor sungai utama'}
+                  label={isEn ? 'Deep river channel (>1.0 m)' : 'Alur sungai dalam (>1,0 m)'}
                 />
               </span>
             </div>
           )
         },
         {
-          key: 'model-hand-shallow',
+          key: 'model-hand-knee',
           node: (
             <div className="flex items-center gap-2 text-[#161c1a]">
-              <span className="h-3 w-3 shrink-0 rounded-[3px] bg-[#38bdf8]/55" />
-              <span>{isEn ? 'River-corridor swelling (shallow)' : 'Genangan koridor sungai (dangkal)'}</span>
+              <span className="h-3 w-3 shrink-0 rounded-[3px] border border-[#0369a1]/55 bg-[#38bdf8]/40" />
+              <span>{isEn ? '0.3–1.0 m · Moderate basin depth' : '0,3–1,0 m · Cekungan sedang'}</span>
+            </div>
+          )
+        },
+        {
+          key: 'model-hand-yard',
+          node: (
+            <div className="flex items-center gap-2 text-[#161c1a]">
+              <span className="h-3 w-3 shrink-0 rounded-[3px] border border-dashed border-[#0284c7]/70 bg-[#7dd3fc]/28" />
+              <span>{isEn ? '0.1–0.3 m · Shallow terrain flow' : '0,1–0,3 m · Aliran dangkal'}</span>
             </div>
           )
         }
@@ -176,21 +194,34 @@ export function ActiveMapLegend({
     }
 
     if (simMapViewMode !== 'survey') {
-      modelRows.push({
-        key: 'model-steep-slope',
-        node: (
-          <div className="flex items-center gap-2 text-[#161c1a]">
-            <span className="h-3 w-3 shrink-0 rounded-[3px] bg-[#ea580c]" />
-            <span className="flex min-w-0 items-center gap-1">
-              <span>{isEn ? 'Steep slope FoS < 1.1 (model)' : 'Lereng curam FoS < 1,1 (model)'}</span>
-              <InfoTooltip
-                text={t.infoLegendLandslide}
-                label={isEn ? 'Saturated steep slope (model)' : 'Lereng curam jenuh air'}
-              />
-            </span>
-          </div>
-        )
-      });
+      modelRows.push(
+        {
+          key: 'model-steep-slope',
+          node: (
+            <div className="flex items-center gap-2 text-[#161c1a]">
+              <span className="h-3 w-3 shrink-0 rounded-[3px] bg-[#ea580c]" />
+              <span className="flex min-w-0 items-center gap-1">
+                <span>{isEn ? 'Steep slope FoS < 1.1 (model)' : 'Lereng curam FoS < 1,1 (model)'}</span>
+                <InfoTooltip
+                  text={t.infoLegendLandslide}
+                  label={isEn ? 'Saturated steep slope (model)' : 'Lereng curam jenuh air'}
+                />
+              </span>
+            </div>
+          )
+        },
+        {
+          key: 'model-runout-shadow',
+          node: (
+            <div className="flex items-center gap-2 text-[#161c1a]">
+              <span className="h-3 w-3 shrink-0 rounded-[3px] bg-[#f59e0b]/45 border border-[#d97706]/50" />
+              <span className="flex min-w-0 items-center gap-1">
+                <span>{isEn ? 'Downslope runout shadow (indicative)' : 'Jalur bawah lereng (~20° indikatif)'}</span>
+              </span>
+            </div>
+          )
+        }
+      );
     }
   }
 
@@ -416,7 +447,7 @@ export function ActiveMapLegend({
       )
     });
   }
-  if (tab !== 'sim' && flowDensity > 0) {
+  if (flowDensity > 0) {
     mapRows.push({
       key: 'map-flow',
       node: (
@@ -514,22 +545,7 @@ export function ActiveMapLegend({
     });
   }
 
-  if (isRaining && layers.settlements) {
-    mapRows.push({
-      key: 'map-sim-buildings',
-      node: (
-        <div className="flex items-center gap-2 text-[#161c1a]">
-          <span
-            className="h-3 w-3 shrink-0 rounded-[2px] border-[1.5px] border-[#f59e0b] bg-transparent"
-            aria-hidden="true"
-          />
-          <span>{isEn ? 'Buildings in modeled corridor' : 'Bangunan di zona koridor model'}</span>
-        </div>
-      )
-    });
-  }
-
-  if (layers.settlements && !isRaining) {
+  if (layers.settlements && tab !== 'sim') {
     mapRows.push({
       key: 'map-settlements',
       node: (
@@ -611,7 +627,7 @@ export function ActiveMapLegend({
     <section
       data-testid="active-map-legend"
       aria-label={t.legendActiveTitle}
-      className="surface-panel pointer-events-auto relative z-10 w-[292px] overflow-hidden rounded-xl max-md:hidden"
+      className="surface-panel pointer-events-auto relative z-10 w-[292px] shrink-0 overflow-hidden rounded-xl max-md:hidden"
     >
       <button
         type="button"
@@ -632,7 +648,11 @@ export function ActiveMapLegend({
         <ChevronUp className="h-3.5 w-3.5 shrink-0 text-[#636f6a]" />
       </button>
 
-      <div className="sidebar-scroll max-h-[calc(100vh-320px)] overflow-y-auto px-3 py-2.5 text-[11.5px] leading-snug">
+      <div
+        className={`sidebar-scroll overflow-y-auto px-3 py-2.5 text-[11.5px] leading-snug ${
+          tab === 'sim' ? 'max-h-[268px]' : 'max-h-[calc(100vh-320px)]'
+        }`}
+      >
         {sections.map((sec, idx) => (
           <div
             key={sec.id}

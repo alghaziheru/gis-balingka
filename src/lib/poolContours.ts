@@ -2,19 +2,22 @@ import type {
   BBox,
   GeoFeature,
   GeoFeatureCollection,
-  SimFieldsData,
   VerifiedWaterwayFeature
 } from '../types/gis';
 import type { CascadeEngine } from './cascadeEngine';
 
 export interface FloodPoolPolygons {
-  shallow: GeoFeatureCollection;
-  deep: GeoFeatureCollection;
+  yard: GeoFeatureCollection; // >= 0.12 m (shallow terrain flow tint + dashed edge)
+  knee: GeoFeatureCollection; // >= 0.30 m (moderate basin depth)
+  deep: GeoFeatureCollection; // >= 1.00 m (deep river channel / main overflow)
+  shallow: GeoFeatureCollection; // backward-compatible alias for `yard`
   glintPoints: [number, number][];
   filteredDepth: Float32Array;
+  gridWidth: number;
+  gridHeight: number;
 }
 
-function chaikinClosedRing(ring: [number, number][], iterations = 2): [number, number][] {
+function chaikinClosedRing(ring: [number, number][], iterations = 1): [number, number][] {
   if (ring.length < 4) return ring;
   let pts = ring.slice(0, ring.length - 1);
   for (let it = 0; it < iterations; it++) {
@@ -51,17 +54,20 @@ export function marchingSquaresPolygons(
   bbox: BBox,
   threshold: number,
   mask: Uint8Array | null = null,
-  smoothIterations = 2
+  smoothIterations = 1
 ): GeoFeatureCollection {
   const pw = width + 2;
   const ph = height + 2;
   const val = new Float32Array(pw * ph);
 
   for (let r = 0; r < height; r++) {
+    const rowOff = r * width;
+    const pRowOff = (r + 1) * pw + 1;
     for (let c = 0; c < width; c++) {
-      const idx = r * width + c;
+      const idx = rowOff + c;
       if (mask && mask[idx] === 0) continue;
-      val[(r + 1) * pw + (c + 1)] = grid[idx];
+      const v = grid[idx];
+      if (v > 0) val[pRowOff + c] = v;
     }
   }
 
@@ -75,11 +81,13 @@ export function marchingSquaresPolygons(
   };
 
   for (let r = 0; r < ph - 1; r++) {
+    const row0 = r * pw;
+    const row1 = (r + 1) * pw;
     for (let c = 0; c < pw - 1; c++) {
-      const tl = val[r * pw + c];
-      const tr = val[r * pw + (c + 1)];
-      const br = val[(r + 1) * pw + (c + 1)];
-      const bl = val[(r + 1) * pw + c];
+      const tl = val[row0 + c];
+      const tr = val[row0 + c + 1];
+      const br = val[row1 + c + 1];
+      const bl = val[row1 + c];
 
       const code =
         (tl >= threshold ? 8 : 0) |
@@ -185,7 +193,7 @@ export function marchingSquaresPolygons(
     let curKey = quantKey(segments[i][1]);
 
     let guard = 0;
-    while (curKey !== startKey && guard < 6000) {
+    while (curKey !== startKey && guard < 12000) {
       guard++;
       const candidates = startMap.get(curKey);
       if (!candidates) break;
@@ -225,76 +233,101 @@ export function marchingSquaresPolygons(
   return { type: 'FeatureCollection', features };
 }
 
+const channelSeedCache = new WeakMap<Uint8Array, { key: string; mask: Uint8Array }>();
+
 /**
- * Filter `floodDepthGrid` to only keep contiguous inundated components (>= 4 cells)
- * connected to an established drainage valley (`accNorm >= 95`) or verified waterway (~65 m),
- * eliminating isolated upland/yard "floating pond" artifacts.
+ * Filter a depth grid (either full-res ~13.8m DEMNAS or ~33m sim grid) to only keep
+ * contiguous inundated components connected to an established drainage valley or verified
+ * waterway, eliminating isolated upland/yard "floating pond" artifacts.
  */
 function buildCorridorConnectedDepthGrid(
-  engine: CascadeEngine,
+  depthGrid: Float32Array,
+  width: number,
+  height: number,
+  cellSizeX: number,
+  cellSizeY: number,
+  bbox: BBox,
+  simWidth: number,
+  simHeight: number,
+  accNormSim: Uint8Array,
+  maskSim: Uint8Array | null,
   verifiedWaterways: VerifiedWaterwayFeature[],
-  shallowThreshold: number
+  yardThreshold: number,
+  isHiRes: boolean
 ): Float32Array {
-  const { width, height, bbox, cellSizeX, cellSizeY } = engine.fields;
   const n = width * height;
-  const depthGrid = engine.getFloodDepthGrid();
-  const accNorm = engine.getAccNorm();
-  const mask = engine.getNagariMask();
+  const firstId = verifiedWaterways[0]?.properties?.id ?? '';
+  const lastId = verifiedWaterways[verifiedWaterways.length - 1]?.properties?.id ?? '';
+  const seedKey = `${width}x${height}|${verifiedWaterways.length}|${firstId}|${lastId}|${isHiRes ? 1 : 0}`;
+  const cachedSeed = channelSeedCache.get(accNormSim);
+  let channelSeedMask: Uint8Array;
 
-  const channelSeedMask = new Uint8Array(n);
-  for (let i = 0; i < n; i++) {
-    if (mask && mask[i] === 0) continue;
-    if (accNorm[i] >= 95) channelSeedMask[i] = 1;
-  }
+  if (cachedSeed && cachedSeed.key === seedKey) {
+    channelSeedMask = cachedSeed.mask;
+  } else {
+    channelSeedMask = new Uint8Array(n);
 
-  const corridorRadiusM = 65;
-  const radCols = Math.max(1, Math.ceil(corridorRadiusM / Math.max(1, cellSizeX)));
-  const radRows = Math.max(1, Math.ceil(corridorRadiusM / Math.max(1, cellSizeY)));
+    for (let r = 0; r < height; r++) {
+      const sr = isHiRes ? Math.min(simHeight - 1, Math.floor((r / height) * simHeight)) : r;
+      const rowOff = r * width;
+      const sRowOff = sr * simWidth;
+      for (let c = 0; c < width; c++) {
+        const sc = isHiRes ? Math.min(simWidth - 1, Math.floor((c / width) * simWidth)) : c;
+        const sIdx = sRowOff + sc;
+        if (maskSim && maskSim[sIdx] === 0) continue;
+        if (accNormSim[sIdx] >= 95) channelSeedMask[rowOff + c] = 1;
+      }
+    }
 
-  for (const ww of verifiedWaterways) {
-    const coords = ww.geometry?.coordinates;
-    if (!coords || coords.length < 2) continue;
-    for (let s = 0; s < coords.length - 1; s++) {
-      const a = coords[s];
-      const b = coords[s + 1];
-      const colA = ((a[0] - bbox.west) / (bbox.east - bbox.west)) * width - 0.5;
-      const rowA = ((bbox.north - a[1]) / (bbox.north - bbox.south)) * height - 0.5;
-      const colB = ((b[0] - bbox.west) / (bbox.east - bbox.west)) * width - 0.5;
-      const rowB = ((bbox.north - b[1]) / (bbox.north - bbox.south)) * height - 0.5;
+    // Tighter corridor seed radius on ~13.8m DEMNAS prevents jumping onto adjacent higher yards
+    const corridorRadiusM = isHiRes ? 36 : 65;
+    const radCols = Math.max(1, Math.ceil(corridorRadiusM / Math.max(1, cellSizeX)));
+    const radRows = Math.max(1, Math.ceil(corridorRadiusM / Math.max(1, cellSizeY)));
 
-      const dCol = colB - colA;
-      const dRow = rowB - rowA;
-      const steps = Math.max(1, Math.ceil(Math.hypot(dCol, dRow) * 2));
+    for (const ww of verifiedWaterways) {
+      const coords = ww.geometry?.coordinates;
+      if (!coords || coords.length < 2) continue;
+      for (let s = 0; s < coords.length - 1; s++) {
+        const a = coords[s];
+        const b = coords[s + 1];
+        const colA = ((a[0] - bbox.west) / (bbox.east - bbox.west)) * width - 0.5;
+        const rowA = ((bbox.north - a[1]) / (bbox.north - bbox.south)) * height - 0.5;
+        const colB = ((b[0] - bbox.west) / (bbox.east - bbox.west)) * width - 0.5;
+        const rowB = ((bbox.north - b[1]) / (bbox.north - bbox.south)) * height - 0.5;
 
-      for (let k = 0; k <= steps; k++) {
-        const f = k / steps;
-        const cc = Math.round(colA + dCol * f);
-        const rr = Math.round(rowA + dRow * f);
-        for (let dr = -radRows; dr <= radRows; dr++) {
-          const r = rr + dr;
-          if (r < 0 || r >= height) continue;
-          for (let dc = -radCols; dc <= radCols; dc++) {
-            const c = cc + dc;
-            if (c < 0 || c >= width) continue;
-            if (Math.hypot(dc * cellSizeX, dr * cellSizeY) > corridorRadiusM) continue;
-            const idx = r * width + c;
-            if (!mask || mask[idx] !== 0) {
-              channelSeedMask[idx] = 1;
+        const dCol = colB - colA;
+        const dRow = rowB - rowA;
+        const steps = Math.max(1, Math.ceil(Math.hypot(dCol, dRow) * 2));
+
+        for (let k = 0; k <= steps; k++) {
+          const f = k / steps;
+          const cc = Math.round(colA + dCol * f);
+          const rr = Math.round(rowA + dRow * f);
+          for (let dr = -radRows; dr <= radRows; dr++) {
+            const r = rr + dr;
+            if (r < 0 || r >= height) continue;
+            for (let dc = -radCols; dc <= radCols; dc++) {
+              const c = cc + dc;
+              if (c < 0 || c >= width) continue;
+              if (Math.hypot(dc * cellSizeX, dr * cellSizeY) > corridorRadiusM) continue;
+              channelSeedMask[r * width + c] = 1;
             }
           }
         }
       }
     }
+
+    channelSeedCache.set(accNormSim, { key: seedKey, mask: channelSeedMask });
   }
 
   const visited = new Uint8Array(n);
   const filteredDepth = new Float32Array(n);
   const queue = new Int32Array(n);
+  const minClusterCells = isHiRes ? 8 : 4;
 
   for (let start = 0; start < n; start++) {
     if (visited[start]) continue;
-    if (mask && mask[start] === 0) continue;
-    if (depthGrid[start] < shallowThreshold) continue;
+    if (depthGrid[start] < yardThreshold) continue;
 
     let head = 0;
     let tail = 0;
@@ -316,8 +349,7 @@ function buildCorridorConnectedDepthGrid(
           if (nc < 0 || nc >= width) continue;
           const nIdx = nr * width + nc;
           if (visited[nIdx]) continue;
-          if (mask && mask[nIdx] === 0) continue;
-          if (depthGrid[nIdx] < shallowThreshold) continue;
+          if (depthGrid[nIdx] < yardThreshold) continue;
           visited[nIdx] = 1;
           queue[tail++] = nIdx;
           if (channelSeedMask[nIdx] === 1) touchesChannel = true;
@@ -325,24 +357,10 @@ function buildCorridorConnectedDepthGrid(
       }
     }
 
-    if (touchesChannel && tail >= 4) {
+    if (touchesChannel && tail >= minClusterCells) {
       for (let k = 0; k < tail; k++) {
         const idx = queue[k];
         filteredDepth[idx] = depthGrid[idx];
-        const cr = Math.floor(idx / width);
-        const cc = idx - cr * width;
-        for (let dr = -1; dr <= 1; dr++) {
-          const nr = cr + dr;
-          if (nr < 0 || nr >= height) continue;
-          for (let dc = -1; dc <= 1; dc++) {
-            const nc = cc + dc;
-            if (nc < 0 || nc >= width) continue;
-            const nIdx = nr * width + nc;
-            if ((!mask || mask[nIdx] !== 0) && depthGrid[nIdx] > 0.05 && filteredDepth[nIdx] === 0) {
-              filteredDepth[nIdx] = depthGrid[nIdx];
-            }
-          }
-        }
       }
     }
   }
@@ -351,80 +369,93 @@ function buildCorridorConnectedDepthGrid(
 }
 
 /**
- * Extract river-corridor-connected shallow & deep water polygons and interior glint coordinates
- * directly from `CascadeEngine`'s `floodDepthGrid`, excluding isolated upland pond artifacts.
+ * Extract 3 calm, human-scale water depth tiers directly on the full-resolution ~13.8 m DEMNAS
+ * riverbank grid (falling back to the ~33 m grid if hi-res HAND is absent):
+ *   - yard: >= 0.12 m (shallow yard / ankle runoff)
+ *   - knee: >= 0.30 m (knee-to-plinth depth)
+ *   - deep: >= 1.00 m (deep river channel / main overflow)
  */
 export function extractFloodPoolPolygons(
   engine: CascadeEngine,
   verifiedWaterways: VerifiedWaterwayFeature[] = [],
-  thresholds = { shallow: 0.14, deep: 0.48 }
+  thresholds = { yard: 0.12, knee: 0.3, deep: 1.0 }
 ): FloodPoolPolygons {
-  const { width, height, bbox } = engine.fields;
-  const mask = engine.getNagariMask();
-  const filteredDepth = buildCorridorConnectedDepthGrid(engine, verifiedWaterways, thresholds.shallow);
+  const { width: simW, height: simH, bbox, cellSizeX: simCellX, cellSizeY: simCellY } = engine.fields;
+  const hiRes = typeof engine.computeHiResDepthGrid === 'function' ? engine.computeHiResDepthGrid() : null;
+  const isHiRes = Boolean(hiRes);
 
-  const shallow = marchingSquaresPolygons(filteredDepth, width, height, bbox, thresholds.shallow, mask, 2);
-  const deep = marchingSquaresPolygons(filteredDepth, width, height, bbox, thresholds.deep, mask, 2);
+  const width = hiRes ? hiRes.width : simW;
+  const height = hiRes ? hiRes.height : simH;
+  const cellSizeX = hiRes ? (simCellX * simW) / width : simCellX;
+  const cellSizeY = hiRes ? (simCellY * simH) / height : simCellY;
+  const rawDepth = hiRes ? hiRes.depthGrid : engine.getFloodDepthGrid();
+  const maskSim = engine.getNagariMask();
+
+  let hasAnyWetCell = false;
+  for (let i = 0; i < rawDepth.length; i++) {
+    if (rawDepth[i] >= thresholds.yard) {
+      hasAnyWetCell = true;
+      break;
+    }
+  }
+  if (!hasAnyWetCell) {
+    const emptyFc: GeoFeatureCollection = { type: 'FeatureCollection', features: [] };
+    return {
+      yard: emptyFc,
+      knee: emptyFc,
+      deep: emptyFc,
+      shallow: emptyFc,
+      glintPoints: [],
+      filteredDepth: new Float32Array(width * height),
+      gridWidth: width,
+      gridHeight: height
+    };
+  }
+
+  const filteredDepth = buildCorridorConnectedDepthGrid(
+    rawDepth,
+    width,
+    height,
+    cellSizeX,
+    cellSizeY,
+    bbox,
+    simW,
+    simH,
+    engine.getAccNorm(),
+    maskSim,
+    verifiedWaterways,
+    thresholds.yard,
+    isHiRes
+  );
+
+  // Single Chaikin smoothing pass on 13.8m cells keeps contours crisp & true to riverbanks without puffing over houses
+  const smoothIter = isHiRes ? 1 : 2;
+  const maskForMs = isHiRes ? null : maskSim;
+
+  const yard = marchingSquaresPolygons(filteredDepth, width, height, bbox, thresholds.yard, maskForMs, smoothIter);
+  const knee = marchingSquaresPolygons(filteredDepth, width, height, bbox, thresholds.knee, maskForMs, smoothIter);
+  const deep = marchingSquaresPolygons(filteredDepth, width, height, bbox, thresholds.deep, maskForMs, smoothIter);
 
   const glintPoints: [number, number][] = [];
   const dLng = (bbox.east - bbox.west) / width;
   const dLat = (bbox.north - bbox.south) / height;
+  const step = isHiRes ? 2 : 1;
 
-  for (let r = 0; r < height; r++) {
-    for (let c = 0; c < width; c++) {
+  for (let r = 0; r < height; r += step) {
+    for (let c = 0; c < width; c += step) {
       const idx = r * width + c;
-      if (mask && mask[idx] === 0) continue;
       const d = filteredDepth[idx];
-      if (d < thresholds.shallow + 0.04) continue;
-      const count = d >= thresholds.deep ? 3 : 2;
+      if (d < thresholds.knee) continue;
+      const count = d >= thresholds.deep ? 2 : 1;
       for (let k = 0; k < count; k++) {
         const h1 = Math.sin(idx * 12.9898 + k * 78.233) * 43758.5453;
         const h2 = Math.sin(idx * 93.9898 + k * 41.131) * 28461.7131;
         const fx = h1 - Math.floor(h1);
         const fy = h2 - Math.floor(h2);
-        glintPoints.push([bbox.west + (c + 0.12 + fx * 0.76) * dLng, bbox.north - (r + 0.12 + fy * 0.76) * dLat]);
+        glintPoints.push([bbox.west + (c + 0.15 + fx * 0.7) * dLng, bbox.north - (r + 0.15 + fy * 0.7) * dLat]);
       }
     }
   }
 
-  return { shallow, deep, glintPoints, filteredDepth };
-}
-
-/**
- * Filter building footprints whose centroids lie inside the corridor-connected modeled water zone.
- */
-export function extractAffectedBuildings(
-  settlements: GeoFeatureCollection | null | undefined,
-  filteredDepth: Float32Array,
-  fields: Pick<SimFieldsData, 'width' | 'height' | 'bbox'>,
-  minDepthM = 0.14
-): GeoFeatureCollection {
-  if (!settlements?.features?.length) {
-    return { type: 'FeatureCollection', features: [] };
-  }
-  const { width, height, bbox } = fields;
-  const affected: GeoFeature[] = [];
-
-  for (const f of settlements.features) {
-    if (f.properties?.kind !== 'building' || f.geometry?.type !== 'Polygon') continue;
-    const ring = f.geometry.coordinates[0];
-    if (!ring || ring.length < 3) continue;
-    const len = ring.length > 1 ? ring.length - 1 : ring.length;
-    let sx = 0;
-    let sy = 0;
-    for (let i = 0; i < len; i++) {
-      sx += ring[i][0];
-      sy += ring[i][1];
-    }
-    const lng = sx / len;
-    const lat = sy / len;
-    if (lng < bbox.west || lng > bbox.east || lat < bbox.south || lat > bbox.north) continue;
-    const col = Math.max(0, Math.min(width - 1, Math.floor(((lng - bbox.west) / (bbox.east - bbox.west)) * width)));
-    const row = Math.max(0, Math.min(height - 1, Math.floor(((bbox.north - lat) / (bbox.north - bbox.south)) * height)));
-    if ((filteredDepth[row * width + col] || 0) >= minDepthM) {
-      affected.push(f);
-    }
-  }
-
-  return { type: 'FeatureCollection', features: affected };
+  return { yard, knee, deep, shallow: yard, glintPoints, filteredDepth, gridWidth: width, gridHeight: height };
 }

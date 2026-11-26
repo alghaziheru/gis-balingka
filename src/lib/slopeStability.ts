@@ -27,11 +27,13 @@ export interface SlopeStabilityInputs {
 export interface SlopeStabilityResult {
   fosP50: Float32Array;
   landslideRiskGrid: Float32Array; // 0..1 instability intensity (strictly leakage-free: zero officialLandslide bias!)
-  landslideProbGrid: Float32Array; // 0..1 ensemble failure probability across P10/P50/P90 geotech bounds
+  landslideProbGrid: Float32Array; // 0..1 ensemble failure probability across sensitivity geotech bounds
+  landslideRunoutGrid: Float32Array; // 0..1 indicative ~20 deg geometric downslope runout shadow
   reachSedimentSupplyM3: Float32Array;
   landslideCellsP10: number;
   landslideCellsP50: number;
   landslideCellsP90: number;
+  runoutCells: number;
 }
 
 function smoothstep(e0: number, e1: number, x: number): number {
@@ -85,6 +87,7 @@ export function evaluateSlopeStability(
   const fosP50 = new Float32Array(n).fill(3.0);
   const landslideRiskGrid = new Float32Array(n);
   const landslideProbGrid = new Float32Array(n);
+  const landslideRunoutGrid = new Float32Array(n);
   const reachSedimentSupplyM3 = new Float32Array(Math.max(1, reachCount));
 
   const antecedent5d = resolveAntecedent5dMm(params);
@@ -92,11 +95,11 @@ export function evaluateSlopeStability(
   const dLng = (bbox.east - bbox.west) / width;
   const dLat = (bbox.north - bbox.south) / height;
 
-  // Base antecedent wetness factor (0..0.55) driven by continuous P5 (mm)
-  const p5Frac = Math.min(1, antecedent5d / 180);
-  const baseWetness = 0.08 + 0.44 * Math.pow(p5Frac, 0.85);
-  const rainRateRatio = Math.min(1.35, Math.max(0.25, params.rainMmHr / 75));
+  // Base antecedent wetness factor driven by continuous 5-day antecedent rainfall P5 (mm)
+  const p5Frac = Math.min(1, antecedent5d / 190);
+  const baseWetness = 0.05 + 0.45 * Math.pow(p5Frac, 0.92);
   const stormRamp = smoothstep(0.06, 0.35, params.progress);
+  const elapsedHr = Math.max(0, (params.durationMin / 60) * Math.min(1, params.progress * 1.15));
 
   let landslideCellsP10 = 0;
   let landslideCellsP50 = 0;
@@ -173,18 +176,32 @@ export function evaluateSlopeStability(
       const spatialMult = computeSpatialRainFactor(cellElev, minElev, uplandWeight[i] / 255, [lng, lat], params);
       const localCumRain = cumRainMm * spatialMult;
 
-      // Transient 1D wetting-front pore-water ratio m(t) in [0, 1]
-      const infilStorageMm = Math.max(65, zBaseM * (isAndosol ? 210 : 185));
-      const stormWetDelta = Math.min(0.92, (localCumRain / infilStorageMm) * twiBoost * hollowBoost * (0.68 + 0.32 * rainRateRatio));
-      const mBase = Math.min(1.0, baseWetness * twiBoost * 0.8 + stormWetDelta);
+      // Transient 1D wetting-front pore-water ratio m(t) minus steady lateral subsurface drainage
+      // Porous volcanic Andosol drains ~3.5 mm/hr laterally unless converged into wet hollows;
+      // prolonged multi-day cumulative wetting (>220 mm) drives full saturation even at moderate hourly rates.
+      const kLatMmHr = (isAndosol ? 3.5 : 2.6) / Math.max(0.75, twiBoost * 0.92);
+      const infilStorageMm = Math.max(92, zBaseM * (isAndosol ? 245 : 195));
+      const latDrainMm = kLatMmHr * elapsedHr * Math.min(1.15, 0.65 + (1 - p5Frac) * 0.45);
+      const evalWetness = (rainScale: number): number => {
+        const scaledCumRain = localCumRain * rainScale;
+        const scaledRateRatio = Math.min(1.4, Math.max(0.22, (params.rainMmHr * rainScale) / 65));
+        const netAccum = Math.max(0, scaledCumRain - latDrainMm);
+        const prolongedSat = smoothstep(220, 620, scaledCumRain);
+        const rateEff = Math.max(0.62 + 0.38 * scaledRateRatio, prolongedSat);
+        const stormDelta = Math.min(0.96, (netAccum / infilStorageMm) * twiBoost * hollowBoost * rateEff);
+        return Math.min(1.0, baseWetness * twiBoost * 0.68 + stormDelta);
+      };
 
+      const mBase = evalWetness(nominalMember.rainScale);
       const fosNom = evalCellFos(tanB, sinCosB, zBaseM, gammaS, cBaseKpa, phiBaseDeg, mBase, nominalMember);
       fosP50[i] = Number(Math.min(5.0, fosNom).toFixed(2));
 
       if (sl < 20) continue; // Only steep slopes (>=20%) contribute to shallow landslide failure & debris yield
 
-      const fosCons = evalCellFos(tanB, sinCosB, zBaseM, gammaS, cBaseKpa, phiBaseDeg, mBase, conservativeMember);
-      const fosOpt = evalCellFos(tanB, sinCosB, zBaseM, gammaS, cBaseKpa, phiBaseDeg, mBase, optimisticMember);
+      const mCons = evalWetness(conservativeMember.rainScale);
+      const mOpt = evalWetness(optimisticMember.rainScale);
+      const fosCons = evalCellFos(tanB, sinCosB, zBaseM, gammaS, cBaseKpa, phiBaseDeg, mCons, conservativeMember);
+      const fosOpt = evalCellFos(tanB, sinCosB, zBaseM, gammaS, cBaseKpa, phiBaseDeg, mOpt, optimisticMember);
 
       // Smooth instability risk index (0..1) centered around FoS = 1.0 (higher when FoS drops below 1.18)
       const riskNom = invSmoothstep(0.76, 1.18, fosNom) * stormRamp;
@@ -217,13 +234,76 @@ export function evaluateSlopeStability(
     }
   }
 
+  // Indicative ~20 deg geometric downslope runout shadow (tan(20°) ≈ 0.364) from initiating slopes
+  const cellX = Math.max(5, fields.cellSizeX || 33);
+  const cellY = Math.max(5, fields.cellSizeY || 33);
+  const dx = [-1, 0, 1, -1, 1, -1, 0, 1];
+  const dy = [-1, -1, -1, 0, 0, 1, 1, 1];
+  const stepDistArr = dx.map((gx, k) => Math.hypot(gx * cellX, dy[k] * cellY));
+  const elevAt = (idx: number) => (elevM ? elevM[idx] : minElev + (uplandWeight[idx] / 255) * 1400);
+
+  for (let i = 0; i < n; i++) {
+    const riskNom = landslideRiskGrid[i];
+    if (riskNom < 0.28) continue;
+    const startElev = elevAt(i);
+    let cur = i;
+    let curElev = startElev;
+    let distM = 0;
+    for (let step = 1; step <= 10; step++) {
+      const cr = Math.floor(cur / width);
+      const cc = cur - cr * width;
+      let bestNi = -1;
+      let bestGrad = 0;
+      let bestDist = cellX;
+      let bestElev = curElev;
+      for (let k = 0; k < 8; k++) {
+        const nr = cr + dy[k];
+        const nc = cc + dx[k];
+        if (nr < 0 || nr >= height || nc < 0 || nc >= width) continue;
+        const ni = nr * width + nc;
+        const nElev = elevAt(ni);
+        const drop = curElev - nElev;
+        if (drop <= 0) continue;
+        const grad = drop / stepDistArr[k];
+        if (grad > bestGrad) {
+          bestGrad = grad;
+          bestNi = ni;
+          bestDist = stepDistArr[k];
+          bestElev = nElev;
+        }
+      }
+      if (bestNi < 0) break;
+      if (nagariMask && nagariMask[bestNi] === 0) break;
+      distM += bestDist;
+      const reachRatio = (startElev - bestElev) / Math.max(1, distM);
+      if (reachRatio < 0.364) break;
+      const shadowVal = riskNom * Math.max(0.25, 1 - step / 11);
+      if (shadowVal > landslideRunoutGrid[bestNi]) {
+        landslideRunoutGrid[bestNi] = shadowVal;
+      }
+      cur = bestNi;
+      curElev = bestElev;
+    }
+  }
+
+  let runoutCells = 0;
+  for (let i = 0; i < n; i++) {
+    if (landslideRiskGrid[i] >= 0.18) {
+      landslideRunoutGrid[i] = 0;
+    } else if (landslideRunoutGrid[i] >= 0.22) {
+      runoutCells++;
+    }
+  }
+
   return {
     fosP50,
     landslideRiskGrid,
     landslideProbGrid,
+    landslideRunoutGrid,
     reachSedimentSupplyM3,
     landslideCellsP10,
     landslideCellsP50,
-    landslideCellsP90
+    landslideCellsP90,
+    runoutCells
   };
 }

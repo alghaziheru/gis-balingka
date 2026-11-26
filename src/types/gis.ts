@@ -133,6 +133,9 @@ export interface SimFieldsData {
   cellSizeX: number;
   cellSizeY: number;
   sourceDemResM?: number;
+  hiResWidth?: number;
+  hiResHeight?: number;
+  hiResHandDmBase64?: string;
   minElev: number;
   maxElev: number;
   p90TravelMin: number;
@@ -217,6 +220,17 @@ export interface EnsembleRange {
   p90: number;
 }
 
+export interface InputCoverageStats {
+  insideReaches: number;
+  verifiedReaches: number;
+  measuredReaches: number;
+  totalCrossings: number;
+  verifiedCrossings: number;
+  measuredCrossings: number;
+  hwmCount: number;
+  isCalibrated: boolean;
+}
+
 export interface HydrographPoint {
   timeMin: number;
   rainMmHr: number;
@@ -251,7 +265,11 @@ export interface CascadeKpis {
   floodAreaHa: number;
   landslideAreaHa: number;
   affectedBuildingsFlood: number;
+  affectedBuildingsDeep: number;
   affectedBuildingsLandslide: number;
+  representativeStageM: number;
+  representativeStageP10M: number;
+  representativeStageP90M: number;
   chokeCount: number;
   reductionPct: number;
   peakTravelMin: number;
@@ -263,6 +281,8 @@ export interface CascadeKpis {
   scourReachCount: number;
   dataConfidenceScore: number;
   dataConfidenceLevel: DataConfidenceLevel;
+  inputCoverage?: InputCoverageStats;
+  runoutAreaHa?: number;
   ensemble: {
     floodAreaHa: EnsembleRange;
     landslideAreaHa: EnsembleRange;

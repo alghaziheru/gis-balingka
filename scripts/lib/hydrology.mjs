@@ -1702,6 +1702,21 @@ export function computeCascadeFields({
   const outScourMask = resampleScourMax(scourMask);
   const outNagariMask = resampleArr(nagariMask, Uint8Array);
 
+  // Full-resolution (~13.8m DEMNAS) compact HAND grid in decimeters (0..250 = 0..25.0m, 255 = dry/steep/outside)
+  // so simulation water boundaries hug real riverbanks without ~33m spillover onto raised neighboring houses
+  let hiResHandDm = null;
+  if (needSimDownsample) {
+    hiResHandDm = new Uint8Array(n);
+    for (let i = 0; i < n; i++) {
+      if ((nagariMask && nagariMask[i] === 0) || slope[i] > 28) {
+        hiResHandDm[i] = 255;
+      } else {
+        const dm = Math.round(hand[i] * 10);
+        hiResHandDm[i] = dm >= 250 ? 255 : Math.max(0, dm);
+      }
+    }
+  }
+
   const toB64 = arr => Buffer.from(arr.buffer, arr.byteOffset, arr.byteLength).toString('base64');
 
   return {
@@ -1712,6 +1727,13 @@ export function computeCascadeFields({
     cellSizeX: Number(simCellX.toFixed(2)),
     cellSizeY: Number(simCellY.toFixed(2)),
     sourceDemResM: Number(((cellSizeX + cellSizeY) * 0.5).toFixed(1)),
+    ...(hiResHandDm
+      ? {
+          hiResWidth: width,
+          hiResHeight: height,
+          hiResHandDmBase64: toB64(hiResHandDm)
+        }
+      : {}),
     minElev: Math.round(minElev),
     maxElev: Math.round(maxElev),
     p90TravelMin: Number(Math.max(12, p90TravelMin).toFixed(1)),

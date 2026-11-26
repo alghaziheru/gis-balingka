@@ -78,6 +78,8 @@ export function MapView(props: MapViewProps) {
   controlRefProp.current = props.controlRef;
   const tabRef = useRef(props.tab);
   tabRef.current = props.tab;
+  const basemapRef = useRef(props.basemap);
+  basemapRef.current = props.basemap;
   const simProgressRef = useRef(props.simProgress);
   simProgressRef.current = props.simProgress;
   const cascadeEngineRef = useRef(props.cascadeEngine);
@@ -163,6 +165,7 @@ export function MapView(props: MapViewProps) {
   const mergingFlowIdsRef = useRef<Set<string>>(new Set());
   const particlesClearedRef = useRef(true);
   const isDraggingVertexRef = useRef(false);
+  const isRaining = props.tab === 'sim' && props.simProgress > 0.02;
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -220,9 +223,13 @@ export function MapView(props: MapViewProps) {
     };
 
     let stopParticles: (() => void) | null = null;
-    map.on('load', () => {
+    let mountedLayers = false;
+    let disposed = false;
+    const mountStyleAndLayers = () => {
+      if (disposed || mountedLayers || mapRef.current !== map) return;
+      mountedLayers = true;
       const ds = props.datasets;
-      addDataSourcesAndLayers(map, ds, props.basemap);
+      addDataSourcesAndLayers(map, ds, basemapRef.current);
       contourMarkersRef.current = addStaticPlaceAndContourMarkers(map, ds, {
         activeToolRef,
         onSelectJorongPillRef
@@ -248,11 +255,21 @@ export function MapView(props: MapViewProps) {
       mapLoadedRef.current = true;
       setMapReady(true);
       telemetryControls.emitCamera(true);
-    });
+    };
+
+    if (map.isStyleLoaded()) {
+      mountStyleAndLayers();
+    } else {
+      map.once('style.load', mountStyleAndLayers);
+      map.once('load', mountStyleAndLayers);
+    }
 
     attachMapClickAndCursorHandlers(map, interactionRefs);
 
     return () => {
+      disposed = true;
+      map.off('style.load', mountStyleAndLayers);
+      map.off('load', mountStyleAndLayers);
       telemetryControls.cleanup();
       stopParticles?.();
       mapLoadedRef.current = false;
@@ -266,7 +283,7 @@ export function MapView(props: MapViewProps) {
   // Sync surfaces, smooth overlays, filters, and terrain exaggeration
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !mapLoadedRef.current) return;
+    if (!map || !mapLoadedRef.current || !mapReady || !map.getLayer('basemap-sat')) return;
 
     const vis = (on: boolean) => (on ? 'visible' : 'none');
 
@@ -285,16 +302,15 @@ export function MapView(props: MapViewProps) {
       lastTerrainExagRef.current = nextExag;
     }
 
-    const isRaining = props.tab === 'sim' && props.simProgress > 0.02;
-
     map.setLayoutProperty('nagari-boundary-casing', 'visibility', vis(props.layers.das));
     map.setLayoutProperty('nagari-boundary-line', 'visibility', vis(props.layers.das));
     map.setLayoutProperty('jorong-fill', 'visibility', vis(props.layers.das));
     map.setLayoutProperty('jorong-casing', 'visibility', vis(props.layers.das));
     map.setLayoutProperty('jorong-line', 'visibility', vis(props.layers.das));
-    map.setLayoutProperty('settlements-residential-fill', 'visibility', vis(props.layers.settlements && !isRaining));
-    map.setLayoutProperty('settlements-buildings-fill', 'visibility', vis(props.layers.settlements && !isRaining));
-    map.setLayoutProperty('settlements-buildings-line', 'visibility', vis(props.layers.settlements && !isRaining));
+    const showSettlements = props.layers.settlements && props.tab !== 'sim';
+    map.setLayoutProperty('settlements-residential-fill', 'visibility', vis(showSettlements));
+    map.setLayoutProperty('settlements-buildings-fill', 'visibility', vis(showSettlements));
+    map.setLayoutProperty('settlements-buildings-line', 'visibility', vis(showSettlements));
     map.setLayoutProperty('landcover-overlay', 'visibility', vis(props.layers.landCover));
     map.setLayoutProperty('scour-change-overlay', 'visibility', vis(props.layers.scourChange));
     map.setLayoutProperty('agam-landslide-fill', 'visibility', vis(props.layers.agamLandslide));
@@ -371,8 +387,8 @@ export function MapView(props: MapViewProps) {
       );
     }
 
-    const maxTier = props.tab === 'sim' ? 0 : props.flowDensity;
-    const flowVis = props.tab !== 'sim' && maxTier > 0;
+    const maxTier = props.flowDensity;
+    const flowVis = maxTier > 0;
     const flowAnimActive = props.tab !== 'sim' && props.flowDensity > 0;
     flowAnimActiveRef.current = flowAnimActive;
 
@@ -447,7 +463,7 @@ export function MapView(props: MapViewProps) {
       map.setPaintProperty(
         'verified-waterways-merged-glow',
         'line-opacity',
-        isRaining ? Math.min(0.64, 0.34 + props.simProgress * 0.24 + (props.simRain / 150) * 0.1) : 0.42
+        isRaining ? 0.56 : 0.42
       );
     } else {
       mergedReachesRef.current = [];
@@ -483,27 +499,6 @@ export function MapView(props: MapViewProps) {
     if (map.getLayer('calibration-marks-circle')) {
       map.setLayoutProperty('calibration-marks-circle', 'visibility', vis(showCalMarks));
     }
-
-    const cleanupCascade = syncSimulationOverlays({
-      map,
-      tab: props.tab,
-      isRaining,
-      simMapViewMode: props.simMapViewMode,
-      datasets: props.datasets,
-      layers: props.layers,
-      simRain: props.simRain,
-      simDurationMin: props.simDurationMin,
-      simProgress: props.simProgress,
-      simScenario: props.simScenario,
-      cascadeEngine: props.cascadeEngine,
-      cascadeParams: props.cascadeParams,
-      verifiedWaterways: props.verifiedWaterways,
-      lastCascadeKeyRef,
-      lastCascadeTsRef,
-      landslideCanvasRef,
-      agreementCanvasRef,
-      setPoolGlintPoints
-    });
 
     // Draft Crossings (filtered to hide points already covered by verified structures) & Hazard/Evac Points
     const draftSrc = map.getSource('src-draft-pts') as GeoJSONSource | undefined;
@@ -560,8 +555,6 @@ export function MapView(props: MapViewProps) {
       }
       map.setFilter('draft-points', ['any', ...anyClauses] as FilterSpecification);
     }
-
-    return cleanupCascade;
   }, [
     mapReady,
     props.basemap,
@@ -570,16 +563,10 @@ export function MapView(props: MapViewProps) {
     props.layers,
     props.flowDensity,
     props.tab,
-    props.simRain,
-    props.simDurationMin,
-    props.simProgress,
-    props.simScenario,
+    isRaining,
     props.lang,
     props.viewMode,
     props.rainAnimEnabled,
-    props.simMapViewMode,
-    props.cascadeEngine,
-    props.cascadeParams,
     props.drainFilter,
     props.verifiedWaterways,
     props.verifiedStructures,
@@ -592,20 +579,60 @@ export function MapView(props: MapViewProps) {
 
   useEffect(() => {
     const map = mapRef.current;
+    if (!map || !mapLoadedRef.current || !mapReady || !map.getLayer('basemap-sat')) return;
+    return syncSimulationOverlays({
+      map,
+      tab: props.tab,
+      isRaining,
+      simMapViewMode: props.simMapViewMode,
+      datasets: props.datasets,
+      layers: props.layers,
+      simRain: props.simRain,
+      simDurationMin: props.simDurationMin,
+      simProgress: props.simProgress,
+      simScenario: props.simScenario,
+      cascadeEngine: props.cascadeEngine,
+      cascadeParams: props.cascadeParams,
+      verifiedWaterways: props.verifiedWaterways,
+      lastCascadeKeyRef,
+      lastCascadeTsRef,
+      landslideCanvasRef,
+      agreementCanvasRef,
+      setPoolGlintPoints
+    });
+  }, [
+    mapReady,
+    props.tab,
+    isRaining,
+    props.simMapViewMode,
+    props.datasets,
+    props.layers,
+    props.simRain,
+    props.simDurationMin,
+    props.simProgress,
+    props.simScenario,
+    props.cascadeEngine,
+    props.cascadeParams,
+    props.verifiedWaterways
+  ]);
+
+  const quantizedSkyProgress = Math.round(props.simProgress * 10) / 10;
+  useEffect(() => {
+    const map = mapRef.current;
     if (!map || !mapLoadedRef.current) return;
     syncStormSky(map, lastSkyKeyRef, {
       tab: props.tab,
       rainAnimEnabled: props.rainAnimEnabled,
-      simProgress: props.simProgress,
+      simProgress: quantizedSkyProgress,
       simRain: props.simRain
     });
-  }, [mapReady, props.tab, props.rainAnimEnabled, props.simProgress, props.simRain]);
+  }, [mapReady, props.tab, props.rainAnimEnabled, quantizedSkyProgress, props.simRain]);
 
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !mapLoadedRef.current) return;
-    applyBasemapContrastPalette(map, props.basemap, props.tab, props.simProgress);
-  }, [mapReady, props.basemap, props.tab, props.simProgress]);
+    applyBasemapContrastPalette(map, props.basemap, props.tab, isRaining ? 1 : 0);
+  }, [mapReady, props.basemap, props.tab, isRaining]);
 
   useEffect(() => {
     const map = mapRef.current;

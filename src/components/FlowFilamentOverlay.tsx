@@ -232,34 +232,50 @@ export function FlowFilamentOverlay({
 
             const baseStrength = isMainVerified
               ? isCenterCore
-                ? 0.94
-                : 0.68
+                ? 0.96
+                : 0.74
               : cor.kind === 'rbi_tributary'
                 ? isCenterCore
-                  ? 0.86
-                  : 0.62
+                  ? 0.90
+                  : 0.68
                 : isCenterCore
-                  ? 0.78
-                  : 0.56;
-            const baseAlpha = baseStrength * (0.45 + 0.55 * runoffGain);
+                  ? 0.84
+                  : 0.62;
+            const baseAlpha = baseStrength * (0.58 + 0.42 * runoffGain);
 
-            const rgb = isCenterCore ? '255, 255, 255' : '224, 242, 254';
-            const grad = ctx.createLinearGradient(sx, sy, ex, ey);
-            grad.addColorStop(0, `rgba(${rgb}, 0)`);
-            grad.addColorStop(0.28, `rgba(${rgb}, ${(baseAlpha * 0.52).toFixed(2)})`);
-            grad.addColorStop(0.75, `rgba(${rgb}, ${baseAlpha.toFixed(2)})`);
-            grad.addColorStop(1, `rgba(${rgb}, ${Math.min(0.98, baseAlpha + 0.06).toFixed(2)})`);
-
-            ctx.strokeStyle = grad;
-            ctx.lineWidth = isCenterCore
+            // High-contrast deep ocean blue / teal for light DEMNAS Relief, Elevasi & Lereng surfaces
+            const rgb = isMainVerified
+              ? isCenterCore
+                ? '7, 89, 133'
+                : '2, 132, 199'
+              : cor.kind === 'rbi_tributary'
+                ? isCenterCore
+                  ? '3, 105, 161'
+                  : '14, 165, 233'
+                : isCenterCore
+                  ? '14, 116, 144'
+                  : '8, 145, 178';
+            const midIdx = Math.max(1, Math.floor((ptsX.length - 1) * 0.45));
+            const baseWidth = isCenterCore
               ? cor.kind === 'verified_river'
-                ? 1.22
-                : 1.02
-              : 0.85;
+                ? 2.15
+                : 1.75
+              : 1.25;
 
+            ctx.strokeStyle = `rgba(${rgb}, ${(baseAlpha * 0.48).toFixed(2)})`;
+            ctx.lineWidth = Math.max(1.0, baseWidth * 0.85);
             ctx.beginPath();
             ctx.moveTo(sx, sy);
             for (let k = 1; k < ptsX.length; k++) {
+              ctx.lineTo(ptsX[k], ptsY[k]);
+            }
+            ctx.stroke();
+
+            ctx.strokeStyle = `rgba(${rgb}, ${Math.min(0.98, baseAlpha + 0.06).toFixed(2)})`;
+            ctx.lineWidth = baseWidth;
+            ctx.beginPath();
+            ctx.moveTo(ptsX[midIdx], ptsY[midIdx]);
+            for (let k = midIdx + 1; k < ptsX.length; k++) {
               ctx.lineTo(ptsX[k], ptsY[k]);
             }
             ctx.stroke();
@@ -277,9 +293,9 @@ export function FlowFilamentOverlay({
           if (pt.x < -8 || pt.x > width + 8 || pt.y < -8 || pt.y > height + 8) continue;
 
           const twinkle = 0.5 + 0.5 * Math.sin(elapsedSec * 3.4 + i * 1.73);
-          const alpha = 0.2 + twinkle * 0.52;
-          ctx.fillStyle = `rgba(224, 242, 254, ${alpha.toFixed(2)})`;
-          ctx.fillRect(pt.x - 0.6, pt.y - 0.6, 1.2, 1.2);
+          const alpha = 0.25 + twinkle * 0.55;
+          ctx.fillStyle = `rgba(255, 255, 255, ${alpha.toFixed(2)})`;
+          ctx.fillRect(pt.x - 0.75, pt.y - 0.75, 1.5, 1.5);
         }
       }
     };
@@ -287,19 +303,25 @@ export function FlowFilamentOverlay({
     const onMapRender = () => {
       drawFrame();
     };
-    map.on('render', onMapRender);
+    let lastDrawTs = 0;
 
-    const loop = () => {
+    if (reducedMotion) {
+      map.on('render', onMapRender);
       drawFrame();
-      if (!reducedMotion) {
+    } else {
+      const loop = (now: number) => {
+        if (!document.hidden && now - lastDrawTs >= 32) {
+          lastDrawTs = now;
+          drawFrame();
+        }
         rafId = requestAnimationFrame(loop);
-      }
-    };
-    rafId = requestAnimationFrame(loop);
+      };
+      rafId = requestAnimationFrame(loop);
+    }
 
     return () => {
       cancelAnimationFrame(rafId);
-      map.off('render', onMapRender);
+      if (reducedMotion) map.off('render', onMapRender);
       ro.disconnect();
       ctx.clearRect(0, 0, width, height);
     };

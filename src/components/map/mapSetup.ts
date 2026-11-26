@@ -364,13 +364,40 @@ export function addDataSourcesAndLayers(map: MapLibreMap, ds: LoadedDatasets, ba
     paint: { 'raster-opacity': 0.85, 'raster-fade-duration': 0 }
   });
 
-  map.addSource('src-sim-pools-shallow', { type: 'geojson', data: asGeoInput(EMPTY_FC) });
+  // 3-tier calm cartographic depth contour bands (~13.8 m DEMNAS riverbank precision):
+  // Tier 1 (0.12-0.30m shallow terrain flow): subtle translucent tint + dashed outline
+  // Tier 2 (0.30-1.00m moderate basin depth): sky-blue + crisp hairline contour
+  // Tier 3 (>1.00m deep channel / bankfull overflow): clear ocean blue (crisp on Relief/Elevasi)
+  map.addSource('src-sim-pools-yard', { type: 'geojson', data: asGeoInput(EMPTY_FC) });
   map.addLayer({
-    id: 'sim-pools-shallow-fill',
+    id: 'sim-pools-yard-fill',
     type: 'fill',
-    source: 'src-sim-pools-shallow',
+    source: 'src-sim-pools-yard',
+    layout: { visibility: 'none' },
+    paint: { 'fill-color': '#7dd3fc', 'fill-opacity': 0.22, 'fill-antialias': true }
+  });
+  map.addLayer({
+    id: 'sim-pools-yard-outline',
+    type: 'line',
+    source: 'src-sim-pools-yard',
+    layout: { visibility: 'none', 'line-cap': 'round', 'line-join': 'round' },
+    paint: { 'line-color': '#0284c7', 'line-width': 1.0, 'line-dasharray': [3, 2], 'line-opacity': 0.50 }
+  });
+
+  map.addSource('src-sim-pools-knee', { type: 'geojson', data: asGeoInput(EMPTY_FC) });
+  map.addLayer({
+    id: 'sim-pools-knee-fill',
+    type: 'fill',
+    source: 'src-sim-pools-knee',
     layout: { visibility: 'none' },
     paint: { 'fill-color': '#38bdf8', 'fill-opacity': 0.34, 'fill-antialias': true }
+  });
+  map.addLayer({
+    id: 'sim-pools-knee-outline',
+    type: 'line',
+    source: 'src-sim-pools-knee',
+    layout: { visibility: 'none', 'line-cap': 'round', 'line-join': 'round' },
+    paint: { 'line-color': '#0369a1', 'line-width': 1.05, 'line-opacity': 0.58 }
   });
 
   map.addSource('src-sim-pools-deep', { type: 'geojson', data: asGeoInput(EMPTY_FC) });
@@ -379,7 +406,7 @@ export function addDataSourcesAndLayers(map: MapLibreMap, ds: LoadedDatasets, ba
     type: 'fill',
     source: 'src-sim-pools-deep',
     layout: { visibility: 'none' },
-    paint: { 'fill-color': '#0284c7', 'fill-opacity': 0.34, 'fill-antialias': true }
+    paint: { 'fill-color': '#0369a1', 'fill-opacity': 0.50, 'fill-antialias': true }
   });
 
   map.addSource('src-sim-scour-reaches', { type: 'geojson', data: asGeoInput(EMPTY_FC) });
@@ -467,16 +494,6 @@ export function addDataSourcesAndLayers(map: MapLibreMap, ds: LoadedDatasets, ba
       'circle-stroke-color': '#ffffff',
       'circle-stroke-width': 2.2
     }
-  });
-
-  map.addSource('src-sim-affected-buildings', { type: 'geojson', data: asGeoInput(EMPTY_FC) });
-  map.addLayer({
-    id: 'sim-affected-buildings-line',
-    type: 'line',
-    source: 'src-sim-affected-buildings',
-    minzoom: 13.5,
-    layout: { visibility: 'none' },
-    paint: { 'line-color': '#f59e0b', 'line-width': 1.25, 'line-opacity': 0.78 }
   });
 
   map.addSource('src-settlements', { type: 'geojson', data: asGeoInput(ds.settlements) });

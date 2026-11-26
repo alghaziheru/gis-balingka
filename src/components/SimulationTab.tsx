@@ -4,6 +4,7 @@ import {
   ChevronDown,
   ChevronUp,
   Crosshair,
+  Download,
   Pause,
   Play,
   RotateCcw,
@@ -14,10 +15,17 @@ import {
 import { I18N } from '../i18n/translations';
 import { estimateChannelThresholds, resolveWaterwayCatchmentFromNetwork } from '../lib/channelHydraulics';
 import type { DemClient } from '../lib/demClient';
+import { getMaxRealisticRainMmHr, type RoutedReachState } from '../lib/reachRouter';
+import {
+  buildHydrographCsv,
+  buildScenarioExportJson,
+  triggerBrowserDownload
+} from '../lib/scenarioExport';
 import type {
   AgamStats,
   CascadeAlertLevel,
   CascadeKpis,
+  CascadeSimParams,
   DebrisCouplingMode,
   DrainCondition,
   ForestScenario,
@@ -58,9 +66,13 @@ interface SimulationTabProps {
   rainAnimEnabled: boolean;
   showVerifiedWaterways: boolean;
   showRbiRivers: boolean;
+  showOsmRoads: boolean;
+  showDemFlows: boolean;
   verifiedIssueCount?: number;
   verifiedWaterways?: VerifiedWaterwayFeature[];
   simNetwork?: SimNetworkData | null;
+  cascadeParams?: CascadeSimParams;
+  routedNominal?: RoutedReachState | null;
   hasCalibrationProfile?: boolean;
   demClient?: DemClient | null;
   agamStats?: AgamStats;
@@ -87,6 +99,24 @@ interface SimulationTabProps {
   onToggleRainAnim: (enabled: boolean) => void;
   onToggleVerifiedWaterways: (enabled: boolean) => void;
   onToggleRbiRivers: (enabled: boolean) => void;
+  onToggleOsmRoads: (enabled: boolean) => void;
+  onToggleDemFlows: (enabled: boolean) => void;
+  onOpenMethodology: () => void;
+}
+
+const DURATION_STEPS_MIN = [30, 60, 120, 180, 360, 720, 1440, 2160, 2880, 4320] as const;
+
+function durationMinToStepIdx(min: number): number {
+  let bestIdx = 0;
+  let bestDiff = Infinity;
+  for (let i = 0; i < DURATION_STEPS_MIN.length; i++) {
+    const diff = Math.abs(DURATION_STEPS_MIN[i] - min);
+    if (diff < bestDiff) {
+      bestDiff = diff;
+      bestIdx = i;
+    }
+  }
+  return bestIdx;
 }
 
 function formatDurationClock(totalMinutes: number): string {
@@ -97,6 +127,14 @@ function formatDurationClock(totalMinutes: number): string {
 }
 
 function formatDurationLabel(totalMinutes: number, isEn: boolean): string {
+  if (totalMinutes >= 1440) {
+    const h = Math.round(totalMinutes / 60);
+    const days = totalMinutes / 1440;
+    const dayStr = Number.isInteger(days)
+      ? `${days} ${isEn ? (days === 1 ? 'day' : 'days') : 'hari'}`
+      : `${isEn ? days.toFixed(1) : days.toFixed(1).replace('.', ',')} ${isEn ? 'days' : 'hari'}`;
+    return `${h} ${isEn ? 'hr' : 'jam'} (${dayStr})`;
+  }
   const h = Math.floor(totalMinutes / 60);
   const m = totalMinutes % 60;
   if (h === 0) return `${m} ${isEn ? 'min' : 'mnt'}`;
@@ -106,9 +144,9 @@ function formatDurationLabel(totalMinutes: number, isEn: boolean): string {
 
 const ALERT_BADGE: Record<CascadeAlertLevel, { bg: string; text: string }> = {
   normal: { bg: 'bg-[#047857]/12', text: 'text-[#047857]' },
-  waspada: { bg: 'bg-[#b45309]/14', text: 'text-[#92400e]' },
-  siaga: { bg: 'bg-[#c2410c]/14', text: 'text-[#c2410c]' },
-  kritis: { bg: 'bg-[#b91c1c]/14', text: 'text-[#b91c1c]' }
+  waspada: { bg: 'bg-[#0369a1]/12', text: 'text-[#0369a1]' },
+  siaga: { bg: 'bg-[#b45309]/12', text: 'text-[#92400e]' },
+  kritis: { bg: 'bg-[#161c1a]/12', text: 'text-[#161c1a]' }
 };
 
 export function SimulationTab({
@@ -135,9 +173,13 @@ export function SimulationTab({
   rainAnimEnabled,
   showVerifiedWaterways,
   showRbiRivers,
+  showOsmRoads,
+  showDemFlows,
   verifiedIssueCount = 0,
   verifiedWaterways = [],
   simNetwork = null,
+  cascadeParams,
+  routedNominal = null,
   hasCalibrationProfile = false,
   demClient = null,
   agamStats,
@@ -163,7 +205,10 @@ export function SimulationTab({
   onApplyPreset,
   onToggleRainAnim,
   onToggleVerifiedWaterways,
-  onToggleRbiRivers
+  onToggleRbiRivers,
+  onToggleOsmRoads,
+  onToggleDemFlows,
+  onOpenMethodology
 }: SimulationTabProps) {
   const uid = useId();
   const t = I18N[lang];
@@ -176,22 +221,22 @@ export function SimulationTab({
 
   const activeScenario: 'normal' | 'upland' | 'extreme' | 'custom' =
     rainMm === 25 &&
-    durationMin === 90 &&
-    soilMoisture === 'dry' &&
+    durationMin === 120 &&
+    soilMoisture === 'moist' &&
     rainPattern === 'uniform' &&
     drainCondition === 'cleared' &&
     (!isDetail || forestScenario === 'actual')
       ? 'normal'
-      : rainMm === 80 &&
-          durationMin === 180 &&
-          soilMoisture === 'saturated' &&
+      : rainMm === 65 &&
+          durationMin === 360 &&
+          soilMoisture === 'moist' &&
           rainPattern === 'upland' &&
           drainCondition === 'clogged' &&
           (!isDetail || forestScenario === 'actual')
         ? 'upland'
-        : rainMm === 120 &&
-            durationMin === 180 &&
-            soilMoisture === 'saturated' &&
+        : rainMm === 30 &&
+            durationMin === 2880 &&
+            soilMoisture === 'moist' &&
             rainPattern === 'upland' &&
             drainCondition === (isDetail ? 'surge' : 'clogged') &&
             (!isDetail || forestScenario === 'actual')
@@ -239,6 +284,24 @@ export function SimulationTab({
             ? t.stage3Desc
             : t.stage4Desc;
 
+  const maxRainForDur = getMaxRealisticRainMmHr(durationMin);
+  const totalStormInputMm = Math.round(rainMm * (durationMin / 60));
+  const isCalibrated = Boolean(kpis.inputCoverage?.isCalibrated);
+
+  const formatHaValue = (ha: number): string => {
+    if (ha <= 0) return '0 ha';
+    if (isCalibrated) return `${ha.toFixed(1)} ha`;
+    if (ha < 1) return '<1 ha';
+    return `~${Math.round(ha)} ha`;
+  };
+
+  const formatMmValue = (mm: number): string => {
+    if (mm <= 0) return '0 mm';
+    if (isCalibrated) return `${mm.toFixed(1)} mm`;
+    if (mm < 1) return '<1 mm';
+    return `~${Math.round(mm)} mm`;
+  };
+
   const confBadgeStyle =
     kpis.dataConfidenceLevel === 'high'
       ? 'bg-[#047857]/12 text-[#047857]'
@@ -246,9 +309,18 @@ export function SimulationTab({
         ? 'bg-[#0369a1]/12 text-[#0369a1]'
         : 'bg-[#b45309]/14 text-[#92400e]';
 
+  const cov = kpis.inputCoverage;
   const confTooltip = isEn
-    ? `Data Confidence (${kpis.dataConfidenceScore}/100): combines BIG DEMNAS resolution, Pemkab Agam soil/geology layers, Sentinel-2 scour reference, field-verified waterways/cross-sections, measured culvert openings, and recorded High-Water Marks.`
-    : `Kepercayaan Data (${kpis.dataConfidenceScore}/100): menggabungkan resolusi BIG DEMNAS, lapisan tanah/geologi Pemkab Agam, referensi Sentinel-2, sungai & penampang terukur lapangan, dimensi gorong-gorong, serta benchmark tinggi air.`;
+    ? `Input Readiness (${kpis.dataConfidenceScore}/100): ${
+        cov
+          ? `${cov.measuredReaches}/${cov.insideReaches} river cross-sections measured, ${cov.measuredCrossings}/${cov.totalCrossings} culvert openings measured, ${cov.hwmCount} High-Water Marks.`
+          : 'Based on DEMNAS, Pemkab Agam soil/geology, and Sentinel-2 layers.'
+      } Screening model — not calibrated against stream gauges.`
+    : `Kesiapan Data Input (${kpis.dataConfidenceScore}/100): ${
+        cov
+          ? `${cov.measuredReaches}/${cov.insideReaches} penampang sungai terukur, ${cov.measuredCrossings}/${cov.totalCrossings} bukaan gorong-gorong terukur, ${cov.hwmCount} tanda tinggi air.`
+          : 'Berdasarkan DEMNAS, peta tanah Pemkab Agam, dan Sentinel-2.'
+      } Model penyaringan awal — belum terkalibrasi alat ukur sungai.`;
 
   const rainIntensityLabel = isDetail ? t.lblRainIntensity : t.lblRainIntensitySimple;
   const durationLabel = isDetail ? t.lblDuration : t.lblDurationSimple;
@@ -258,7 +330,6 @@ export function SimulationTab({
   const outputTitle = isDetail ? t.simOutputTitleDetail : t.simOutputTitleSimple;
   const kpiFloodLabel = isDetail ? t.kpiFloodArea : t.kpiFloodAreaSimple;
   const kpiLandslideLabel = isDetail ? t.kpiLandslideArea : t.kpiLandslideAreaSimple;
-  const kpiBuildingsLabel = isDetail ? t.kpiBuildings : t.kpiBuildingsSimple;
 
   const waterwayKindLabel: Record<string, string> = isEn
     ? { river: 'River', stream: 'Stream', canal: 'Canal', drain: 'Drain', culvert: 'Culvert' }
@@ -410,21 +481,30 @@ export function SimulationTab({
           <input
             id={`${uid}-rain`}
             type="range"
-            min={10}
-            max={150}
+            min={5}
+            max={maxRainForDur}
             step={5}
-            value={rainMm}
+            value={Math.min(rainMm, maxRainForDur)}
             onChange={e => onChangeRain(parseInt(e.target.value, 10))}
             className="w-full cursor-pointer accent-[#0369a1]"
           />
           <div className="flex justify-between text-[11px] font-medium text-[#636f6a]">
             <span>{t.rainLight}</span>
-            <span>{t.rainHeavy}</span>
-            <span>{t.rainExtreme}</span>
+            {maxRainForDur >= 90 && <span>{t.rainHeavy}</span>}
+            <span>
+              {isEn ? `Max (${maxRainForDur})` : `Maks (${maxRainForDur})`}
+            </span>
           </div>
+          {maxRainForDur < 150 && (
+            <div className="text-[10.5px] font-medium text-[#636f6a]">
+              {isEn
+                ? `IDF envelope cap: ≤${maxRainForDur} mm/hr at ${formatDurationLabel(durationMin, true)} (Total ~${totalStormInputMm} mm)`
+                : `Batas wajar IDF: ≤${maxRainForDur} mm/jam untuk ${formatDurationLabel(durationMin, false)} (Total ~${totalStormInputMm} mm)`}
+            </div>
+          )}
         </div>
 
-        {/* Slider 2: Storm Duration */}
+        {/* Slider 2: Storm Duration (stepped 30 min -> 72 hr / 3 days) */}
         <div className="mt-3 flex flex-col gap-1.5 border-t border-[#161c1a]/10 pt-3">
           <div className="flex items-center justify-between gap-2 text-[12.5px]">
             <span className="flex items-center gap-1.5 font-semibold text-[#434d49]">
@@ -438,11 +518,14 @@ export function SimulationTab({
           <input
             id={`${uid}-duration`}
             type="range"
-            min={15}
-            max={360}
-            step={15}
-            value={durationMin}
-            onChange={e => onChangeDuration(parseInt(e.target.value, 10))}
+            min={0}
+            max={DURATION_STEPS_MIN.length - 1}
+            step={1}
+            value={durationMinToStepIdx(durationMin)}
+            onChange={e => {
+              const idx = Math.max(0, Math.min(DURATION_STEPS_MIN.length - 1, parseInt(e.target.value, 10)));
+              onChangeDuration(DURATION_STEPS_MIN[idx]);
+            }}
             className="w-full cursor-pointer accent-[#0369a1]"
           />
           <div className="flex justify-between text-[11px] font-medium text-[#636f6a]">
@@ -789,6 +872,45 @@ export function SimulationTab({
               className="h-4.5 w-4.5 shrink-0 cursor-pointer accent-[#0369a1]"
             />
           </div>
+
+          <div className="flex min-h-[40px] items-center justify-between gap-2.5 py-1">
+            <label
+              htmlFor={`${uid}-sim-osm`}
+              className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 text-[12.5px] font-medium text-[#161c1a]"
+            >
+              <LegendIcon kind="osm" />
+              <span className="leading-snug">{t.lblOsmContext}</span>
+            </label>
+            <input
+              id={`${uid}-sim-osm`}
+              data-testid="sim-toggle-osm-roads"
+              type="checkbox"
+              checked={showOsmRoads}
+              onChange={e => onToggleOsmRoads(e.target.checked)}
+              className="h-4.5 w-4.5 shrink-0 cursor-pointer accent-[#0369a1]"
+            />
+          </div>
+
+          <div className="flex min-h-[40px] items-center justify-between gap-2.5 py-1">
+            <div className="flex min-w-0 flex-1 items-center gap-1.5">
+              <label
+                htmlFor={`${uid}-sim-flow`}
+                className="flex min-w-0 cursor-pointer items-center gap-2 text-[12.5px] font-medium text-[#161c1a]"
+              >
+                <LegendIcon kind="flow" />
+                <span className="leading-snug">{isDetail ? t.lblFlowDetail : t.lblFlowSimple}</span>
+              </label>
+              <InfoTooltip text={t.infoFlowSimple} label={isDetail ? t.lblFlowDetail : t.lblFlowSimple} />
+            </div>
+            <input
+              id={`${uid}-sim-flow`}
+              data-testid="sim-toggle-dem-flows"
+              type="checkbox"
+              checked={showDemFlows}
+              onChange={e => onToggleDemFlows(e.target.checked)}
+              className="h-4.5 w-4.5 shrink-0 cursor-pointer accent-[#0369a1]"
+            />
+          </div>
         </div>
       </section>
 
@@ -802,18 +924,34 @@ export function SimulationTab({
                 -{kpis.reductionPct}% {isEn ? 'HAND zone' : isDetail ? 'zona HAND' : 'area cekungan'}
               </span>
             )}
-            <span
-              data-testid="sim-data-confidence"
-              className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10.5px] font-bold ${confBadgeStyle}`}
-            >
-              <ShieldCheck className="h-3 w-3 shrink-0" />
-              <span className="font-mono-num">
-                {isEn ? 'Conf' : 'Data'} {kpis.dataConfidenceScore}/100
+            {isDetail && (
+              <span
+                data-testid="sim-data-confidence"
+                className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10.5px] font-bold ${confBadgeStyle}`}
+              >
+                <ShieldCheck className="h-3 w-3 shrink-0" />
+                <span className="font-mono-num">
+                  {isCalibrated ? `Input ${kpis.dataConfidenceScore}/100` : `Screening ${kpis.dataConfidenceScore}/100`}
+                </span>
+                <InfoTooltip
+                  text={confTooltip}
+                  label={isEn ? 'Input Readiness' : 'Kesiapan Data Input'}
+                />
               </span>
-              <InfoTooltip text={confTooltip} label={isEn ? 'Data Confidence Score' : 'Skor Kepercayaan Data'} />
-            </span>
+            )}
           </div>
         </div>
+
+        {isDetail && kpis.validation.hwmCount === 0 && (
+          <div
+            data-testid="sim-uncalibrated-note"
+            className="mb-2.5 rounded-md border border-[#161c1a]/10 bg-[#fafaf8] px-2.5 py-1.5 text-[11px] font-medium text-[#434d49]"
+          >
+            {isEn
+              ? `Uncalibrated screening model · ${cov ? `${cov.measuredReaches}/${cov.insideReaches} cross-sections, ${cov.measuredCrossings}/${cov.totalCrossings} culverts measured` : '0 field river gauges'}`
+              : `Model penyaringan belum terkalibrasi · ${cov ? `${cov.measuredReaches}/${cov.insideReaches} penampang & ${cov.measuredCrossings}/${cov.totalCrossings} gorong-gorong terukur` : '0 pos duga air'}`}
+          </div>
+        )}
 
         {/* Detailed-Only Map Overlay View Mode Switcher */}
         {isDetail && (
@@ -845,8 +983,8 @@ export function SimulationTab({
           </div>
         )}
 
-        {/* Hydrograph & P10-P90 Envelope */}
-        {(isDetail || progress > 0.02) && kpis.hydrograph.length > 1 && (
+        {/* Hydrograph & Sensitivity Envelope (Detailed Mode Only) */}
+        {isDetail && kpis.hydrograph.length > 1 && (
           <div className="mb-2.5">
             <HydrographSparkline
               lang={lang}
@@ -857,6 +995,7 @@ export function SimulationTab({
               peakQ={kpis.peakDischargeM3s}
               peakQP10={kpis.ensemble.peakDischargeM3s.p10}
               peakQP90={kpis.ensemble.peakDischargeM3s.p90}
+              isCalibrated={isCalibrated}
             />
           </div>
         )}
@@ -868,11 +1007,11 @@ export function SimulationTab({
               <InfoTooltip text={t.infoKpiFlood} label={kpiFloodLabel} />
             </div>
             <div className="font-mono-num mt-0.5 text-[15px] font-bold text-[#0369a1]">
-              {kpis.floodAreaHa.toFixed(1)} ha
+              {formatHaValue(kpis.floodAreaHa)}
             </div>
             {showRanges && (
               <div className="font-mono-num text-[10.5px] text-[#636f6a]">
-                P10–P90: {kpis.ensemble.floodAreaHa.p10.toFixed(0)}–{kpis.ensemble.floodAreaHa.p90.toFixed(0)} ha
+                {isEn ? 'Sens.' : 'Sensitivitas'}: {kpis.ensemble.floodAreaHa.p10.toFixed(0)}–{kpis.ensemble.floodAreaHa.p90.toFixed(0)} ha
               </div>
             )}
           </div>
@@ -882,40 +1021,38 @@ export function SimulationTab({
               <InfoTooltip text={t.infoKpiLandslide} label={kpiLandslideLabel} />
             </div>
             <div className="font-mono-num mt-0.5 text-[15px] font-bold text-[#c2410c]">
-              {kpis.landslideAreaHa.toFixed(1)} ha
+              {formatHaValue(kpis.landslideAreaHa)}
             </div>
             {showRanges && (
               <div className="font-mono-num text-[10.5px] text-[#636f6a]">
-                P10–P90: {kpis.ensemble.landslideAreaHa.p10.toFixed(0)}–{kpis.ensemble.landslideAreaHa.p90.toFixed(0)} ha
+                {isEn ? 'Sens.' : 'Sensitivitas'}: {kpis.ensemble.landslideAreaHa.p10.toFixed(0)}–{kpis.ensemble.landslideAreaHa.p90.toFixed(0)} ha
+                {kpis.runoutAreaHa && kpis.runoutAreaHa > 0 ? ` (+~${Math.round(kpis.runoutAreaHa)} ha)` : ''}
               </div>
             )}
-          </div>
-          <div className="rounded-lg bg-[#fafaf8] px-3 py-2">
-            <div className="flex items-start justify-between gap-1 text-[11.5px] leading-tight text-[#636f6a]">
-              <span>{kpiBuildingsLabel}</span>
-              <InfoTooltip text={t.infoKpiBuildings} label={kpiBuildingsLabel} />
-            </div>
-            <div className="font-mono-num mt-0.5 text-[15px] font-bold text-[#161c1a]">
-              ~{kpis.affectedBuildingsFlood}
-              {kpis.affectedBuildingsLandslide > 0 ? ` (+${kpis.affectedBuildingsLandslide})` : ''}
-            </div>
-            {showRanges && (
-              <div className="font-mono-num text-[10.5px] text-[#636f6a]">
-                [{kpis.ensemble.affectedBuildingsFlood.p10}–{kpis.ensemble.affectedBuildingsFlood.p90}]
-              </div>
-            )}
-          </div>
-          <div className="rounded-lg bg-[#fafaf8] px-3 py-2">
-            <div className="flex items-start justify-between gap-1 text-[11.5px] leading-tight text-[#636f6a]">
-              <span>{isDetail ? t.kpiChoke : t.kpiSimpleCrossings}</span>
-              <InfoTooltip text={t.infoKpiCrossings} label={isDetail ? t.kpiChoke : t.kpiSimpleCrossings} />
-            </div>
-            <div className="font-mono-num mt-0.5 text-[15px] font-bold text-[#161c1a]">
-              {kpis.chokeCount} {isEn ? 'spots' : 'titik'}
-            </div>
           </div>
 
-          {isDetail && (
+          {!isDetail ? (
+            <>
+              <div className="rounded-lg bg-[#fafaf8] px-3 py-2">
+                <div className="flex items-start justify-between gap-1 text-[11.5px] leading-tight text-[#636f6a]">
+                  <span>{t.kpiSimpleCrossings}</span>
+                  <InfoTooltip text={t.infoKpiCrossings} label={t.kpiSimpleCrossings} />
+                </div>
+                <div className="font-mono-num mt-0.5 text-[15px] font-bold text-[#161c1a]">
+                  {kpis.chokeCount} {isEn ? 'spots' : 'titik'}
+                </div>
+              </div>
+              <div className="rounded-lg bg-[#fafaf8] px-3 py-2">
+                <div className="flex items-start justify-between gap-1 text-[11.5px] leading-tight text-[#636f6a]">
+                  <span>{t.kpiTravelTimeSimple}</span>
+                  <InfoTooltip text={t.infoKpiTravelTime} label={t.kpiTravelTimeSimple} />
+                </div>
+                <div className="font-mono-num mt-0.5 text-[15px] font-bold text-[#161c1a]">
+                  {progress > 0.02 ? `~${Math.round(kpis.peakTravelMin)} ${isEn ? 'min' : 'mnt'}` : '—'}
+                </div>
+              </div>
+            </>
+          ) : (
             <>
               <div className="rounded-lg bg-[#fafaf8] px-3 py-2">
                 <div className="flex items-start justify-between gap-1 text-[11.5px] leading-tight text-[#636f6a]">
@@ -923,10 +1060,19 @@ export function SimulationTab({
                   <InfoTooltip text={t.infoKpiRunoff} label={t.kpiEffectiveRunoff} />
                 </div>
                 <div className="font-mono-num mt-0.5 text-[14.5px] font-bold text-[#161c1a]">
-                  {kpis.effectiveRunoffMm.toFixed(1)} mm
+                  {formatMmValue(kpis.effectiveRunoffMm)}
                 </div>
                 <div className="font-mono-num text-[10.5px] text-[#636f6a]">
-                  Q {kpis.peakDischargeM3s.toFixed(1)} m³/s · Cv {(kpis.meanSedimentCv * 100).toFixed(1)}%
+                  Cv {(kpis.meanSedimentCv * 100).toFixed(1)}%
+                </div>
+              </div>
+              <div className="rounded-lg bg-[#fafaf8] px-3 py-2">
+                <div className="flex items-start justify-between gap-1 text-[11.5px] leading-tight text-[#636f6a]">
+                  <span>{t.kpiChoke}</span>
+                  <InfoTooltip text={t.infoKpiCrossings} label={t.kpiChoke} />
+                </div>
+                <div className="font-mono-num mt-0.5 text-[15px] font-bold text-[#161c1a]">
+                  {kpis.chokeCount} {isEn ? 'spots' : 'titik'}
                 </div>
               </div>
               <div className="rounded-lg bg-[#fafaf8] px-3 py-2">
@@ -945,8 +1091,16 @@ export function SimulationTab({
                   {kpis.maxStreamPowerWm2} W/m²
                 </div>
                 <div className="font-mono-num text-[10.5px] text-[#636f6a]">
-                  {kpis.scourReachCount} {isEn ? 'scour reaches' : 'ruas gerusan'} · ~{Math.round(kpis.peakTravelMin)}{' '}
-                  {isEn ? 'm' : 'mnt'}
+                  {kpis.scourReachCount} {isEn ? 'scour reaches' : 'ruas gerusan'}
+                </div>
+              </div>
+              <div className="rounded-lg bg-[#fafaf8] px-3 py-2">
+                <div className="flex items-start justify-between gap-1 text-[11.5px] leading-tight text-[#636f6a]">
+                  <span>{t.kpiTravelTime}</span>
+                  <InfoTooltip text={t.infoKpiTravelTime} label={t.kpiTravelTime} />
+                </div>
+                <div className="font-mono-num mt-0.5 text-[14.5px] font-bold text-[#161c1a]">
+                  {progress > 0.02 ? `~${Math.round(kpis.peakTravelMin)} ${isEn ? 'min' : 'mnt'}` : '—'}
                 </div>
               </div>
             </>
@@ -958,11 +1112,17 @@ export function SimulationTab({
           <div className="mt-2.5 rounded-lg border border-[#161c1a]/10 bg-[#fafaf8] px-2.5 py-2">
             <div className="mb-1 flex items-center justify-between gap-1.5 text-[11px]">
               <span className="font-bold text-[#434d49]">
-                {isEn ? 'Independent Benchmark Skill' : 'Validasi Independen Model'}
+                {kpis.validation.hwmCount === 0
+                  ? isEn
+                    ? 'Spatial Pattern Sanity Check'
+                    : 'Cek Pola Spasial (Belum Kalibrasi)'
+                  : isEn
+                    ? 'Independent Benchmark Skill'
+                    : 'Validasi Independen Model'}
               </span>
               {hasCalibrationProfile && (
                 <span className="rounded bg-[#0369a1]/10 px-1.5 py-0.5 text-[10px] font-bold text-[#0369a1]">
-                  {isEn ? 'Calibrated' : 'Terkalibrasi'}
+                  {isEn ? 'Profile Active' : 'Profil Aktif'}
                 </span>
               )}
             </div>
@@ -990,6 +1150,60 @@ export function SimulationTab({
             </div>
           </div>
         )}
+
+        {isDetail && (
+          <div className="mt-2.5 grid grid-cols-2 gap-1.5">
+            <button
+              type="button"
+              data-testid="sim-export-csv"
+              onClick={() => {
+                const csv = buildHydrographCsv(kpis);
+                triggerBrowserDownload(csv, `balingka-hydrograph-${rainMm}mmh-${durationMin}m.csv`, 'text/csv;charset=utf-8');
+              }}
+              className="inline-flex min-h-[32px] items-center justify-center gap-1.5 rounded-lg border border-[#161c1a]/14 bg-white px-2 py-1 text-[11px] font-bold text-[#161c1a] transition hover:border-[#0369a1]/40 hover:text-[#0369a1]"
+            >
+              <Download className="h-3.5 w-3.5 shrink-0" />
+              <span>{isEn ? 'CSV Hydrograph' : 'CSV Hidrograf'}</span>
+            </button>
+            <button
+              type="button"
+              data-testid="sim-export-json"
+              onClick={() => {
+                const fallbackParams: CascadeSimParams = cascadeParams || {
+                  rainMmHr: rainMm,
+                  durationMin,
+                  progress,
+                  soilMoisture,
+                  rainPattern,
+                  drainCondition,
+                  forestScenario,
+                  hyetograph,
+                  antecedent5dMm,
+                  orographicPctPerKm,
+                  stormCore,
+                  culvertBlockagePct,
+                  structureBlockageOverrides,
+                  debrisCoupling
+                };
+                const json = buildScenarioExportJson(fallbackParams, kpis, simNetwork, routedNominal);
+                triggerBrowserDownload(json, `balingka-scenario-${rainMm}mmh-${durationMin}m.json`, 'application/json;charset=utf-8');
+              }}
+              className="inline-flex min-h-[32px] items-center justify-center gap-1.5 rounded-lg border border-[#161c1a]/14 bg-white px-2 py-1 text-[11px] font-bold text-[#161c1a] transition hover:border-[#0369a1]/40 hover:text-[#0369a1]"
+            >
+              <Download className="h-3.5 w-3.5 shrink-0" />
+              <span>{isEn ? 'JSON Scenario' : 'JSON Skenario'}</span>
+            </button>
+          </div>
+        )}
+
+        <button
+          type="button"
+          data-testid="sim-open-methodology"
+          onClick={onOpenMethodology}
+          className="mt-2.5 flex w-full items-center justify-center rounded-lg border border-[#161c1a]/10 bg-[#fafaf8] px-3 py-1.5 text-[11.5px] font-semibold text-[#0369a1] transition hover:border-[#0369a1]/35 hover:bg-[#f2f3ef]"
+        >
+          {t.simSeeFormulasLink} →
+        </button>
       </section>
 
       {/* Detailed-only River Width & Bank-Widening Threshold Calculator */}

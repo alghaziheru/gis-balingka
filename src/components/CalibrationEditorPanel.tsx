@@ -1,11 +1,13 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { Crosshair, Gauge, Lock, MapPinPlus, Pencil, RotateCcw, SlidersHorizontal, Trash2, Unlock } from 'lucide-react';
+import { Crosshair, Download, Gauge, Lock, MapPinPlus, Pencil, RotateCcw, SlidersHorizontal, Trash2, Unlock } from 'lucide-react';
 import type { CascadeEngine } from '../lib/cascadeEngine';
+import { buildFieldSurveyPriorityCsv, triggerBrowserDownload } from '../lib/scenarioExport';
 import type {
   CalibrationMarkFeature,
   CalibrationMarkKind,
   CalibrationProfile,
   Language,
+  SimNetworkData,
   ValidationMetrics
 } from '../types/gis';
 
@@ -34,6 +36,7 @@ interface CalibrationEditorPanelProps {
   calibrationProfile: CalibrationProfile | null;
   validationMetrics: ValidationMetrics;
   cascadeEngine: CascadeEngine | null;
+  simNetwork?: SimNetworkData | null;
   editingMark: ActiveEditingCalibrationMark | null;
   isPlacingNew: boolean;
   onStartPlaceNew: () => void;
@@ -59,6 +62,7 @@ export function CalibrationEditorPanel({
   calibrationProfile,
   validationMetrics,
   cascadeEngine,
+  simNetwork = null,
   editingMark,
   isPlacingNew,
   onStartPlaceNew,
@@ -122,7 +126,7 @@ export function CalibrationEditorPanel({
           kind,
           observedDepthM: kind === 'hwm' && parsedDepth !== null && Number.isFinite(parsedDepth) ? parsedDepth : null,
           rainMmHr: Math.max(10, Math.min(250, Number(rainStr) || 80)),
-          durationMin: Math.max(15, Math.min(720, Math.round(Number(durStr) || 180))),
+          durationMin: Math.max(15, Math.min(4320, Math.round(Number(durStr) || 180))),
           antecedent5dMm: Math.max(0, Math.min(250, Number(p5Str) || 90)),
           notes: notes.trim()
         },
@@ -259,6 +263,36 @@ export function CalibrationEditorPanel({
             </div>
           </div>
         </div>
+
+        {calibrationMarks.length < 3 && (
+          <div className="mb-2.5 rounded-lg border border-[#b45309]/25 bg-[#b45309]/8 px-2.5 py-2 text-[11px] leading-snug text-[#78350f]">
+            {isEn
+              ? 'Sentinel-2 Scour CSI & Agam AUC are spatial pattern sanity checks against a synthetic benchmark storm. Record ≥3 field High-Water Marks (HWM) below for true hydraulic depth calibration.'
+              : 'Scour CSI Sentinel-2 & AUC Agam hanya mengecek kecocokan pola spasial terhadap badai uji sintetis. Catat minimal 3 titik Tanda Tinggi Air (HWM) di bawah untuk kalibrasi kedalaman sungai nyata.'}
+          </div>
+        )}
+
+        <button
+          type="button"
+          data-testid="download-survey-priority-csv"
+          onClick={() => {
+            const csv = buildFieldSurveyPriorityCsv(simNetwork);
+            triggerBrowserDownload(csv, 'balingka-field-survey-priority.csv', 'text/csv;charset=utf-8');
+            onNotify(
+              isEn
+                ? 'Downloaded prioritized culvert & river field survey sheet (CSV).'
+                : 'Daftar prioritas survei gorong-gorong & penampang sungai (CSV) diunduh.'
+            );
+          }}
+          className="mb-3 inline-flex min-h-[34px] w-full items-center justify-center gap-1.5 rounded-lg border border-[#161c1a]/15 bg-[#fafaf8] px-2.5 py-1.5 text-[11.5px] font-bold text-[#161c1a] transition hover:border-[#0369a1]/40 hover:text-[#0369a1]"
+        >
+          <Download className="h-3.5 w-3.5 text-[#0369a1]" />
+          <span>
+            {isEn
+              ? 'Download Field Survey Priority Sheet (CSV)'
+              : 'Unduh Daftar Prioritas Survei Lapangan (CSV)'}
+          </span>
+        </button>
 
         <div className="flex flex-col gap-2 text-[12px]">
           <div className="flex items-center justify-between">
@@ -497,7 +531,7 @@ export function CalibrationEditorPanel({
                   id="cm-dur"
                   type="number"
                   min={15}
-                  max={720}
+                  max={4320}
                   step={15}
                   value={durStr}
                   onChange={e => setDurStr(e.target.value)}

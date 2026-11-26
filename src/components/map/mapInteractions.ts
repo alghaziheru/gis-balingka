@@ -231,25 +231,15 @@ export function attachMapClickAndCursorHandlers(map: MapLibreMap, refs: MapInter
       const hits = hitLayers.length > 0 ? map.queryRenderedFeatures(e.point, { layers: hitLayers }) : [];
       if (hits.length > 0) return;
 
-      // Click-to-explain corridor water zone / scour / survey / agreement during active simulation
+      // Click any terrain point inside Nagari during simulation to inspect terrain-only hydrology readout.
       if (refs.tabRef.current === 'sim' && refs.cascadeEngineRef.current) {
-        const simLayers = [
-          'sim-pools-shallow-fill',
-          'sim-pools-deep-fill',
-          'sim-scour-reaches-line',
-          'sim-survey-reaches-line'
-        ].filter(lid => Boolean(map.getLayer(lid)));
-        const simHits = simLayers.length > 0 ? map.queryRenderedFeatures(e.point, { layers: simLayers }) : [];
-        const sample = refs.cascadeEngineRef.current.sampleAtLngLat(e.lngLat.lng, e.lngLat.lat);
-        const hasActiveSignal =
-          refs.simProgressRef.current > 0.02 &&
-          sample.insideNagari &&
-          (sample.depthP90M > 0.1 || sample.fos < 1.35 || sample.streamPowerWm2 >= 280);
-        if (simHits.length > 0 || hasActiveSignal) {
-          openCorridorExplainPopup(map, refs.popupRef, [e.lngLat.lng, e.lngLat.lat], {
+        const simPoint: [number, number] = [e.lngLat.lng, e.lngLat.lat];
+        const sample = refs.cascadeEngineRef.current.sampleAtLngLat(simPoint[0], simPoint[1]);
+        if (sample.insideNagari) {
+          openCorridorExplainPopup(map, refs.popupRef, simPoint, sample, {
             lang: refs.langRef.current,
+            viewMode: refs.viewModeRef.current,
             demClient: refs.demRef.current,
-            cascadeEngine: refs.cascadeEngineRef.current,
             cascadeParams: refs.cascadeParamsRef.current
           });
           return;

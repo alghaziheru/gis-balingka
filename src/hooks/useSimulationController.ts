@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { CascadeEngine, extractBuildingCentroids, RECESSION_MULTIPLIER } from '../lib/cascadeEngine';
+import { getMaxRealisticRainMmHr } from '../lib/reachRouter';
 import { computeUplandBounds } from '../lib/flowField';
 import type {
   CalibrationMarkFeature,
@@ -26,30 +27,46 @@ export function useSimulationController(opts: {
   calibrationMarks?: CalibrationMarkFeature[];
   calibrationProfile?: CalibrationProfile | null;
 }) {
-  // Interactive Rainfall -> Hydro-Geomorphic Cascade Simulator (calm 00:00 dry start)
+  // Interactive Rainfall -> Hydro-Geomorphic Cascade Simulator (calm 00:00 normal baseline)
   const [simPlaying, setSimPlaying] = useState(false);
-  const [simRain, setSimRain] = useState(45);
+  const [simRain, setSimRain] = useState(25);
   const [simDurationMin, setSimDurationMin] = useState(120);
   const [simProgress, setSimProgress] = useState(0);
   const [soilMoisture, setSoilMoistureState] = useState<SoilMoisture>('moist');
-  const [antecedent5dMm, setAntecedent5dMmState] = useState(65);
+  const [antecedent5dMm, setAntecedent5dMmState] = useState(45);
   const [rainPattern, setRainPattern] = useState<RainPattern>('uniform');
-  const [drainCondition, setDrainConditionState] = useState<DrainCondition>('clogged');
-  const [culvertBlockagePct, setCulvertBlockagePct] = useState(65);
+  const [drainCondition, setDrainConditionState] = useState<DrainCondition>('cleared');
+  const [culvertBlockagePct, setCulvertBlockagePct] = useState(5);
   const [structureBlockageOverrides, setStructureBlockageOverrides] = useState<Record<string, number>>({});
   const [forestScenario, setForestScenario] = useState<ForestScenario>('actual');
-  const [hyetograph, setHyetograph] = useState<HyetographType>('alternating_block');
-  const [orographicPctPerKm, setOrographicPctPerKm] = useState(25);
+  const [hyetograph, setHyetograph] = useState<HyetographType>('uniform');
+  const [orographicPctPerKm, setOrographicPctPerKm] = useState(15);
   const [stormCore, setStormCore] = useState<[number, number] | null>(null);
-  const [debrisCoupling, setDebrisCoupling] = useState<DebrisCouplingMode>('coupled');
+  const [debrisCoupling, setDebrisCoupling] = useState<DebrisCouplingMode>('clear');
   const [simMapViewMode, setSimMapViewMode] = useState<SimMapViewMode>('depth');
   const [rainAnimEnabled, setRainAnimEnabled] = useState(true);
   const [simShowVerifiedWaterways, setSimShowVerifiedWaterways] = useState(true);
   const [simShowRbiRivers, setSimShowRbiRivers] = useState(true);
+  const [simShowOsmRoads, setSimShowOsmRoads] = useState(true);
+  const [simShowDemFlows, setSimShowDemFlows] = useState(false);
+
+  const setRainSafe = useCallback(
+    (rain: number) => {
+      const maxRain = getMaxRealisticRainMmHr(simDurationMin);
+      setSimRain(Math.max(5, Math.min(maxRain, Math.round(rain))));
+    },
+    [simDurationMin]
+  );
+
+  const setDurationSafe = useCallback((minutes: number) => {
+    setSimDurationMin(minutes);
+    const maxRain = getMaxRealisticRainMmHr(minutes);
+    setSimRain(prev => Math.min(prev, maxRain));
+  }, []);
 
   const setSoilMoisture = useCallback((m: SoilMoisture) => {
     setSoilMoistureState(m);
-    setAntecedent5dMmState(m === 'dry' ? 15 : m === 'saturated' ? 150 : 65);
+    setAntecedent5dMmState(m === 'dry' ? 15 : m === 'saturated' ? 150 : 45);
   }, []);
 
   const setAntecedent5dMm = useCallback((mm: number) => {
@@ -87,17 +104,22 @@ export function useSimulationController(opts: {
 
   useEffect(() => {
     if (!simPlaying) return;
+    let lastTick = performance.now();
     const id = window.setInterval(() => {
+      const now = performance.now();
+      const dtMs = Math.max(40, Math.min(450, now - lastTick));
+      lastTick = now;
+      const step = dtMs / 11000;
       setSimProgress(prev => {
         if (prev >= 1) {
           setSimPlaying(false);
           return 1;
         }
-        const next = Math.min(1, prev + 0.008);
+        const next = Math.min(1, prev + step);
         if (next >= 1) setSimPlaying(false);
         return next;
       });
-    }, 80);
+    }, 180);
     return () => window.clearInterval(id);
   }, [simPlaying]);
 
@@ -173,7 +195,11 @@ export function useSimulationController(opts: {
       floodAreaHa: 0,
       landslideAreaHa: 0,
       affectedBuildingsFlood: 0,
+      affectedBuildingsDeep: 0,
       affectedBuildingsLandslide: 0,
+      representativeStageM: 0,
+      representativeStageP10M: 0,
+      representativeStageP90M: 0,
       chokeCount: 0,
       reductionPct: 0,
       peakTravelMin: 75,
@@ -183,8 +209,19 @@ export function useSimulationController(opts: {
       maxStreamPowerWm2: 0,
       meanSedimentCv: 0,
       scourReachCount: 0,
-      dataConfidenceScore: 50,
-      dataConfidenceLevel: 'medium',
+      dataConfidenceScore: 42,
+      dataConfidenceLevel: 'low',
+      inputCoverage: {
+        insideReaches: 0,
+        verifiedReaches: 0,
+        measuredReaches: 0,
+        totalCrossings: 0,
+        verifiedCrossings: 0,
+        measuredCrossings: 0,
+        hwmCount: opts.calibrationMarks?.length || 0,
+        isCalibrated: false
+      },
+      runoutAreaHa: 0,
       ensemble: {
         floodAreaHa: { p10: 0, p50: 0, p90: 0 },
         landslideAreaHa: { p10: 0, p50: 0, p90: 0 },
@@ -232,9 +269,9 @@ export function useSimulationController(opts: {
     setStormCore(null);
     if (preset === 'normal') {
       setSimRain(25);
-      setSimDurationMin(90);
-      setSoilMoistureState('dry');
-      setAntecedent5dMmState(15);
+      setSimDurationMin(120);
+      setSoilMoistureState('moist');
+      setAntecedent5dMmState(45);
       setRainPattern('uniform');
       setDrainConditionState('cleared');
       setCulvertBlockagePct(5);
@@ -243,10 +280,10 @@ export function useSimulationController(opts: {
       setOrographicPctPerKm(15);
       setDebrisCoupling('clear');
     } else if (preset === 'upland') {
-      setSimRain(80);
-      setSimDurationMin(180);
-      setSoilMoistureState('saturated');
-      setAntecedent5dMmState(145);
+      setSimRain(65);
+      setSimDurationMin(360);
+      setSoilMoistureState('moist');
+      setAntecedent5dMmState(65);
       setRainPattern('upland');
       setDrainConditionState('clogged');
       setCulvertBlockagePct(65);
@@ -255,16 +292,17 @@ export function useSimulationController(opts: {
       setOrographicPctPerKm(45);
       setDebrisCoupling('coupled');
     } else {
-      setSimRain(120);
-      setSimDurationMin(180);
-      setSoilMoistureState('saturated');
-      setAntecedent5dMmState(175);
+      // Multi-day continuous above-normal rainfall (~30 mm/hr for 48 hours = 1,440 mm) saturating soil & slopes
+      setSimRain(30);
+      setSimDurationMin(2880);
+      setSoilMoistureState('moist');
+      setAntecedent5dMmState(75);
       setRainPattern('upland');
       setDrainConditionState(viewMode === 'detail' ? 'surge' : 'clogged');
-      setCulvertBlockagePct(80);
+      setCulvertBlockagePct(78);
       setForestScenario('actual');
-      setHyetograph('convective_front');
-      setOrographicPctPerKm(55);
+      setHyetograph('alternating_block');
+      setOrographicPctPerKm(48);
       setDebrisCoupling(viewMode === 'detail' ? 'surge' : 'coupled');
     }
     setSimProgress(0.05);
@@ -289,9 +327,9 @@ export function useSimulationController(opts: {
     simPlaying,
     setSimPlaying,
     simRain,
-    setSimRain,
+    setSimRain: setRainSafe,
     simDurationMin,
-    setSimDurationMin,
+    setSimDurationMin: setDurationSafe,
     simProgress,
     soilMoisture,
     setSoilMoisture,
@@ -324,6 +362,10 @@ export function useSimulationController(opts: {
     setSimShowVerifiedWaterways,
     simShowRbiRivers,
     setSimShowRbiRivers,
+    simShowOsmRoads,
+    setSimShowOsmRoads,
+    simShowDemFlows,
+    setSimShowDemFlows,
     cascadeEngine,
     uplandBbox,
     cascadeParams,

@@ -1,4 +1,5 @@
 import type { HydrographPoint, Language } from '../types/gis';
+import { InfoTooltip } from './InfoTooltip';
 
 interface HydrographSparklineProps {
   lang: Language;
@@ -9,6 +10,7 @@ interface HydrographSparklineProps {
   peakQ: number;
   peakQP10: number;
   peakQP90: number;
+  isCalibrated?: boolean;
 }
 
 export function HydrographSparkline({
@@ -19,7 +21,8 @@ export function HydrographSparkline({
   totalWindowMin,
   peakQ,
   peakQP10,
-  peakQP90
+  peakQP90,
+  isCalibrated = false
 }: HydrographSparklineProps) {
   const isEn = lang === 'en';
   if (!points || points.length < 2) return null;
@@ -41,7 +44,7 @@ export function HydrographSparkline({
   const yOfQ = (q: number) => padT + plotH - (Math.min(maxQ, Math.max(0, q)) / maxQ) * (plotH * 0.72);
   const rainBarH = (r: number) => (Math.min(maxRain, Math.max(0, r)) / maxRain) * (plotH * 0.28);
 
-  const barW = Math.max(2, plotW / points.length - 1.5);
+  const barW = Math.max(1.0, plotW / points.length - (points.length > 60 ? 0.5 : 1.5));
 
   const p90Pts = points.map(p => `${xOfTime(p.timeMin).toFixed(1)},${yOfQ(p.qP90).toFixed(1)}`);
   const p10Rev = [...points]
@@ -63,11 +66,21 @@ export function HydrographSparkline({
   return (
     <div className="rounded-lg border border-[#161c1a]/10 bg-[#fafaf8] px-2.5 pt-2 pb-1.5">
       <div className="mb-1 flex items-center justify-between gap-2 text-[11px] whitespace-nowrap">
-        <span className="truncate font-semibold text-[#434d49]">
-          {isEn ? 'Hydrograph (Q · P10–P90)' : 'Hidrograf (Q · P10–P90)'}
+        <span className="flex min-w-0 items-center gap-1 font-semibold text-[#434d49]">
+          <span className="truncate">
+            {isEn ? 'Hydrograph (Q · Sensitivity)' : 'Hidrograf (Q · Sensitivitas)'}
+          </span>
+          <InfoTooltip
+            text={
+              isEn
+                ? 'Compares rainfall intensity over time (top bars) against modeled channel discharge Q (m³/s) from SCS-CN + 1D Muskingum-Cunge. Shaded band shows a 7-scenario parameter + ±25% rainfall sensitivity spread — not a calibrated statistical confidence interval.'
+                : 'Membandingkan laju hujan dari waktu ke waktu (batang atas) dengan perkiraan debit Q (m³/s) hasil SCS-CN + 1D Muskingum-Cunge. Pita arsiran adalah rentang sensitivitas 7 skenario (parameter + ±25% hujan), bukan interval kepercayaan statistik.'
+            }
+            label={isEn ? 'What is a hydrograph?' : 'Apa itu hidrograf?'}
+          />
         </span>
         <span className="font-mono-num shrink-0 font-bold text-[#0369a1]">
-          {peakQ.toFixed(1)} m³/s{' '}
+          {isCalibrated ? peakQ.toFixed(1) : `~${Math.round(peakQ)}`} m³/s{' '}
           <span className="font-normal text-[#636f6a]">
             [{peakQP10.toFixed(0)}–{peakQP90.toFixed(0)}]
           </span>
@@ -162,29 +175,45 @@ export function HydrographSparkline({
         )}
 
         {/* X-axis labels */}
-        <text x={padL} y={H - 4} fontSize={9.5} fill="#636f6a" fontFamily="JetBrains Mono, monospace">
-          0m
-        </text>
-        <text
-          x={stormEndX - 4}
-          y={H - 4}
-          fontSize={9.5}
-          fill="#636f6a"
-          textAnchor="end"
-          fontFamily="JetBrains Mono, monospace"
-        >
-          {durationMin}m
-        </text>
-        <text
-          x={W - padR}
-          y={H - 4}
-          fontSize={9.5}
-          fill="#0369a1"
-          textAnchor="end"
-          fontFamily="JetBrains Mono, monospace"
-        >
-          {totalWindowMin}m {isEn ? 'drain' : 'surut'}
-        </text>
+        {(() => {
+          const fmtAxisTime = (min: number) =>
+            min >= 180
+              ? `${min % 60 === 0 ? min / 60 : (min / 60).toFixed(1)}${isEn ? 'h' : 'j'}`
+              : `${min}m`;
+          const durLabel = fmtAxisTime(durationMin);
+          const totalLabel = fmtAxisTime(totalWindowMin);
+          const drainWord = isEn ? 'drain' : 'surut';
+          const showSeparateStormTick = W - padR - stormEndX >= 60;
+          return (
+            <>
+              <text x={padL} y={H - 4} fontSize={9.5} fill="#636f6a" fontFamily="JetBrains Mono, monospace">
+                0m
+              </text>
+              {showSeparateStormTick && (
+                <text
+                  x={stormEndX - 4}
+                  y={H - 4}
+                  fontSize={9.5}
+                  fill="#636f6a"
+                  textAnchor="end"
+                  fontFamily="JetBrains Mono, monospace"
+                >
+                  {durLabel}
+                </text>
+              )}
+              <text
+                x={W - padR}
+                y={H - 4}
+                fontSize={9.5}
+                fill="#0369a1"
+                textAnchor="end"
+                fontFamily="JetBrains Mono, monospace"
+              >
+                {showSeparateStormTick ? `${totalLabel} ${drainWord}` : `${durLabel} → ${totalLabel} ${drainWord}`}
+              </text>
+            </>
+          );
+        })()}
       </svg>
     </div>
   );

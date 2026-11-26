@@ -1,7 +1,7 @@
 import type { MutableRefObject } from 'react';
 import { Popup, type Map as MapLibreMap, type MapGeoJSONFeature } from 'maplibre-gl';
 import { isPointInNagari, lookupAgamAtPoint } from '../../lib/agamLookup';
-import type { CascadeEngine } from '../../lib/cascadeEngine';
+import type { PointSimDiagnostics } from '../../lib/cascadeEngine';
 import type { DemClient } from '../../lib/demClient';
 import type {
   AgamContextData,
@@ -491,43 +491,21 @@ export function openCorridorExplainPopup(
   map: MapLibreMap,
   popupRef: MutableRefObject<Popup | null>,
   lngLat: [number, number],
+  sample: PointSimDiagnostics,
   opts: {
     lang: Language;
+    viewMode?: ViewMode;
     demClient: DemClient;
-    cascadeEngine: CascadeEngine;
     cascadeParams: CascadeSimParams;
   }
 ): void {
   if (popupRef.current) popupRef.current.remove();
   const isEn = opts.lang === 'en';
+  const isDetail = opts.viewMode === 'detail';
   const elev = Math.round(opts.demClient.getElevation(lngLat[0], lngLat[1]));
-  const sample = opts.cascadeEngine.sampleAtLngLat(lngLat[0], lngLat[1]);
-  const gridResM = Math.round(opts.cascadeEngine.fields.cellSizeX || 33);
-  const cp = opts.cascadeParams;
-  const drainLabel =
-    cp.drainCondition === 'cleared'
-      ? isEn
-        ? 'Cleared'
-        : 'Lancar'
-      : cp.drainCondition === 'surge'
-        ? isEn
-          ? 'Clogged + Surge'
-          : 'Tersumbat + Gelombang'
-        : isEn
-          ? 'Clogged'
-          : 'Tersumbat';
-  const soilLabel =
-    cp.soilMoisture === 'dry'
-      ? isEn
-        ? 'Dry'
-        : 'Kering'
-      : cp.soilMoisture === 'moist'
-        ? isEn
-          ? 'Moist'
-          : 'Lembab'
-        : isEn
-          ? 'Saturated'
-          : 'Jenuh';
+  const gridResM = sample.gridResM || 14;
+  const isPaused = opts.cascadeParams.progress <= 0.02;
+
   const confStyle =
     sample.dataConfidence === 'high'
       ? 'background:rgba(4,120,87,0.12);color:#047857'
@@ -537,87 +515,95 @@ export function openCorridorExplainPopup(
   const confLabel =
     sample.dataConfidence === 'high'
       ? isEn
-        ? 'High Data Conf.'
-        : 'Data Tinggi'
+        ? 'Full Inputs'
+        : 'Input Lengkap'
       : sample.dataConfidence === 'medium'
         ? isEn
-          ? 'Med Data Conf.'
-          : 'Data Menengah'
+          ? 'Partial Inputs'
+          : 'Input Sebagian'
         : isEn
-          ? 'Low Data Conf.'
-          : 'Data Rendah';
+          ? 'Basic Inputs'
+          : 'Input Dasar';
+
   const row = (label: string, valHtml: string) =>
-    `<div style="display:flex;justify-content:space-between;gap:8px;padding:3px 0;border-bottom:1px solid rgba(22,28,26,0.08);font-size:11.5px;">
-      <span style="color:#636f6a;">${escapeHtml(label)}</span>
-      <strong style="color:#161c1a;text-align:right;font-family:'JetBrains Mono',monospace;">${valHtml}</strong>
+    `<div style="display:flex;justify-content:space-between;align-items:baseline;gap:10px;padding:3px 0;border-bottom:1px solid rgba(22,28,26,0.08);font-size:11.5px;">
+      <span style="color:#636f6a;white-space:nowrap;">${escapeHtml(label)}</span>
+      <strong style="color:#161c1a;text-align:right;white-space:nowrap;font-family:'JetBrains Mono',monospace;">${valHtml}</strong>
     </div>`;
 
+  const titleText = sample.reachName
+    ? sample.reachName
+    : isEn
+      ? `Terrain Hydrology (~${gridResM} m)`
+      : `Hidrologi Medan (~${gridResM} m)`;
+
+  const statusHtml = isPaused
+    ? `<div style="padding:5px 7px;border-radius:6px;margin-bottom:5px;font-size:11px;font-weight:600;background:#f2f3ef;color:#434d49;">
+        ${escapeHtml(isEn ? 'Simulation at 00:00 (not running)' : 'Simulasi belum dijalankan (00:00)')}
+      </div>`
+    : sample.depthP90M > 0.05
+      ? row(
+          isEn ? 'Model depth [Sensitivity]' : 'Kedalaman model [Sensitivitas]',
+          `<span style="color:#0369a1;">~${sample.depthM.toFixed(1)} m</span> <span style="font-weight:500;color:#636f6a;">[${sample.depthP10M.toFixed(1)}–${sample.depthP90M.toFixed(1)}]</span>`
+        )
+      : row(
+          isEn ? 'Terrain status' : 'Kondisi permukaan',
+          `<span style="color:#047857;">${escapeHtml(isEn ? 'Above modeled water level' : 'Di atas muka air model')}</span>`
+        );
+
   const html = `
-    <div style="min-width:245px;max-width:305px;">
-      <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;margin-bottom:4px;padding-right:18px;">
-        <span style="font-size:11px;font-weight:700;color:#0369a1;line-height:1.3;">
-          ${escapeHtml(
-            sample.reachName
-              ? sample.reachName
-              : isEn
-                ? `Model Diagnostic (~${gridResM} m)`
-                : `Diagnostik Model (~${gridResM} m)`
-          )}
+    <div style="min-width:228px;max-width:280px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;margin-bottom:3px;padding-right:18px;">
+        <span style="font-size:12px;font-weight:700;color:#161c1a;line-height:1.3;">
+          ${escapeHtml(titleText)}
         </span>
-        <span style="padding:1px 6px;border-radius:999px;font-size:10px;font-weight:700;white-space:nowrap;${confStyle}">
-          ${escapeHtml(confLabel)}
-        </span>
+        ${
+          isDetail
+            ? `<span style="padding:1px 6px;border-radius:999px;font-size:10px;font-weight:700;white-space:nowrap;${confStyle}">
+                ${escapeHtml(confLabel)}
+              </span>`
+            : ''
+        }
       </div>
-      <div style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#434d49;margin-bottom:6px;">
-        ${elev} mdpl · HAND ${sample.handM.toFixed(1)} m${sample.upstreamAreaKm2 > 0 ? ` · DAS ${sample.upstreamAreaKm2.toFixed(2)} km²` : ''}
+      <div style="font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#434d49;margin-bottom:6px;">
+        ${elev} mdpl · HAND ${sample.handM.toFixed(1)} m${isDetail && sample.upstreamAreaKm2 > 0 ? ` · DAS ${sample.upstreamAreaKm2.toFixed(1)} km²` : ''}
       </div>
-      ${row(
-        isEn ? 'Scenario' : 'Skenario',
-        `<span style="font-family:inherit;">${cp.rainMmHr} mm/${isEn ? 'hr' : 'jam'} · ${escapeHtml(drainLabel)} · ${escapeHtml(soilLabel)}</span>`
-      )}
-      ${row(
-        isEn ? 'Depth P50 [P10–P90]' : 'Kedalaman P50 [P10–P90]',
-        `<span style="color:#0369a1;">${sample.depthM.toFixed(2)} m</span> <span style="font-weight:500;color:#636f6a;">[${sample.depthP10M.toFixed(1)}–${sample.depthP90M.toFixed(1)}]</span>`
-      )}
-      ${row(isEn ? 'Ensemble agreement' : 'Kesepakatan ansambel', `${sample.agreementPct}%`)}
+      ${statusHtml}
       ${
-        sample.dischargeM3s > 0
+        isDetail && sample.dischargeM3s > 0
           ? row(
-              isEn ? 'Routed Q · Cv' : 'Debit Q · Sedimen Cv',
-              `${sample.dischargeM3s.toFixed(1)} m³/s · ${(sample.sedimentCv * 100).toFixed(1)}%`
+              isEn ? 'Reach Q · Power ω' : 'Debit Q · Energi ω',
+              `${sample.dischargeM3s.toFixed(1)} m³/s · ${sample.streamPowerWm2} W/m²`
             )
           : ''
       }
       ${
-        sample.streamPowerWm2 > 0
-          ? row(
-              isEn ? 'Stream power (ω)' : 'Energi arus (ω)',
-              `<span style="color:${sample.streamPowerWm2 >= 1000 ? '#b91c1c' : sample.streamPowerWm2 >= 300 ? '#b45309' : '#161c1a'};">${sample.streamPowerWm2} W/m²</span>`
-            )
-          : ''
-      }
-      ${
-        sample.fos < 2.8
+        isDetail && sample.fos < 2.6
           ? row(
               isEn ? 'Slope stability (FoS)' : 'Kestabilan lereng (FoS)',
               `<span style="color:${sample.fos < 1.1 ? '#b91c1c' : sample.fos < 1.35 ? '#b45309' : '#047857'};">${sample.fos.toFixed(2)}</span>`
             )
           : ''
       }
-      <div style="margin-top:6px;font-size:10.5px;line-height:1.4;color:#434d49;">
-        ${
+      ${
+        !isPaused && sample.inRunoutShadow
+          ? row(
+              isEn ? 'Downslope geometry' : 'Posisi bawah lereng',
+              `<span style="color:#b45309;">${escapeHtml(isEn ? 'Indicative ~20° runout shadow' : 'Lintasan bawah lereng (~20° indikatif)')}</span>`
+            )
+          : ''
+      }
+      <div style="margin-top:5px;font-size:10px;line-height:1.35;color:#636f6a;">
+        ${escapeHtml(
           isEn
-            ? `Computed via 1D Muskingum-Cunge + DEMNAS HAND rating curves (~${gridResM} m grid) and 7-member ensemble. Exploratory computational output — NOT a house-level survey or official BNPB/BPBD/BMKG warning.`
-            : `Dihitung dengan 1D Muskingum-Cunge + kurva HAND DEMNAS (grid ~${gridResM} m) dan ansambel 7 anggota. Keluaran komputasi eksploratif — BUKAN survei per rumah maupun peringatan resmi BNPB/BPBD/BMKG.`
-        }
+            ? `Open-literature terrain model (~${gridResM} m DEMNAS HAND, uncalibrated) — exploratory visualization, not a field survey or official BNPB/BPBD/BMKG warning.`
+            : `Model literatur topografi (~${gridResM} m DEMNAS HAND, belum terkalibrasi alat ukur) — visualisasi eksploratif, bukan survei lokasi maupun peringatan resmi BNPB/BPBD/BMKG.`
+        )}
       </div>
     </div>
   `;
-  const pop = new Popup({ offset: 12, maxWidth: '330px' })
-    .setLngLat(lngLat)
-    .setHTML(html)
-    .addTo(map);
-  popupRef.current = pop;
+
+  popupRef.current = new Popup({ offset: 10, maxWidth: '296px' }).setLngLat(lngLat).setHTML(html).addTo(map);
 }
 
 export function openAgamPointAttributesPopup(

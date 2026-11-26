@@ -196,17 +196,17 @@ export function RainOverlay({
         const lenY = d.len * pitchForeshorten;
         const dx = windVx * (d.len / baseLen);
 
-        // Subtle shadow backing on foreground drops only so streaks read crisply over bright roofs
+        // Calm daylight slate-ocean streaks with subtle highlight on foreground drops so rain reads crisply over Relief
         if (d.depth === 2) {
-          ctx.strokeStyle = 'rgba(15, 23, 42, 0.16)';
-          ctx.lineWidth = d.width + 0.4;
+          ctx.strokeStyle = `rgba(224, 242, 254, ${(d.alpha * 0.48).toFixed(2)})`;
+          ctx.lineWidth = d.width + 0.45;
           ctx.beginPath();
-          ctx.moveTo(d.x + 0.8, d.y + 0.4);
-          ctx.lineTo(d.x + dx + 0.8, d.y + lenY + 0.4);
+          ctx.moveTo(d.x + 0.7, d.y + 0.3);
+          ctx.lineTo(d.x + dx + 0.7, d.y + lenY + 0.3);
           ctx.stroke();
         }
 
-        ctx.strokeStyle = `rgba(224, 242, 254, ${d.alpha.toFixed(2)})`;
+        ctx.strokeStyle = `rgba(12, 74, 110, ${(d.alpha * 0.72).toFixed(2)})`;
         ctx.lineWidth = d.width;
         ctx.beginPath();
         ctx.moveTo(d.x, d.y);

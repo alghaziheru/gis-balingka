@@ -15,6 +15,7 @@ import type {
   HydroStatus,
   JorongBoundaryFeature,
   Language,
+  SimNetworkData,
   SuppressedDemSegment,
   ValidationMetrics,
   VerifiedStructureFeature,
@@ -44,6 +45,7 @@ interface EditorTabProps {
   calibrationProfile: CalibrationProfile | null;
   validationMetrics: ValidationMetrics;
   cascadeEngine: CascadeEngine | null;
+  simNetwork?: SimNetworkData | null;
   suppressedDem: SuppressedDemSegment[];
   editingWaterway: ActiveEditingWaterway | null;
   editingStructure: ActiveEditingStructure | null;
@@ -108,6 +110,7 @@ export function EditorTab({
   calibrationProfile,
   validationMetrics,
   cascadeEngine,
+  simNetwork = null,
   suppressedDem,
   editingWaterway,
   editingStructure,
@@ -274,6 +277,7 @@ export function EditorTab({
           calibrationProfile={calibrationProfile}
           validationMetrics={validationMetrics}
           cascadeEngine={cascadeEngine}
+          simNetwork={simNetwork}
           editingMark={editingCalibrationMark}
           isPlacingNew={activeTool === 'placeCalibrationMark'}
           onStartPlaceNew={onStartPlaceCalibrationMark}

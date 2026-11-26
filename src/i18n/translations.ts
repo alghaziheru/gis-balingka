@@ -37,7 +37,7 @@ export const I18N = {
     legendSecModel: 'Hasil Simulasi',
     legendSecOverlays: 'Permukaan & Lapisan Aktif',
     legendSecMap: 'Unsur Peta Aktif',
-    simRiversTitle: 'Lapisan Sungai di Simulasi',
+    simRiversTitle: 'Lapisan Peta di Simulasi',
     infoSimRbiRivers:
       'Menampilkan 322 ruas sungai & anak sungai resmi BIG RBI 1:50.000 agar arah aliran limpasan menuju saluran terlihat jelas.',
     uplandRainPill: `Hujan terkonsentrasi di hulu ${REGION.uplandLandmark.id}`,
@@ -53,9 +53,9 @@ export const I18N = {
     simLegendTitle: 'Legenda Hasil Simulasi',
     drainLegendTitle: 'Legenda & Inventaris Titik',
     drainInventoryTitle: 'Inventaris & Filter Titik',
-    durMin: '15 mnt',
-    durMid: '3 jam',
-    durMax: '6 jam',
+    durMin: '30 mnt',
+    durMid: '6 jam',
+    durMax: '3 hari (72j)',
     lblHillshade: 'Bayangan bukit & lembah',
     lblVerifiedWaterways: 'Sungai & anak sungai terverifikasi',
     lblVerifiedCanals: 'Bandar / parit terverifikasi',
@@ -102,7 +102,7 @@ export const I18N = {
     switchToDetailPrompt: 'Butuh peta kemiringan lereng, garis kontur, atau alat ukur elevasi?',
     switchToDetailBtn: 'Buka mode Lengkap',
     simDisclaimer:
-      'Model visualisasi komputasi (DEM + tutupan lahan 10 m + tapak bangunan) untuk memperlihatkan alur topografi hulu→hilir — BUKAN prediksi bencana per rumah maupun peringatan resmi BNPB/BPBD/BMKG.',
+      'Model visualisasi komputasi (DEM + tutupan lahan 10 m) untuk memperlihatkan alur topografi hulu→hilir — BUKAN prediksi bencana per rumah maupun peringatan resmi BNPB/BPBD/BMKG.',
     simDisclaimerDetail:
       'Model komputasi teoretis: SCS-CN tutupan lahan + data peta tanah terbuka Pemkab Agam + waktu tempuh D8 + indeks cekungan HAND + kemiringan BIG DEMNAS ~8,3 m. BUKAN prediksi atau peringatan resmi BNPB/BPBD/BMKG.',
     simIndicativeShort: 'Model visualisasi komputasi · BUKAN prediksi/peringatan resmi BNPB/BPBD/BMKG',
@@ -126,7 +126,7 @@ export const I18N = {
     rainPresetMed: 'Sedang',
     rainPresetHeavy: 'Lebat',
     rainPresetExtreme: 'Ekstrem',
-    rainLight: 'Ringan (10)',
+    rainLight: 'Ringan (5)',
     rainHeavy: 'Lebat (80)',
     rainExtreme: 'Ekstrem (150)',
     lblDrainState: 'Kondisi saluran',
@@ -152,16 +152,16 @@ export const I18N = {
     forestDeg50: '-50% Pohon',
     presetQuickTitle: 'Skenario cepat',
     presetCustom: 'Atur manual',
-    presetNormal: 'Hujan Biasa',
-    presetUpland: 'Hujan Hulu Gunung',
-    presetExtreme: 'Hujan Sangat Ekstrem',
+    presetNormal: 'Hujan Normal (2 jam)',
+    presetUpland: 'Hujan Lebat Hulu (6 jam)',
+    presetExtreme: 'Hujan Menerus 2 Hari (48 jam)',
     agamCalibrationBadge: 'Data Peta Terbuka Pemkab Agam',
     infoScenario:
       'Pilih skenario cepat untuk langsung memuat pengaturan & memutar simulasi, atau ubah parameter secara manual di bawah (otomatis beralih ke Atur manual).',
     infoRainIntensity:
       'Laju curah hujan per jam yang dimasukkan ke model. Acuan kategori BMKG: Ringan (<20), Sedang (20–50), Lebat (50–100), dan Ekstrem (>100 mm/jam).',
     infoDuration:
-      'Lama durasi hujan pada simulasi. Durasi lebih panjang memperbesar total akumulasi hujan dan rentang waktu tempuh gelombang aliran D8.',
+      'Lama durasi hujan pada simulasi (30 mnt hingga 72 jam / 3 hari) dengan batas atas intensitas IDF Sumatera Barat agar total hujan tetap realistis. Hujan menerus multi-hari mengisi tampungan tanah Andosol secara bertahap hingga jenuh air dan memicu kejenuhan lereng serta luapan lembah.',
     infoSoilMoisture:
       'Kondisi awal kelembapan tanah pada rumus SCS-CN. Tanah yang jenuh air menaikkan limpasan permukaan dan indeks kejenuhan lereng dalam perhitungan model.',
     infoDrainState:
@@ -175,9 +175,9 @@ export const I18N = {
     infoKpiFlood:
       'Luas area elevasi rendah (indeks topografi HAND) di dalam batas Nagari Balingka yang masuk ambang hasil simulasi model saat ini.',
     infoKpiLandslide:
-      'Luas sel lereng curam pada parameter model yang melampaui ambang kejenuhan matematis. Bukan peta prediksi atau penetapan rawan bencana resmi.',
-    infoKpiBuildings:
-      'Jumlah tapak bangunan (dari 2.175 bangunan terpetakan) yang beririsan secara spasial dengan poligon hasil model saat ini — murni hitungan irisan peta, bukan klaim per rumah.',
+      'Luas sel lereng curam pada parameter model yang melampaui ambang kejenuhan matematis (ditambah area bayangan lintasan ~20° di bawahnya). Bukan peta prediksi atau penetapan rawan bencana resmi.',
+    infoKpiPeakDischarge:
+      'Debit puncak teoretis (m³/s) hasil routing 1D Muskingum-Cunge beserta rentang sensitivitas (parameter + ±25% hujan) pada alur utama Nagari Balingka.',
     infoKpiCrossings:
       'Jumlah titik persilangan jalan–alur yang berada di dalam zona hasil simulasi model.',
     infoKpiRunoff:
@@ -193,7 +193,7 @@ export const I18N = {
     infoThresholdScour:
       'Ambang Specific Stream Power ω ≥ 1000 W/m² menurut literatur hidrolika saluran.',
     infoLegendDeep:
-      'Sel cekungan utama dengan nilai relatif >1,5 m pada model indeks topografi HAND (Height Above Nearest Drainage).',
+      'Tingkat kedalaman model topografi HAND (Height Above Nearest Drainage) relatif terhadap dasar alur terdekat: >1,0 m alur sungai dalam, 0,3–1,0 m cekungan sedang, dan 0,1–0,3 m aliran dangkal.',
     infoLegendLandslide:
       'Sel lereng curam (>26%) pada model komputasi dengan nilai indeks kejenuhan tinggi menurut parameter saat ini.',
     agamClickHint:
@@ -226,11 +226,12 @@ export const I18N = {
     kpiFloodArea: 'Zona cekungan (HAND)',
     kpiLandslideAreaSimple: 'Lereng curam jenuh air',
     kpiLandslideArea: 'Lereng curam jenuh',
-    kpiBuildingsSimple: 'Bangunan di zona simulasi',
-    kpiBuildings: 'Bangunan di poligon model',
-    kpiBuildingsNote: 'Irisan spasial poligon model, bukan klaim per rumah',
+    kpiPeakDischargeSimple: 'Debit puncak alur (Q)',
+    kpiPeakDischarge: 'Debit puncak alur (Q)',
     kpiEffectiveRunoff: 'Limpasan permukaan (SCS-CN)',
     kpiTravelTime: 'Waktu tempuh aliran (D8)',
+    kpiTravelTimeSimple: 'Perkiraan waktu aliran',
+    simSeeFormulasLink: 'Lihat rumus & referensi ilmiah',
     kpiSimpleArea: 'Zona cekungan air',
     kpiSimpleCrossings: 'Titik silang di zona simulasi',
     kpiArea: 'Zona Cekungan (HAND)',
@@ -392,7 +393,7 @@ export const I18N = {
     legendSecModel: 'Model Outputs (Computed)',
     legendSecOverlays: 'Active Surface & Overlays',
     legendSecMap: 'Active Map Layers',
-    simRiversTitle: 'River Layers in Simulation',
+    simRiversTitle: 'Map Layers in Simulation',
     infoSimRbiRivers:
       'Displays 322 official BIG RBI 1:50,000 river & tributary reaches so you can see which channels receive runoff.',
     uplandRainPill: `Rain focused on upper ${REGION.uplandLandmark.en} slopes`,
@@ -408,9 +409,9 @@ export const I18N = {
     simLegendTitle: 'Computed Model Output Legend',
     drainLegendTitle: 'Legend & Point Inventory',
     drainInventoryTitle: 'Point Inventory & Filters',
-    durMin: '15m',
-    durMid: '3h',
-    durMax: '6h',
+    durMin: '30m',
+    durMid: '6h',
+    durMax: '3 days (72h)',
     lblHillshade: 'Shaded hills & valleys (Hillshade)',
     lblVerifiedWaterways: 'Verified rivers & streams',
     lblVerifiedCanals: 'Verified canals & roadside drains',
@@ -457,7 +458,7 @@ export const I18N = {
     switchToDetailPrompt: 'Need slope maps, contour lines, or elevation measurement tools?',
     switchToDetailBtn: 'Switch to Detailed mode',
     simDisclaimer:
-      'Computational terrain visualization model (DEM + 10m land cover + building footprints) showing upstream→downstream topography — NOT a house-level disaster prediction or official BNPB/BPBD/BMKG warning.',
+      'Computational terrain visualization model (DEM + 10m land cover) showing upstream→downstream topography — NOT a house-level disaster prediction or official BNPB/BPBD/BMKG warning.',
     simDisclaimerDetail:
       'Theoretical computational model: SCS-CN land cover + Pemkab Agam open soil layer + D8 travel time + HAND terrain index + BIG DEMNAS ~8.3m slope. NOT an official BNPB/BPBD/BMKG prediction or warning.',
     simIndicativeShort: 'Computational model · NOT an official BNPB/BPBD/BMKG warning',
@@ -481,7 +482,7 @@ export const I18N = {
     rainPresetMed: 'Moderate',
     rainPresetHeavy: 'Heavy',
     rainPresetExtreme: 'Extreme',
-    rainLight: 'Light (10)',
+    rainLight: 'Light (5)',
     rainHeavy: 'Heavy (80)',
     rainExtreme: 'Extreme (150)',
     lblDrainState: 'Channel condition',
@@ -507,16 +508,16 @@ export const I18N = {
     forestDeg50: '-50% Trees',
     presetQuickTitle: 'Quick input scenarios',
     presetCustom: 'Custom (manual)',
-    presetNormal: 'Normal Rain',
-    presetUpland: 'Upland Storm',
-    presetExtreme: 'Extreme Rainfall',
+    presetNormal: 'Normal Rain (2h)',
+    presetUpland: 'Heavy Upland (6h)',
+    presetExtreme: '2-Day Continuous (48h)',
     agamCalibrationBadge: 'Pemkab Agam Open Map Inputs',
     infoScenario:
       'Choose a quick input scenario to load parameters and start playback immediately, or tweak controls below (switches to Custom).',
     infoRainIntensity:
       'Hourly rainfall rate used as model input. BMKG category reference: Light (<20), Moderate (20–50), Heavy (50–100), and Extreme (>100 mm/hr).',
     infoDuration:
-      'Storm duration parameter in the model. Longer duration increases cumulative input depth and allows D8 travel-time steps to advance.',
+      'Storm duration parameter (30 min up to 72 hr / 3 days) paired with an upper-bound West Sumatra IDF intensity cap so total storm rainfall remains physically plausible. Multi-day continuous rainfall progressively saturates porous volcanic Andosol storage, triggering slope saturation and valley overflow.',
     infoSoilMoisture:
       'Initial soil-wetness parameter in the SCS-CN equation. Saturated values raise modeled surface runoff and slope saturation index.',
     infoDrainState:
@@ -530,9 +531,9 @@ export const I18N = {
     infoKpiFlood:
       'Low-lying terrain area (HAND topographic index) inside Nagari Balingka bounds intersecting the current computational model threshold.',
     infoKpiLandslide:
-      'Steep slope cells exceeding the mathematical saturation threshold under current model parameters. Not an official hazard prediction or declaration.',
-    infoKpiBuildings:
-      'Count of mapped building footprints (out of 2,175) spatially intersecting the current model polygon — pure GIS intersection count, not a house-level prediction.',
+      'Steep slope cells exceeding the mathematical saturation threshold under current model parameters (plus indicative ~20° downslope runout shadows). Not an official hazard prediction or declaration.',
+    infoKpiPeakDischarge:
+      'Modeled peak channel discharge (m³/s) from 1D Muskingum-Cunge routing with 7-scenario sensitivity spread (parameters + ±25% rainfall) across Nagari Balingka reaches.',
     infoKpiCrossings:
       'Count of road–stream crossings located inside the current computed model zone.',
     infoKpiRunoff:
@@ -548,7 +549,7 @@ export const I18N = {
     infoThresholdScour:
       'Specific Stream Power threshold ω ≥ 1000 W/m² from open-channel hydraulics literature.',
     infoLegendDeep:
-      'Primary valley basin cells >1.5 m relative depth threshold in the Height Above Nearest Drainage (HAND) topographic model.',
+      'Modeled water depth tiers in the Height Above Nearest Drainage (HAND) terrain basin: >1.0 m deep river channel, 0.3–1.0 m moderate basin depth, and 0.1–0.3 m shallow terrain flow.',
     infoLegendLandslide:
       'Steep slope cells (>26%) exceeding the mathematical saturation index threshold under current model parameters.',
     agamClickHint:
@@ -581,11 +582,12 @@ export const I18N = {
     kpiFloodArea: 'Low terrain (HAND)',
     kpiLandslideAreaSimple: 'Saturated steep slopes',
     kpiLandslideArea: 'Saturated steep slope (Model)',
-    kpiBuildingsSimple: 'Buildings in model zone',
-    kpiBuildings: 'Buildings in model polygon',
-    kpiBuildingsNote: 'Spatial intersection with model polygon, not a house-level claim',
+    kpiPeakDischargeSimple: 'Peak reach flow (Q)',
+    kpiPeakDischarge: 'Peak reach flow (Q)',
     kpiEffectiveRunoff: 'SCS-CN runoff (Model)',
     kpiTravelTime: 'D8 travel time (Model)',
+    kpiTravelTimeSimple: 'Est. flow arrival',
+    simSeeFormulasLink: 'View formulas & scientific references',
     kpiSimpleArea: 'Low terrain (HAND)',
     kpiSimpleCrossings: 'Crossings in model zone',
     kpiArea: 'Low Terrain (HAND)',

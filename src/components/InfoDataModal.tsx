@@ -313,17 +313,129 @@ function InfoDataModalContent({
                       : '2. Penelusuran 1D Muskingum-Cunge & Kurva Kapasitas DEMNAS:'}
                   </strong>{' '}
                   {isEn
-                    ? 'Priority-Flood D8 routing builds a reach network with full-resolution HAND Synthetic Rating Curves (overridden by field-measured cross-sections), directional upstream culvert backwater, coupled leakage-free Infinite-Slope stability (FoS) with debris bulking, and a 7-member deterministic uncertainty ensemble (P10–P90).'
-                    : 'Penelusuran Priority-Flood D8 membentuk jaringan segmen sungai dengan Synthetic Rating Curves HAND beresolusi penuh (mengikuti ukuran penampang lapangan bila tersedia), efek balik air (backwater) arah hulu di gorong-gorong, analisis kestabilan lereng Infinite-Slope (FoS) terkopel konsentrasi sedimen, serta ansambel ketidakpastian 7 anggota (P10–P90).'}
+                    ? 'Priority-Flood D8 routing builds a reach network with full-resolution HAND Synthetic Rating Curves (overridden by field-measured cross-sections), directional upstream culvert backwater, coupled leakage-free Infinite-Slope stability (FoS) with ~20° downslope shadow and debris bulking, and a 7-scenario sensitivity ensemble (soil/channel parameters + ±25% rainfall).'
+                    : 'Penelusuran Priority-Flood D8 membentuk jaringan segmen sungai dengan Synthetic Rating Curves HAND beresolusi penuh (mengikuti ukuran penampang lapangan bila tersedia), efek balik air (backwater) arah hulu di gorong-gorong, analisis kestabilan lereng Infinite-Slope (FoS) dengan bayangan lintasan ~20° dan pengali sedimen, serta ansambel sensitivitas 7 skenario (parameter + ±25% hujan).'}
                 </p>
                 <p className="m-0 text-[13px] text-[#434d49]">
                   <strong className="text-[#161c1a]">
                     {isEn ? '3. Independent Validation & Accuracy Limits:' : '3. Validasi Independen & Batas Akurasi:'}
                   </strong>{' '}
                   {isEn
-                    ? 'Model outputs are benchmarked independently against Sentinel-2 river-corridor NDVI scour, held-out Pemkab Agam polygons, and field High-Water Marks without leaking reference polygons into the physics formulas. Use Detailed mode → Editor to enter measured channel/culvert dimensions and raise local Data Confidence.'
-                    : 'Keluaran model diuji secara independen terhadap perubahan vegetasi koridor sungai Sentinel-2, poligon terbuka Pemkab Agam (dipisah dari rumus fisika), serta tanda tinggi air lapangan. Gunakan mode Lengkap → Editor untuk memasukkan ukuran saluran/gorong-gorong nyata dan meningkatkan skor Kepercayaan Data.'}
+                    ? 'Model outputs are benchmarked independently against Sentinel-2 river-corridor NDVI scour, held-out Pemkab Agam polygons, and field High-Water Marks without leaking reference polygons into the physics formulas. Use Detailed mode → Editor to enter measured channel/culvert dimensions and raise Input Completeness.'
+                    : 'Keluaran model diuji secara independen terhadap perubahan vegetasi koridor sungai Sentinel-2, poligon terbuka Pemkab Agam (dipisah dari rumus fisika), serta tanda tinggi air lapangan. Gunakan mode Lengkap → Editor untuk memasukkan ukuran saluran/gorong-gorong nyata dan melengkapi Input Model.'}
                 </p>
+              </div>
+
+              <div
+                data-testid="method-scientific-refs"
+                className="flex flex-col gap-2.5 rounded-xl border border-[#161c1a]/12 bg-[#fafaf8] p-4"
+              >
+                <h3 className="m-0 text-[14px] font-bold text-[#161c1a]">
+                  {isEn ? 'Formulas & Scientific References' : 'Rumus & Referensi Ilmiah'}
+                </h3>
+                <p className="m-0 text-[12.5px] text-[#434d49]">
+                  {isEn
+                    ? 'Every calculation in this simulator uses standard published open-literature equations rather than proprietary forecasting algorithms:'
+                    : 'Seluruh perhitungan simulasi menggunakan persamaan baku dari literatur hidrologi & geomorfologi terbuka:'}
+                </p>
+                <ul className="m-0 flex list-disc flex-col gap-1.5 pl-5 text-[12.5px] text-[#434d49]">
+                  <li>
+                    <strong className="text-[#161c1a]">Priority-Flood DEM Filling:</strong> Barnes, Lehman &amp; Mulla (2014),{' '}
+                    <em>Computers &amp; Geosciences</em> 62 — {isEn ? 'acyclic depression conditioning.' : 'pengisian cekungan mikro DEM agar aliran selalu mengalir ke hilir.'}
+                  </li>
+                  <li>
+                    <strong className="text-[#161c1a]">D8 Flow Routing:</strong> O&apos;Callaghan &amp; Mark (1984),{' '}
+                    <em>CVGIP</em> 28(3) — {isEn ? 'steepest-descent direction & catchment accumulation.' : 'penentuan arah aliran tercuram ke 8 sel tetangga dan luas DAS.'}
+                  </li>
+                  <li>
+                    <strong className="text-[#161c1a]">HAND &amp; Synthetic Rating Curves (HAND-SRC):</strong> Nobre et al. (2011),{' '}
+                    <em>J. Hydrology</em> 404; Zheng et al. (2018), <em>JAWRA</em> 54(4) —{' '}
+                    {isEn ? 'relative height above nearest drainage and stage–discharge curves.' : 'tinggi medan terhadap alur terdekat serta kurva hubungan tinggi air–debit.'}
+                  </li>
+                  <li>
+                    <strong className="text-[#161c1a]">SCS Curve Number (SCS-CN):</strong> USDA NRCS (1986 / 2004),{' '}
+                    <em>TR-55 &amp; NEH Part 630</em> —{' '}
+                    {isEn ? 'surface runoff volume from ESA WorldCover classes & 5-day antecedent moisture.' : 'volume limpasan dari tutupan lahan ESA WorldCover dan kebasahan tanah awal.'}
+                  </li>
+                  <li>
+                    <strong className="text-[#161c1a]">Continuous SCS-CN Soil-Moisture Accounting &amp; Bankfull Containment:</strong> Michel, Vazken &amp; Perrin (2005),{' '}
+                    <em>Water Resour. Res.</em> 41 —{' '}
+                    {isEn
+                      ? 'progressive Andosol soil-storage saturation over multi-day storms and incised bankfull channel depth containment under normal showers.'
+                      : 'penjenuhan bertahap simpanan tanah vulkanik Andosol saat hujan menerus multi-hari serta daya tampung alur sungai normal sebelum meluap.'}
+                  </li>
+                  <li>
+                    <strong className="text-[#161c1a]">1D Muskingum-Cunge &amp; Manning Formula:</strong> Cunge (1969),{' '}
+                    <em>J. Hydraulic Research</em> 7(2); Manning (1891) —{' '}
+                    {isEn ? 'reach-by-reach hydrograph routing Q (m³/s) and bankfull channel capacity.' : 'penelusuran hidrograf debit Q (m³/s) per segmen sungai dan kapasitas penampang saluran.'}
+                  </li>
+                  <li>
+                    <strong className="text-[#161c1a]">Culvert Hydraulics (HDS-5):</strong> US FHWA (2012),{' '}
+                    <em>Hydraulic Design of Highway Culverts</em> —{' '}
+                    {isEn ? 'orifice inlet control and upstream backwater head at road crossings.' : 'kapasitas mulut gorong-gorong dan kenaikan air arah hulu akibat hambatan.'}
+                  </li>
+                  <li>
+                    <strong className="text-[#161c1a]">Infinite-Slope Stability (FoS):</strong> Skempton &amp; DeLory (1957); Montgomery &amp; Dietrich (1994),{' '}
+                    <em>Water Resour. Res.</em> 30(4) —{' '}
+                    {isEn ? 'coupled terrain slope, soil cohesion, root strength, and pore saturation.' : 'rasio tahanan geser tanah & akar vegetasi terhadap kemiringan lereng jenuh air.'}
+                  </li>
+                  <li>
+                    <strong className="text-[#161c1a]">Debris Bulking &amp; Stream Power (ω):</strong> Takahashi (1991); Bagnold (1966),{' '}
+                    <em>USGS Prof. Paper 422-I</em> —{' '}
+                    {isEn ? 'sediment bulking 1/(1 − Cv) and specific stream power ω = ρgQS/W.' : 'pengali volume sedimen 1/(1 − Cv) dan energi erosi tebing ω = ρgQS/W.'}
+                  </li>
+                </ul>
+
+                <div className="mt-1 rounded-lg border border-[#161c1a]/12 bg-white p-3 text-[12px] text-[#434d49]">
+                  <strong className="mb-1.5 block text-[12.5px] text-[#161c1a]">
+                    {isEn
+                      ? 'Conceptual Priors & Known Model Limitations (What This Model Does NOT Simulate)'
+                      : 'Parameterisasi Konseptual & Batas Model (Yang TIDAK Disimulasikan)'}
+                  </strong>
+                  <ul className="m-0 flex list-disc flex-col gap-1 pl-4.5">
+                    <li>
+                      <strong className="text-[#161c1a]">
+                        {isEn ? 'Uncalibrated conceptual priors:' : 'Konstanta konseptual belum terkalibrasi:'}
+                      </strong>{' '}
+                      {isEn
+                        ? 'Volcanic Andosol retention multipliers, dual-reservoir interflow lags, and incised bankfull depths are literature-inspired conceptual priors — not site-fitted against live gauges.'
+                        : 'Faktor simpanan tanah Andosol, jeda aliran bawah permukaan, dan kedalaman tampung alur normal merupakan perkiraan konseptual sebelum ada pengukuran AWLR lapangan.'}
+                    </li>
+                    <li>
+                      <strong className="text-[#161c1a]">
+                        {isEn ? '1D HAND vs. 2D channel avulsion:' : 'Model 1D HAND (tanpa pindah alur 2D / avulsion):'}
+                      </strong>{' '}
+                      {isEn
+                        ? 'HAND projects 1D water stage onto nearby valley pixels; it cannot model 2D momentum or debris flows jumping riverbanks down roads.'
+                        : 'HAND memproyeksikan tinggi muka air 1D ke lembah sekitar; tidak mensimulasikan aliran bebas 2D maupun luapan galodo yang berpindah jalur mengikuti badan jalan.'}
+                    </li>
+                    <li>
+                      <strong className="text-[#161c1a]">
+                        {isEn ? 'Slope initiation & geometric shadow vs. debris rheology:' : 'Inisiasi lereng & bayangan geometris (bukan reologi lumpur):'}
+                      </strong>{' '}
+                      {isEn
+                        ? 'Infinite-Slope FoS locates steep initiation zones and traces an indicative ~20° downslope shadow; it does not simulate non-Newtonian boulder transport or exact runout volume.'
+                        : 'Infinite-Slope FoS memetakan lereng awal yang jenuh dan bayangan lintasan ~20°, bukan dinamika material batu/lumpur non-Newtonian maupun jarak endapan pasti.'}
+                    </li>
+                    <li>
+                      <strong className="text-[#161c1a]">
+                        {isEn ? 'Snapshot backwater & IDF envelope:' : 'Efek sumbatan snapshot & batas hujan IDF:'}
+                      </strong>{' '}
+                      {isEn
+                        ? 'Culvert backwater and debris surge are snapshot approximations rather than dynamic dam-break reservoir storage; slider intensity is capped by an upper-bound West Sumatra IDF curve.'
+                        : 'Kenaikan muka air hulu gorong-gorong dan lonjakan sumbatan bersifat perkiraan sesaat (bukan perambatan jebolnya bendungan alami secara dinamis); slider hujan dibatasi kurva wajar IDF.'}
+                    </li>
+                  </ul>
+                </div>
+
+                <div className="mt-1 flex items-start gap-2 rounded-lg border border-[#b45309]/25 bg-[#b45309]/8 px-3 py-2 text-[12px] text-[#78350f]">
+                  <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-[#b45309]" />
+                  <span>
+                    {isEn
+                      ? 'Transparency notice: This app is developed as an open civic spatial tool, not by a government meteorology/hydrology agency. Because Nagari Balingka has no live stream gauges (AWLR) or full cross-section surveys yet, hydrograph and depth outputs are uncalibrated literature estimates and NOT official hazard forecasts.'
+                      : 'Catatan transparansi: Aplikasi ini dikembangkan sebagai alat eksplorasi data spasial terbuka. Karena Nagari Balingka belum memiliki pos duga muka air sungai (AWLR) atau survei penampang menyeluruh, grafik hidrograf dan perkiraan kedalaman merupakan hasil rumus literatur yang belum terkalibrasi lapangan — bukan ramalan cuaca/kebencanaan resmi.'}
+                  </span>
+                </div>
               </div>
             </div>
           )}

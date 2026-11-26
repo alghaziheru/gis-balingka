@@ -16,6 +16,7 @@ export interface HyetographStep {
 
 export interface EnsembleMemberConfig {
   id: string;
+  rainScale: number;
   cnDelta: number;
   manningScaleUnverified: number;
   manningScaleVerified: number;
@@ -32,6 +33,7 @@ export interface EnsembleMemberConfig {
 export const SIGMA_ENSEMBLE_MEMBERS: EnsembleMemberConfig[] = [
   {
     id: 'nominal',
+    rainScale: 1.0,
     cnDelta: 0,
     manningScaleUnverified: 1.0,
     manningScaleVerified: 1.0,
@@ -46,6 +48,7 @@ export const SIGMA_ENSEMBLE_MEMBERS: EnsembleMemberConfig[] = [
   },
   {
     id: 'wet_runoff',
+    rainScale: 1.25,
     cnDelta: 5,
     manningScaleUnverified: 1.08,
     manningScaleVerified: 1.04,
@@ -60,6 +63,7 @@ export const SIGMA_ENSEMBLE_MEMBERS: EnsembleMemberConfig[] = [
   },
   {
     id: 'dry_runoff',
+    rainScale: 0.75,
     cnDelta: -5,
     manningScaleUnverified: 0.92,
     manningScaleVerified: 0.96,
@@ -74,6 +78,7 @@ export const SIGMA_ENSEMBLE_MEMBERS: EnsembleMemberConfig[] = [
   },
   {
     id: 'rough_constricted',
+    rainScale: 1.08,
     cnDelta: 2,
     manningScaleUnverified: 1.26,
     manningScaleVerified: 1.12,
@@ -88,6 +93,7 @@ export const SIGMA_ENSEMBLE_MEMBERS: EnsembleMemberConfig[] = [
   },
   {
     id: 'smooth_open',
+    rainScale: 0.92,
     cnDelta: -2,
     manningScaleUnverified: 0.78,
     manningScaleVerified: 0.89,
@@ -102,6 +108,7 @@ export const SIGMA_ENSEMBLE_MEMBERS: EnsembleMemberConfig[] = [
   },
   {
     id: 'geotech_conservative',
+    rainScale: 1.15,
     cnDelta: 3,
     manningScaleUnverified: 1.1,
     manningScaleVerified: 1.05,
@@ -116,6 +123,7 @@ export const SIGMA_ENSEMBLE_MEMBERS: EnsembleMemberConfig[] = [
   },
   {
     id: 'geotech_optimistic',
+    rainScale: 0.85,
     cnDelta: -3,
     manningScaleUnverified: 0.9,
     manningScaleVerified: 0.95,
@@ -132,11 +140,40 @@ export const SIGMA_ENSEMBLE_MEMBERS: EnsembleMemberConfig[] = [
 
 export const RECESSION_MULTIPLIER = 1.28;
 
+/**
+ * Physical upper-bound rainfall intensity envelope (mm/hr) for West Sumatra storms
+ * by duration (prevents non-physical extreme-intensity × multi-day totals).
+ */
+export function getMaxRealisticRainMmHr(durationMin: number): number {
+  if (durationMin <= 120) return 150;
+  if (durationMin <= 180) return 120;
+  if (durationMin <= 360) return 100;
+  if (durationMin <= 720) return 65;
+  if (durationMin <= 1440) return 45;
+  if (durationMin <= 2160) return 40;
+  if (durationMin <= 2880) return 35;
+  return 30;
+}
+
+/**
+ * Bankfull channel incision depth (m) for Gunung Singgalang volcanic stream reaches.
+ * Uses field-measured cross-section depth when present; otherwise uses tropical volcanic
+ * incised hydraulic-geometry scaling (~0.60..1.18 m above DEM thalweg floor).
+ */
+export function estimateReachBankfullDepthM(reach: SimReachNode): number {
+  if (reach.measuredDepthM != null && Number.isFinite(reach.measuredDepthM) && reach.measuredDepthM > 0.2) {
+    return Math.min(2.2, reach.measuredDepthM * 0.85);
+  }
+  const areaTerm = 0.56 * Math.pow(Math.max(0.08, reach.upstreamAreaKm2), 0.22);
+  const kindBoost = reach.waterwayKind === 'river' ? 0.16 : 0.0;
+  return Math.max(0.55, Math.min(1.22, areaTerm + kindBoost));
+}
+
 export function resolveAntecedent5dMm(params: CascadeSimParams): number {
   if (typeof params.antecedent5dMm === 'number' && Number.isFinite(params.antecedent5dMm)) {
     return Math.max(0, Math.min(250, params.antecedent5dMm));
   }
-  return params.soilMoisture === 'dry' ? 15 : params.soilMoisture === 'saturated' ? 150 : 65;
+  return params.soilMoisture === 'dry' ? 15 : params.soilMoisture === 'saturated' ? 150 : 45;
 }
 
 export function resolveHyetograph(params: CascadeSimParams): HyetographType {
@@ -193,17 +230,35 @@ export function buildHyetograph(
   totalSteps = 28
 ): { steps: HyetographStep[]; totalWindowMin: number; dtMin: number; stormSteps: number } {
   const safeDur = Math.max(15, durationMin);
-  const totalWindowMin = Math.round(safeDur * RECESSION_MULTIPLIER);
+  // Multi-day monsoon events use a bounded 6-hour drainage recession instead of scaling linearly
+  const recessionMin =
+    safeDur >= 720
+      ? Math.round(Math.min(safeDur * 0.28, 360))
+      : Math.max(1, Math.round(safeDur * (RECESSION_MULTIPLIER - 1)));
+  const totalWindowMin = safeDur + recessionMin;
   const dtMin = totalWindowMin / totalSteps;
   const stormSteps = Math.max(4, Math.min(totalSteps - 2, Math.round(safeDur / dtMin)));
   const targetDepthMm = Math.max(0, rainMmHr) * (safeDur / 60);
 
   const weights = new Float64Array(stormSteps);
   let wSum = 0;
+  const isMultiDay = safeDur >= 720;
   for (let t = 0; t < stormSteps; t++) {
     const u = (t + 0.5) / stormSteps;
     let w = 1.0;
-    if (hyetograph === 'convective_front') {
+    if (isMultiDay) {
+      // Multi-day monsoon pattern: steady background rain saturating regolith + stronger day-2 convective rainbands
+      if (hyetograph === 'convective_front') {
+        w = 0.52 + 1.45 * Math.exp(-Math.pow((u - 0.35) / 0.16, 2));
+      } else if (hyetograph === 'alternating_block') {
+        w = 0.48 + 1.65 * Math.exp(-Math.pow((u - 0.72) / 0.14, 2));
+      } else if (hyetograph === 'double_burst') {
+        w =
+          0.46 +
+          1.15 * Math.exp(-Math.pow((u - 0.36) / 0.12, 2)) +
+          1.55 * Math.exp(-Math.pow((u - 0.78) / 0.12, 2));
+      }
+    } else if (hyetograph === 'convective_front') {
       // Intense tropical convective burst peaking early (~22% into storm)
       w = 0.25 + 2.35 * Math.exp(-Math.pow((u - 0.22) / 0.22, 2));
     } else if (hyetograph === 'alternating_block') {
@@ -378,12 +433,19 @@ export function routeReachNetwork(opts: {
     if (c.reachId >= 0 && c.reachId < R) crossingsByReach[c.reachId].push(c);
   }
 
-  // Precompute reach-level hydrological parameters
+  // Precompute reach-level hydrological parameters (continuous SMA SCS-CN + volcanic Andosol porosity)
   const reachSpatialMult = new Float32Array(R);
   const reachS = new Float32Array(R);
-  const reachIa = new Float32Array(R);
+  const reachSoilFill = new Float32Array(R);
+  const reachIaRem = new Float32Array(R);
+  const reachPercolationMmHr = new Float32Array(R);
+  const reachCumRunoffMm = new Float32Array(R);
   const reachManning = new Float32Array(R);
-  const reachHillAlpha = new Float32Array(R);
+  const reachHillFastAlpha = new Float32Array(R);
+  const reachHillSlowAlpha = new Float32Array(R);
+
+  // Initial dimensionless soil-storage fullness driven by P5 antecedent rainfall (0..250 mm)
+  const antecedentFill = Math.max(0.06, Math.min(0.84, antecedent5d / 185));
 
   for (let r = 0; r < R; r++) {
     const reach = network.reaches[r];
@@ -394,16 +456,26 @@ export function routeReachNetwork(opts: {
       reach.midCoord,
       params
     );
-    let cn2 = reach.meanCn;
+    // Volcanic humic Andosol + intact montane forest provide high infiltration porosity (-7 CN),
+    // which is lost under upland forest degradation.
+    let cn2 = reach.meanCn - 7.0 * reach.forestFrac;
     if (reach.uplandFrac >= 0.42 && reach.forestFrac > 0.15) {
-      if (params.forestScenario === 'degraded30') cn2 = Math.min(92, cn2 + 8 * reach.forestFrac);
-      else if (params.forestScenario === 'degraded50') cn2 = Math.min(94, cn2 + 14 * reach.forestFrac);
+      if (params.forestScenario === 'degraded30') cn2 = Math.min(92, cn2 + 10 * reach.forestFrac);
+      else if (params.forestScenario === 'degraded50') cn2 = Math.min(95, cn2 + 17 * reach.forestFrac);
     }
-    const cn = adjustCnForAntecedent(cn2, antecedent5d, calCnOff + member.cnDelta);
-    const sVal = Math.max(5, 25400 / cn - 254);
+    const cnBase = Math.max(32, Math.min(95, cn2 + calCnOff + member.cnDelta));
+    // Volcanic Andosol retention multiplier (~1.38x baseline S for porous ash soils)
+    const sVal = Math.max(12, (25400 / cnBase - 254) * (1.28 + 0.18 * reach.forestFrac));
     reachS[r] = sVal;
-    // Modern NRCS humid-watershed initial abstraction ratio lambda = 0.08 (Hawkins et al. 2009)
-    reachIa[r] = 0.08 * sVal;
+
+    // Initialize continuous soil moisture storage F(0) and initial interception Ia(0)
+    // AMC-dry fills low (~10%), moist ~24%, saturated ~78% of volcanic storage S
+    const initFill = antecedentFill * (1 - 0.15 * reach.forestFrac);
+    reachSoilFill[r] = sVal * initFill;
+    reachIaRem[r] = 0.14 * sVal * Math.max(0.05, 1 - antecedentFill * 1.15);
+
+    // Steady subsurface percolation drains light intermittent showers before storage saturates
+    reachPercolationMmHr[r] = 2.6 + 2.8 * reach.forestFrac + 1.2 * reach.uplandFrac;
 
     // Physical Manning's n: rougher on steep cobble/forested mountain creeks, smoother on wider rivers
     const baseN =
@@ -416,17 +488,19 @@ export function routeReachNetwork(opts: {
     const memberNScale = isMeasured ? member.manningScaleVerified : member.manningScaleUnverified;
     reachManning[r] = Math.max(0.022, Math.min(0.14, baseN * calManning * memberNScale));
 
-    // Sub-catchment overland lag constant (linear reservoir)
-    const tauHillMin = Math.max(4, Math.min(26, 6 + Math.sqrt(Math.max(0.02, reach.localAreaKm2)) * 11));
-    reachHillAlpha[r] = 1 - Math.exp(-dtMin / tauHillMin);
+    // Dual-reservoir volcanic hillslope routing: fast stormflow + slow Andosol subsurface interflow
+    const tauFastMin = Math.max(8, Math.min(34, 8 + Math.sqrt(Math.max(0.02, reach.localAreaKm2)) * 12));
+    const tauSlowMin = Math.max(150, Math.min(270, 165 + reach.forestFrac * 75 + reach.uplandFrac * 30));
+    reachHillFastAlpha[r] = 1 - Math.exp(-dtMin / tauFastMin);
+    reachHillSlowAlpha[r] = 1 - Math.exp(-dtMin / tauSlowMin);
   }
 
   // Dynamic state arrays per reach across time
   const qPrevIn = new Float32Array(R);
   const qPrevOut = new Float32Array(R);
   const qCurOut = new Float32Array(R);
-  const hillStoreQ = new Float32Array(R);
-  const prevCumRunoffMm = new Float32Array(R);
+  const hillFastStoreQ = new Float32Array(R);
+  const hillSlowStoreQ = new Float32Array(R);
 
   // Target snapshot outputs
   const qWaterSnap = new Float32Array(R);
@@ -486,8 +560,10 @@ export function routeReachNetwork(opts: {
   const qInAccum = new Float32Array(R);
   const surgeDownBoost = new Float32Array(R);
 
+  const dtHr = dtMin / 60;
   for (let t = 0; t < T; t++) {
     const step = hyetographSteps[t];
+    const stepRainMm = t === 0 ? step.cumRainMm : Math.max(0, step.cumRainMm - hyetographSteps[t - 1].cumRainMm);
     qInAccum.fill(0);
     surgeDownBoost.fill(0);
 
@@ -496,27 +572,60 @@ export function routeReachNetwork(opts: {
     let chokedNow = 0;
     const chokedIdsNow: string[] = [];
 
-    // Topological upstream -> downstream Muskingum-Cunge pass
+    // Topological upstream -> downstream Muskingum-Cunge pass with continuous SMA SCS-CN
     for (let r = 0; r < R; r++) {
       const reach = network.reaches[r];
-      const cumRainLocal = step.cumRainMm * reachSpatialMult[r];
-      const ia = reachIa[r];
+      const dRainLocal = stepRainMm * reachSpatialMult[r] * member.rainScale;
       const sVal = reachS[r];
-      const cumRunoffMm = cumRainLocal > ia ? ((cumRainLocal - ia) ** 2) / (cumRainLocal - ia + sVal) : 0;
-      const dRunoffMm = Math.max(0, cumRunoffMm - prevCumRunoffMm[r]);
-      prevCumRunoffMm[r] = cumRunoffMm;
+
+      // Absorb remaining initial canopy/surface depression storage first
+      const iaTaken = Math.min(reachIaRem[r], dRainLocal);
+      reachIaRem[r] -= iaTaken;
+      const pEff = Math.max(0, dRainLocal - iaTaken);
+
+      // Step-size-invariant continuous Soil Moisture Accounting derivative of SCS-CN:
+      // dQ/dP_e = 1 - (1 - F/S)^2, plus subsurface percolation freeing unsaturated storage over long rains.
+      const u0 = Math.max(0, Math.min(1, reachSoilFill[r] / sVal));
+      let dRunoffMm = 0;
+      if (pEff > 0) {
+        const uMid = Math.max(0, Math.min(1, (reachSoilFill[r] + 0.5 * pEff * (1 - u0) * (1 - u0)) / sVal));
+        const oneMinusU = 1 - uMid;
+        const runoffFrac = 1 - oneMinusU * oneMinusU;
+        dRunoffMm = pEff * runoffFrac;
+        const dInfil = pEff - dRunoffMm;
+        reachSoilFill[r] = Math.min(sVal, reachSoilFill[r] + dInfil);
+      }
+
+      // Deep subsurface percolation/interflow slowly drains soil moisture over multi-hour windows;
+      // once storage passes ~65% saturation, perched subsurface return flow exfiltrates into streams.
+      const fillRatio = Math.min(1, reachSoilFill[r] / sVal);
+      const drainMm = Math.min(
+        reachSoilFill[r],
+        reachPercolationMmHr[r] * Math.pow(fillRatio, 1.35) * dtHr
+      );
+      reachSoilFill[r] = Math.max(0, reachSoilFill[r] - drainMm);
+      const returnRatio = Math.max(0, Math.min(1, (fillRatio - 0.65) / 0.3));
+      const returnFlowMm = step.isRecession ? drainMm * returnRatio * 0.4 : drainMm * returnRatio;
+      reachCumRunoffMm[r] += dRunoffMm;
+      const cumRunoffMm = reachCumRunoffMm[r];
 
       if (reach.insideNagariFrac > 0.05) {
         areaWeightedRunoff += cumRunoffMm * reach.localAreaKm2;
         totalInsideArea += reach.localAreaKm2;
       }
 
-      // Convert incremental runoff depth (mm) over local sub-catchment (km²) into m³/s
-      const rawLatQ = (dRunoffMm * 1e-3 * (reach.localAreaKm2 * 1e6)) / dtSec;
-      const alpha = reachHillAlpha[r];
-      hillStoreQ[r] += alpha * (rawLatQ - hillStoreQ[r]);
+      const slowFrac = Math.max(0.12, Math.min(0.62, (0.34 + 0.24 * reach.forestFrac) * (1 - u0 * 0.72)));
+      const fastRunoffMm = dRunoffMm * (1 - slowFrac);
+      const slowRunoffMm = dRunoffMm * slowFrac + returnFlowMm;
 
-      const qIn = qInAccum[r] + hillStoreQ[r];
+      // Convert incremental fast stormflow & slow volcanic interflow (mm) over local sub-catchment (km²) into m³/s
+      const areaM2 = reach.localAreaKm2 * 1e6;
+      const rawFastQ = (fastRunoffMm * 1e-3 * areaM2) / dtSec;
+      const rawSlowQ = (slowRunoffMm * 1e-3 * areaM2) / dtSec;
+      hillFastStoreQ[r] += reachHillFastAlpha[r] * (rawFastQ - hillFastStoreQ[r]);
+      hillSlowStoreQ[r] += reachHillSlowAlpha[r] * (rawSlowQ - hillSlowStoreQ[r]);
+
+      const qIn = qInAccum[r] + hillFastStoreQ[r] + hillSlowStoreQ[r];
 
       // Estimate wave celerity & Muskingum-Cunge routing weights
       const qRef = Math.max(0.15, (qIn + qPrevOut[r]) * 0.5);
@@ -549,10 +658,11 @@ export function routeReachNetwork(opts: {
       const needFullReach = t === safeTargetStep || r === monitorReachId;
       if (needFullReach) {
         let cv = 0;
-        if (debrisMode !== 'clear' && routedSedM3[r] > 1 && qOut > 0.05) {
-          // Spread mobilized volume over active storm pulse (~45 min characteristic debris wave)
+        if (debrisMode !== 'clear' && routedSedM3[r] > 1 && qOut > 0.35) {
+          // Physical debris-wave pulse (~25..42 min) so multi-day slope failures mobilize real surges without step-size dilution
           const progressScale = Math.min(1, (t + 1) / Math.max(1, safeTargetStep + 1));
-          const qSed = (routedSedM3[r] * progressScale) / Math.max(1200, dtSec * 4.5);
+          const waveDurationSec = Math.min(2500, Math.max(1400, dtSec * 2.4));
+          const qSed = (routedSedM3[r] * progressScale) / waveDurationSec;
           cv = Math.min(0.42, qSed / Math.max(0.1, qOut + qSed));
         }
 
@@ -568,7 +678,7 @@ export function routeReachNetwork(opts: {
         if (t === safeTargetStep) {
           const rhoMix = 1000 * (1 - cv) + 2650 * cv;
           // Hyperconcentrated / debris flow increases effective flow resistance
-          const nEff = reachManning[r] * (1 + 1.8 * cv);
+          const nEff = reachManning[r] * (1 + 2.2 * cv);
           const { stageM, topWidthM } = invertSrcStage(qBulk, nEff, reach, stagesM);
           const omega = (rhoMix * 9.81 * qBulk * reach.slope) / Math.max(1.5, topWidthM);
 
@@ -580,6 +690,11 @@ export function routeReachNetwork(opts: {
 
           // Directional culvert/bridge capacity & upstream backwater impoundment
           const rCross = crossingsByReach[r];
+          // Upstream woody-debris & slide supply worsens blockage on uncleared crossings
+          const woodyDebrisBonus =
+            forceClearedCrossings || params.drainCondition === 'cleared'
+              ? 0
+              : Math.min(20, (routedSedM3[r] / 2500) * 10);
           for (let ci = 0; ci < rCross.length; ci++) {
             const cr = rCross[ci];
             const overrideVal = overrides[cr.id];
@@ -598,13 +713,16 @@ export function routeReachNetwork(opts: {
                     : cr.status === 'clogged'
                       ? 60
                       : cr.defaultBlockagePct;
-              blkPct = cr.status === 'normal' ? Math.min(globalBlkPct * 0.45, 35) : Math.max(statusFloor, globalBlkPct * 0.85);
+              const baseBlk =
+                cr.status === 'normal' ? Math.min(globalBlkPct * 0.45, 35) : Math.max(statusFloor, globalBlkPct * 0.85);
+              blkPct = Math.min(94, baseBlk + woodyDebrisBonus);
             } else {
-              blkPct = globalBlkPct;
+              blkPct = Math.min(94, globalBlkPct + woodyDebrisBonus);
             }
             const blkFrac = Math.max(0, Math.min(0.94, blkPct / 100));
             const capScale = cr.measuredOpening ? member.capScaleVerified : member.capScaleUnverified;
-            const qCapEff = Math.max(0.25, cr.qCapM3s * (1 - blkFrac) * capScale);
+            const reliefBoost = forceClearedCrossings || params.drainCondition === 'cleared' ? 1.22 : 1.05;
+            const qCapEff = Math.max(0.4, cr.qCapM3s * reliefBoost * (1 - blkFrac) * capScale);
 
             if (qBulk > qCapEff) {
               chokedNow++;
