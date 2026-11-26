@@ -205,20 +205,20 @@ export const MODEL_PARAMETER_AUDIT: ParameterAuditEntry[] = [
     paramEn: 'Infinite-Slope FoS & Cumulative Saturation Threshold',
     valueText: 'Andosol γ=17,4 kN/m³, c′=2,0 kPa, φ′=27,5°, n_e≈0,155 (155 mm/m) · Jenuh 130–270 mm · ~20°',
     sourceId:
-      'Model Skempton–DeLory (1957) & Montgomery–Dietrich (1994) pada jenis tanah/geologi Pemkab Agam; porositas aktif & batas jenuh Caine (1980)/Guzzetti (2008) bersifat prior tanpa uji bor tanah.',
+      'Model Skempton–DeLory (1957) & Montgomery–Dietrich (1994) terkopel kausal dengan kebasahan SMA SCS-CN di atas poligon tanah/geologi Pemkab Agam; porositas aktif & batas jenuh Caine (1980)/Guzzetti (2008) bersifat prior tanpa uji bor tanah.',
     sourceEn:
-      'Skempton–DeLory (1957) & Montgomery–Dietrich (1994) over Pemkab Agam soil/lithology polygons; drainable porosity & Caine (1980)/Guzzetti (2008) wetting thresholds lack borehole shear tests.'
+      'Skempton–DeLory (1957) & Montgomery–Dietrich (1994) causally coupled to SCS-CN SMA wetness over Pemkab Agam soil/lithology polygons; drainable porosity & Caine (1980)/Guzzetti (2008) wetting thresholds lack borehole shear tests.'
   },
   {
     id: 'readiness-ensemble',
     group: 'confidence',
     badge: 'conceptual',
-    paramId: 'Rentang Sensitivitas 7-Anggota & Batas Kesiapan Input',
-    paramEn: '7-Member Sensitivity Spread & Readiness Score Cap',
-    valueText: '±25% hujan + variasi CN/Manning/geotek · Maks 44/100 (Skrining Awal)',
+    paramId: 'Rentang Sensitivitas 7-Skenario & Batas Kesiapan Input',
+    paramEn: '7-Scenario Sensitivity Envelope & Readiness Score Cap',
+    valueText: '±25% hujan + variasi CN/Manning/geotek (Rendah/Tengah/Tinggi) · Maks 44/100',
     sourceId:
-      'Desain ketidakpastian model: skor kesiapan dikunci ≤44/100 (Skrining Awal) sampai minimal 3 tanda muka air (HWM) dan penampang saluran terukur diunggah lewat Editor.',
+      'Rentang sensitivitas deterministik 7 skenario (bukan persentil statistik P10–P90) dan uji silang blok spasial 50/50. Skor kesiapan dikunci ≤44/100 sampai minimal 3 Tanda Muka Air (HWM) dan penampang saluran terukur diunggah lewat Editor.',
     sourceEn:
-      'Model uncertainty guardrail: Input Readiness stays capped ≤44/100 (Screening) until ≥3 field High-Water Marks and measured channel/culvert cross-sections are saved via Editor.'
+      '7-scenario deterministic sensitivity envelope (Low/Central/High, not statistical P10–P90 percentiles) with 50/50 spatial-block holdout check. Input Readiness stays capped ≤44/100 until ≥3 field HWMs and measured cross-sections are saved.'
   }
 ];

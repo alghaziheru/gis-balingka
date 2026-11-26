@@ -4,7 +4,8 @@ import type {
   HyetographType,
   SimCrossingNode,
   SimNetworkData,
-  SimReachNode
+  SimReachNode,
+  WaterBalanceSummary
 } from '../types/gis';
 
 export interface HyetographStep {
@@ -30,6 +31,10 @@ export interface EnsembleMemberConfig {
   ksMult: number;
 }
 
+/**
+ * Seven deterministic scenario-sensitivity perturbation vectors (nominal + wet/dry,
+ * rough/smooth channel, and geotechnical bounds) — not a Monte Carlo probability distribution.
+ */
 export const SIGMA_ENSEMBLE_MEMBERS: EnsembleMemberConfig[] = [
   {
     id: 'nominal',
@@ -376,6 +381,15 @@ export function invertSrcStage(
   return { stageM, topWidthM: Math.max(1.2, topWidthM), velocityMs };
 }
 
+export interface ReachSedimentSeries {
+  checkpointSteps: number[];
+  cumSedM3ByCheckpoint: Float32Array[];
+}
+
+export interface ReachSmaHistory {
+  smaFillSeries: Float32Array;
+}
+
 export interface RoutedReachState {
   qWater: Float32Array;
   qBulk: Float32Array;
@@ -391,6 +405,231 @@ export interface RoutedReachState {
   outletHydrographBulkQ: Float32Array;
   peakOutletQ: number;
   meanRunoffMm: number;
+  waterBalance: WaterBalanceSummary;
+}
+
+interface PreparedReachHydroParams {
+  reachSpatialMult: Float32Array;
+  reachS: Float32Array;
+  reachSoilFill: Float32Array;
+  initSoilFill: Float32Array;
+  reachIaRem: Float32Array;
+  reachPercolationMmHr: Float32Array;
+  reachManning: Float32Array;
+  reachHillFastAlpha: Float32Array;
+  reachHillSlowAlpha: Float32Array;
+}
+
+function prepareReachHydroParams(
+  network: SimNetworkData,
+  minElevM: number,
+  params: CascadeSimParams,
+  member: EnsembleMemberConfig,
+  dtMin: number
+): PreparedReachHydroParams {
+  const R = network.reachCount;
+  const calManning = params.calibrationProfile?.manningMult ?? 1.0;
+  const calCnOff = params.calibrationProfile?.cnOffset ?? 0;
+  const antecedent5d = resolveAntecedent5dMm(params);
+  const antecedentFill = Math.max(0.06, Math.min(0.84, antecedent5d / 185));
+
+  const reachSpatialMult = new Float32Array(R);
+  const reachS = new Float32Array(R);
+  const reachSoilFill = new Float32Array(R);
+  const initSoilFill = new Float32Array(R);
+  const reachIaRem = new Float32Array(R);
+  const reachPercolationMmHr = new Float32Array(R);
+  const reachManning = new Float32Array(R);
+  const reachHillFastAlpha = new Float32Array(R);
+  const reachHillSlowAlpha = new Float32Array(R);
+
+  for (let r = 0; r < R; r++) {
+    const reach = network.reaches[r];
+    reachSpatialMult[r] = computeSpatialRainFactor(
+      reach.meanElevM,
+      minElevM,
+      reach.uplandFrac,
+      reach.midCoord,
+      params
+    );
+    // Volcanic humic Andosol + intact montane forest provide high infiltration porosity (-4 CN),
+    // which is lost under upland forest degradation.
+    let cn2 = reach.meanCn - 4.0 * reach.forestFrac;
+    if (reach.uplandFrac >= 0.42 && reach.forestFrac > 0.15) {
+      if (params.forestScenario === 'degraded30') cn2 = Math.min(92, cn2 + 10 * reach.forestFrac);
+      else if (params.forestScenario === 'degraded50') cn2 = Math.min(95, cn2 + 17 * reach.forestFrac);
+    }
+    const cnBase = Math.max(32, Math.min(95, cn2 + calCnOff + member.cnDelta));
+    const sVal = Math.max(12, (25400 / cnBase - 254) * (1.06 + 0.08 * reach.forestFrac));
+    reachS[r] = sVal;
+
+    const initFill = antecedentFill * (1 - 0.15 * reach.forestFrac);
+    const f0 = sVal * initFill;
+    reachSoilFill[r] = f0;
+    initSoilFill[r] = f0;
+    reachIaRem[r] = 0.14 * sVal * Math.max(0.05, 1 - antecedentFill * 1.15);
+
+    reachPercolationMmHr[r] = 0.9 + 1.1 * reach.forestFrac + 0.4 * reach.uplandFrac;
+
+    const baseN =
+      reach.slope >= 0.08
+        ? 0.062
+        : reach.waterwayKind === 'river'
+          ? 0.042
+          : 0.052;
+    const isMeasured = reach.measuredWidthM != null && reach.measuredDepthM != null;
+    const memberNScale = isMeasured ? member.manningScaleVerified : member.manningScaleUnverified;
+    reachManning[r] = Math.max(0.022, Math.min(0.14, baseN * calManning * memberNScale));
+
+    const tauFastMin = Math.max(8, Math.min(34, 8 + Math.sqrt(Math.max(0.02, reach.localAreaKm2)) * 12));
+    const tauSlowMin = Math.max(150, Math.min(270, 165 + reach.forestFrac * 75 + reach.uplandFrac * 30));
+    reachHillFastAlpha[r] = 1 - Math.exp(-dtMin / tauFastMin);
+    reachHillSlowAlpha[r] = 1 - Math.exp(-dtMin / tauSlowMin);
+  }
+
+  return {
+    reachSpatialMult,
+    reachS,
+    reachSoilFill,
+    initSoilFill,
+    reachIaRem,
+    reachPercolationMmHr,
+    reachManning,
+    reachHillFastAlpha,
+    reachHillSlowAlpha
+  };
+}
+
+interface StepSmaResult {
+  dRainLocal: number;
+  iaTaken: number;
+  totalSurfaceRunoffMm: number;
+  drainMm: number;
+  returnFlowMm: number;
+  u0: number;
+  fillRatio: number;
+}
+
+/**
+ * Advances continuous Soil Moisture Accounting (SCS-CN) by one timestep with exact mass closure:
+ * dRainLocal === iaTaken + (totalSurfaceRunoffMm + returnFlowMm) + (F_after - F_before) + (drainMm - returnFlowMm).
+ */
+function stepReachSma(
+  r: number,
+  dRainLocal: number,
+  isRecession: boolean,
+  dtHr: number,
+  hydro: PreparedReachHydroParams
+): StepSmaResult {
+  const sVal = hydro.reachS[r];
+  const fillBefore = hydro.reachSoilFill[r];
+
+  const iaTaken = Math.min(hydro.reachIaRem[r], dRainLocal);
+  hydro.reachIaRem[r] -= iaTaken;
+  const pEff = Math.max(0, dRainLocal - iaTaken);
+
+  const u0 = Math.max(0, Math.min(1, fillBefore / sVal));
+  let totalSurfaceRunoffMm = 0;
+  if (pEff > 0) {
+    const uMid = Math.max(0, Math.min(1, (fillBefore + 0.5 * pEff * (1 - u0) * (1 - u0)) / sVal));
+    const oneMinusU = 1 - uMid;
+    const runoffFrac = 1 - oneMinusU * oneMinusU;
+    let dRunoffMm = pEff * runoffFrac;
+    const dInfil = pEff - dRunoffMm;
+    const rawFill = fillBefore + dInfil;
+    if (rawFill > sVal) {
+      dRunoffMm += rawFill - sVal;
+      hydro.reachSoilFill[r] = sVal;
+    } else {
+      hydro.reachSoilFill[r] = rawFill;
+    }
+    totalSurfaceRunoffMm = dRunoffMm;
+  }
+
+  const fillRatio = Math.min(1, hydro.reachSoilFill[r] / sVal);
+  const drainMm = Math.min(
+    hydro.reachSoilFill[r],
+    hydro.reachPercolationMmHr[r] * Math.pow(fillRatio, 1.35) * dtHr
+  );
+  hydro.reachSoilFill[r] = Math.max(0, hydro.reachSoilFill[r] - drainMm);
+  const returnRatio = Math.max(0, Math.min(1, (fillRatio - 0.65) / 0.3));
+  const returnFlowMm = isRecession ? drainMm * returnRatio * 0.4 : drainMm * returnRatio;
+
+  return {
+    dRainLocal,
+    iaTaken,
+    totalSurfaceRunoffMm,
+    drainMm,
+    returnFlowMm,
+    u0,
+    fillRatio: Math.min(1, hydro.reachSoilFill[r] / sVal)
+  };
+}
+
+/**
+ * Precomputes the nominal reach soil-storage fullness trajectory F(t)/S across all storm steps,
+ * completely independent of playback progress, so hillslope pore pressure and surface runoff share
+ * a unified, strictly causal SMA water balance.
+ */
+export function computeNominalReachSmaHistory(opts: {
+  network: SimNetworkData;
+  minElevM: number;
+  params: CascadeSimParams;
+  hyetographSteps: HyetographStep[];
+  dtMin: number;
+}): ReachSmaHistory {
+  const { network, minElevM, params, hyetographSteps, dtMin } = opts;
+  const R = network.reachCount;
+  const T = hyetographSteps.length;
+  const dtHr = dtMin / 60;
+  const hydro = prepareReachHydroParams(network, minElevM, params, SIGMA_ENSEMBLE_MEMBERS[0], dtMin);
+  const smaFillSeries = new Float32Array(T * R);
+
+  for (let t = 0; t < T; t++) {
+    const step = hyetographSteps[t];
+    const stepRainMm = t === 0 ? step.cumRainMm : Math.max(0, step.cumRainMm - hyetographSteps[t - 1].cumRainMm);
+    const rowOff = t * R;
+    for (let r = 0; r < R; r++) {
+      const res = stepReachSma(r, stepRainMm * hydro.reachSpatialMult[r], step.isRecession, dtHr, hydro);
+      smaFillSeries[rowOff + r] = res.fillRatio;
+    }
+  }
+
+  return { smaFillSeries };
+}
+
+function sampleCausalCumSedAtStep(
+  series: ReachSedimentSeries | null | undefined,
+  legacySupply: Float32Array | null | undefined,
+  stepIdx: number,
+  totalSteps: number,
+  reachCount: number,
+  reachIdx: number
+): number {
+  if (series && series.checkpointSteps.length > 0 && series.cumSedM3ByCheckpoint.length > 0) {
+    const cps = series.checkpointSteps;
+    const vals = series.cumSedM3ByCheckpoint;
+    if (stepIdx <= cps[0]) return vals[0][reachIdx] || 0;
+    const last = cps.length - 1;
+    if (stepIdx >= cps[last]) return vals[last][reachIdx] || 0;
+    for (let k = 1; k < cps.length; k++) {
+      if (stepIdx <= cps[k]) {
+        const s0 = cps[k - 1];
+        const s1 = cps[k];
+        const span = Math.max(1, s1 - s0);
+        const f = (stepIdx - s0) / span;
+        const v0 = vals[k - 1][reachIdx] || 0;
+        const v1 = vals[k][reachIdx] || 0;
+        return v0 + (v1 - v0) * f;
+      }
+    }
+    return vals[last][reachIdx] || 0;
+  }
+  if (legacySupply && reachIdx < reachCount) {
+    const frac = (stepIdx + 1) / Math.max(1, totalSteps);
+    return (legacySupply[reachIdx] || 0) * frac;
+  }
+  return 0;
 }
 
 export function routeReachNetwork(opts: {
@@ -401,6 +640,7 @@ export function routeReachNetwork(opts: {
   hyetographSteps: HyetographStep[];
   dtMin: number;
   targetStepIdx: number;
+  reachSedimentSeries?: ReachSedimentSeries | null;
   reachSedimentSupplyM3?: Float32Array | null;
   forceClearedCrossings?: boolean;
 }): RoutedReachState {
@@ -412,6 +652,7 @@ export function routeReachNetwork(opts: {
     hyetographSteps,
     dtMin,
     targetStepIdx,
+    reachSedimentSeries = null,
     reachSedimentSupplyM3 = null,
     forceClearedCrossings = false
   } = opts;
@@ -421,9 +662,6 @@ export function routeReachNetwork(opts: {
   const dtSec = Math.max(60, dtMin * 60);
   const stagesM = network.srcStagesM;
 
-  const calManning = params.calibrationProfile?.manningMult ?? 1.0;
-  const calCnOff = params.calibrationProfile?.cnOffset ?? 0;
-  const antecedent5d = resolveAntecedent5dMm(params);
   const globalBlkPct = forceClearedCrossings ? 5 : resolveCulvertBlockagePct(params);
   const debrisMode = forceClearedCrossings ? 'clear' : resolveDebrisCoupling(params);
   const overrides = forceClearedCrossings ? {} : params.structureBlockageOverrides || {};
@@ -435,67 +673,16 @@ export function routeReachNetwork(opts: {
     if (c.reachId >= 0 && c.reachId < R) crossingsByReach[c.reachId].push(c);
   }
 
-  // Precompute reach-level hydrological parameters (continuous SMA SCS-CN + volcanic Andosol porosity)
-  const reachSpatialMult = new Float32Array(R);
-  const reachS = new Float32Array(R);
-  const reachSoilFill = new Float32Array(R);
-  const reachIaRem = new Float32Array(R);
-  const reachPercolationMmHr = new Float32Array(R);
+  const hydro = prepareReachHydroParams(network, minElevM, params, member, dtMin);
+  const {
+    reachSpatialMult,
+    reachSoilFill,
+    initSoilFill,
+    reachManning,
+    reachHillFastAlpha,
+    reachHillSlowAlpha
+  } = hydro;
   const reachCumRunoffMm = new Float32Array(R);
-  const reachManning = new Float32Array(R);
-  const reachHillFastAlpha = new Float32Array(R);
-  const reachHillSlowAlpha = new Float32Array(R);
-
-  // Initial dimensionless soil-storage fullness driven by P5 antecedent rainfall (0..250 mm)
-  const antecedentFill = Math.max(0.06, Math.min(0.84, antecedent5d / 185));
-
-  for (let r = 0; r < R; r++) {
-    const reach = network.reaches[r];
-    reachSpatialMult[r] = computeSpatialRainFactor(
-      reach.meanElevM,
-      minElevM,
-      reach.uplandFrac,
-      reach.midCoord,
-      params
-    );
-    // Volcanic humic Andosol + intact montane forest provide high infiltration porosity (-7 CN),
-    // which is lost under upland forest degradation.
-    let cn2 = reach.meanCn - 4.0 * reach.forestFrac;
-    if (reach.uplandFrac >= 0.42 && reach.forestFrac > 0.15) {
-      if (params.forestScenario === 'degraded30') cn2 = Math.min(92, cn2 + 10 * reach.forestFrac);
-      else if (params.forestScenario === 'degraded50') cn2 = Math.min(95, cn2 + 17 * reach.forestFrac);
-    }
-    const cnBase = Math.max(32, Math.min(95, cn2 + calCnOff + member.cnDelta));
-    // Volcanic Andosol retention multiplier (~1.08x baseline S for humic volcanic soils)
-    const sVal = Math.max(12, (25400 / cnBase - 254) * (1.06 + 0.08 * reach.forestFrac));
-    reachS[r] = sVal;
-
-    // Initialize continuous soil moisture storage F(0) and initial interception Ia(0)
-    // AMC-dry fills low (~10%), moist ~24%, saturated ~78% of volcanic storage S
-    const initFill = antecedentFill * (1 - 0.15 * reach.forestFrac);
-    reachSoilFill[r] = sVal * initFill;
-    reachIaRem[r] = 0.14 * sVal * Math.max(0.05, 1 - antecedentFill * 1.15);
-
-    // Realistic tropical subsoil percolation drains light showers slowly over multi-day storms
-    reachPercolationMmHr[r] = 0.9 + 1.1 * reach.forestFrac + 0.4 * reach.uplandFrac;
-
-    // Physical Manning's n: rougher on steep cobble/forested mountain creeks, smoother on wider rivers
-    const baseN =
-      reach.slope >= 0.08
-        ? 0.062
-        : reach.waterwayKind === 'river'
-          ? 0.042
-          : 0.052;
-    const isMeasured = reach.measuredWidthM != null && reach.measuredDepthM != null;
-    const memberNScale = isMeasured ? member.manningScaleVerified : member.manningScaleUnverified;
-    reachManning[r] = Math.max(0.022, Math.min(0.14, baseN * calManning * memberNScale));
-
-    // Dual-reservoir volcanic hillslope routing: fast stormflow + slow Andosol subsurface interflow
-    const tauFastMin = Math.max(8, Math.min(34, 8 + Math.sqrt(Math.max(0.02, reach.localAreaKm2)) * 12));
-    const tauSlowMin = Math.max(150, Math.min(270, 165 + reach.forestFrac * 75 + reach.uplandFrac * 30));
-    reachHillFastAlpha[r] = 1 - Math.exp(-dtMin / tauFastMin);
-    reachHillSlowAlpha[r] = 1 - Math.exp(-dtMin / tauSlowMin);
-  }
 
   // Dynamic state arrays per reach across time
   const qPrevIn = new Float32Array(R);
@@ -503,6 +690,13 @@ export function routeReachNetwork(opts: {
   const qCurOut = new Float32Array(R);
   const hillFastStoreQ = new Float32Array(R);
   const hillSlowStoreQ = new Float32Array(R);
+
+  // Causal active sediment storage and cumulative mobilized sediment per reach
+  const prevCumSedM3 = new Float32Array(R);
+  const sedStoreM3 = new Float32Array(R);
+  const routedCumSedM3 = new Float32Array(R);
+  const tauSedSec = 2100;
+  const sedReleaseFrac = 1 - Math.exp(-dtSec / tauSedSec);
 
   // Target snapshot outputs
   const qWaterSnap = new Float32Array(R);
@@ -532,6 +726,18 @@ export function routeReachNetwork(opts: {
   let chokedCrossingIdsSnap: string[] = [];
   let meanRunoffMmSnap = 0;
 
+  let wbAreaWeight = 0;
+  for (let r = 0; r < R; r++) {
+    if (network.reaches[r].insideNagariFrac > 0.05) {
+      wbAreaWeight += network.reaches[r].localAreaKm2;
+    }
+  }
+  let wbRainAreaSum = 0;
+  let wbIaAreaSum = 0;
+  let wbRunoffAreaSum = 0;
+  let wbDeepPercAreaSum = 0;
+  let wbStorageDeltaAreaSum = 0;
+
   // Build upstream adjacency list once for directional M1 backwater spillover into tributary mouths
   const upstreamOf: number[][] = Array.from({ length: R }, () => []);
   for (let r = 0; r < R; r++) {
@@ -540,23 +746,6 @@ export function routeReachNetwork(opts: {
   }
 
   const safeTargetStep = Math.max(0, Math.min(T - 1, targetStepIdx));
-
-  // Precompute reach-level routed sediment volume & surge pulse factors at target time
-  const routedSedM3 = new Float32Array(R);
-  if (debrisMode !== 'clear' && reachSedimentSupplyM3) {
-    for (let r = 0; r < R; r++) {
-      const reach = network.reaches[r];
-      const localSed = (reachSedimentSupplyM3[r] || 0) * member.debrisScale;
-      const totalSed = routedSedM3[r] + localSed;
-      routedSedM3[r] = totalSed;
-      const d = reach.downstreamId;
-      if (d >= 0 && d < R) {
-        // Steep channels transport debris efficiently; low-slope fans deposit sediment
-        const delivery = reach.slope >= 0.06 ? 0.92 : reach.slope >= 0.03 ? 0.72 : 0.45;
-        routedSedM3[d] += totalSed * delivery;
-      }
-    }
-  }
 
   // Time marching over storm + recession
   const qInAccum = new Float32Array(R);
@@ -578,47 +767,29 @@ export function routeReachNetwork(opts: {
     for (let r = 0; r < R; r++) {
       const reach = network.reaches[r];
       const dRainLocal = stepRainMm * reachSpatialMult[r] * member.rainScale;
-      const sVal = reachS[r];
+      const sma = stepReachSma(r, dRainLocal, step.isRecession, dtHr, hydro);
 
-      // Absorb remaining initial canopy/surface depression storage first
-      const iaTaken = Math.min(reachIaRem[r], dRainLocal);
-      reachIaRem[r] -= iaTaken;
-      const pEff = Math.max(0, dRainLocal - iaTaken);
-
-      // Step-size-invariant continuous Soil Moisture Accounting derivative of SCS-CN:
-      // dQ/dP_e = 1 - (1 - F/S)^2, plus subsurface percolation freeing unsaturated storage over long rains.
-      const u0 = Math.max(0, Math.min(1, reachSoilFill[r] / sVal));
-      let dRunoffMm = 0;
-      if (pEff > 0) {
-        const uMid = Math.max(0, Math.min(1, (reachSoilFill[r] + 0.5 * pEff * (1 - u0) * (1 - u0)) / sVal));
-        const oneMinusU = 1 - uMid;
-        const runoffFrac = 1 - oneMinusU * oneMinusU;
-        dRunoffMm = pEff * runoffFrac;
-        const dInfil = pEff - dRunoffMm;
-        reachSoilFill[r] = Math.min(sVal, reachSoilFill[r] + dInfil);
-      }
-
-      // Deep subsurface percolation/interflow slowly drains soil moisture over multi-hour windows;
-      // once storage passes ~65% saturation, perched subsurface return flow exfiltrates into streams.
-      const fillRatio = Math.min(1, reachSoilFill[r] / sVal);
-      const drainMm = Math.min(
-        reachSoilFill[r],
-        reachPercolationMmHr[r] * Math.pow(fillRatio, 1.35) * dtHr
-      );
-      reachSoilFill[r] = Math.max(0, reachSoilFill[r] - drainMm);
-      const returnRatio = Math.max(0, Math.min(1, (fillRatio - 0.65) / 0.3));
-      const returnFlowMm = step.isRecession ? drainMm * returnRatio * 0.4 : drainMm * returnRatio;
-      reachCumRunoffMm[r] += dRunoffMm;
-      const cumRunoffMm = reachCumRunoffMm[r];
+      const stepTotalRunoffMm = sma.totalSurfaceRunoffMm + sma.returnFlowMm;
+      reachCumRunoffMm[r] += stepTotalRunoffMm;
 
       if (reach.insideNagariFrac > 0.05) {
-        areaWeightedRunoff += cumRunoffMm * reach.localAreaKm2;
-        totalInsideArea += reach.localAreaKm2;
+        const wArea = reach.localAreaKm2;
+        areaWeightedRunoff += reachCumRunoffMm[r] * wArea;
+        totalInsideArea += wArea;
+        if (t <= safeTargetStep) {
+          wbRainAreaSum += dRainLocal * wArea;
+          wbIaAreaSum += sma.iaTaken * wArea;
+          wbRunoffAreaSum += stepTotalRunoffMm * wArea;
+          wbDeepPercAreaSum += (sma.drainMm - sma.returnFlowMm) * wArea;
+          if (t === safeTargetStep) {
+            wbStorageDeltaAreaSum += (reachSoilFill[r] - initSoilFill[r]) * wArea;
+          }
+        }
       }
 
-      const slowFrac = Math.max(0.12, Math.min(0.62, (0.34 + 0.24 * reach.forestFrac) * (1 - u0 * 0.72)));
-      const fastRunoffMm = dRunoffMm * (1 - slowFrac);
-      const slowRunoffMm = dRunoffMm * slowFrac + returnFlowMm;
+      const slowFrac = Math.max(0.12, Math.min(0.62, (0.34 + 0.24 * reach.forestFrac) * (1 - sma.u0 * 0.72)));
+      const fastRunoffMm = sma.totalSurfaceRunoffMm * (1 - slowFrac);
+      const slowRunoffMm = sma.totalSurfaceRunoffMm * slowFrac + sma.returnFlowMm;
 
       // Convert incremental fast stormflow & slow volcanic interflow (mm) over local sub-catchment (km²) into m³/s
       const areaM2 = reach.localAreaKm2 * 1e6;
@@ -656,18 +827,35 @@ export function routeReachNetwork(opts: {
         qInAccum[d] += qOut;
       }
 
-      // Compute debris bulking & hydraulic state on monitor reach (every step) and all reaches (at target step)
-      const needFullReach = t === safeTargetStep || r === monitorReachId;
-      if (needFullReach) {
-        let cv = 0;
-        if (debrisMode !== 'clear' && routedSedM3[r] > 1 && qOut > 0.35) {
-          // Physical debris-wave pulse (~25..42 min) so multi-day slope failures mobilize real surges without step-size dilution
-          const progressScale = Math.min(1, (t + 1) / Math.max(1, safeTargetStep + 1));
-          const waveDurationSec = Math.min(2500, Math.max(1400, dtSec * 2.4));
-          const qSed = (routedSedM3[r] * progressScale) / waveDurationSec;
+      // Strictly causal sediment release & downstream debris routing (never depends on targetStepIdx)
+      let cv = 0;
+      if (debrisMode !== 'clear') {
+        const cumNow =
+          sampleCausalCumSedAtStep(reachSedimentSeries, reachSedimentSupplyM3, t, T, R, r) * member.debrisScale;
+        const dLocalSed = Math.max(0, cumNow - prevCumSedM3[r]);
+        if (cumNow > prevCumSedM3[r]) prevCumSedM3[r] = cumNow;
+        sedStoreM3[r] += dLocalSed;
+        routedCumSedM3[r] += dLocalSed;
+
+        const releasedSedM3 = sedStoreM3[r] * sedReleaseFrac;
+        sedStoreM3[r] -= releasedSedM3;
+        if (d >= 0 && d < R && releasedSedM3 > 0) {
+          const delivery = reach.slope >= 0.06 ? 0.92 : reach.slope >= 0.03 ? 0.72 : 0.45;
+          const delivM3 = releasedSedM3 * delivery;
+          sedStoreM3[d] += delivM3;
+          routedCumSedM3[d] += delivM3;
+        }
+        if (qOut > 0.35 && releasedSedM3 > 0.01) {
+          const qSed = releasedSedM3 / dtSec;
           cv = Math.min(0.42, qSed / Math.max(0.1, qOut + qSed));
         }
+      }
 
+      const rCross = crossingsByReach[r];
+      const needCrossingCheck = t === safeTargetStep || (debrisMode === 'surge' && rCross.length > 0);
+      const needFullReach = t === safeTargetStep || r === monitorReachId || needCrossingCheck;
+
+      if (needFullReach) {
         const surgeMult = debrisMode === 'surge' ? 1 + surgeDownBoost[r] : 1;
         const qBulk = (qOut / Math.max(0.58, 1 - cv)) * surgeMult;
 
@@ -677,83 +865,85 @@ export function routeReachNetwork(opts: {
           if (qBulk > peakOutletQ) peakOutletQ = qBulk;
         }
 
-        if (t === safeTargetStep) {
+        if (t === safeTargetStep || needCrossingCheck) {
           const rhoMix = 1000 * (1 - cv) + 2650 * cv;
           // Hyperconcentrated / debris flow increases effective flow resistance
           const nEff = reachManning[r] * (1 + 2.2 * cv);
           const { stageM, topWidthM } = invertSrcStage(qBulk, nEff, reach, stagesM);
-          const omega = (rhoMix * 9.81 * qBulk * reach.slope) / Math.max(1.5, topWidthM);
 
-          qWaterSnap[r] = qOut;
-          qBulkSnap[r] = qBulk;
-          stageNormalSnap[r] = stageM;
-          sedimentCvSnap[r] = cv;
-          streamPowerSnap[r] = omega;
-
-          // Directional culvert/bridge capacity & upstream backwater impoundment
-          const rCross = crossingsByReach[r];
-          // Upstream woody-debris & slide supply worsens blockage on uncleared crossings
-          const woodyDebrisBonus =
-            forceClearedCrossings || params.drainCondition === 'cleared'
-              ? 0
-              : Math.min(20, (routedSedM3[r] / 2500) * 10);
-          for (let ci = 0; ci < rCross.length; ci++) {
-            const cr = rCross[ci];
-            const overrideVal = overrides[cr.id];
-            let blkPct: number;
-            if (typeof overrideVal === 'number' && Number.isFinite(overrideVal)) {
-              blkPct = overrideVal;
-            } else if (forceClearedCrossings || params.drainCondition === 'cleared') {
-              blkPct = Math.min(15, globalBlkPct);
-            } else if (cr.verified) {
-              // Respect field-verified structure condition modulated by global blockage control
-              const statusFloor =
-                cr.status === 'critical'
-                  ? 72
-                  : cr.status === 'damaged'
-                    ? 52
-                    : cr.status === 'clogged'
-                      ? 60
-                      : cr.defaultBlockagePct;
-              const baseBlk =
-                cr.status === 'normal' ? Math.min(globalBlkPct * 0.45, 35) : Math.max(statusFloor, globalBlkPct * 0.85);
-              blkPct = Math.min(94, baseBlk + woodyDebrisBonus);
-            } else {
-              blkPct = Math.min(94, globalBlkPct + woodyDebrisBonus);
-            }
-            const blkFrac = Math.max(0, Math.min(0.94, blkPct / 100));
-            const capScale = cr.measuredOpening ? member.capScaleVerified : member.capScaleUnverified;
-            const reliefBoost = forceClearedCrossings || params.drainCondition === 'cleared' ? 1.22 : 1.05;
-            const qCapEff = Math.max(0.4, cr.qCapM3s * reliefBoost * (1 - blkFrac) * capScale);
-
-            if (qBulk > qCapEff) {
-              chokedNow++;
-              chokedIdsNow.push(cr.id);
-              const qExcess = qBulk - qCapEff;
-              const roadWeirW = Math.max(3.5, topWidthM * 1.4);
-              const dh = Math.min(
-                2.6,
-                0.42 * Math.pow(qExcess / roadWeirW, 2 / 3) + 0.32 * blkFrac * Math.min(1.6, stageM)
-              );
-              if (dh > backwaterHeadSnap[r]) {
-                backwaterHeadSnap[r] = dh;
-                backwaterStartLongSnap[r] = cr.longFrac;
-                const lBwM = Math.max(85, (0.72 * dh) / Math.max(0.008, reach.slope));
-                backwaterLenFracSnap[r] = Math.min(1.5, lBwM / Math.max(40, reach.lengthM));
-              }
-              // Under surge mode, woody debris + high Cv at an overloaded crossing emits a localized downstream breach pulse
-              if (debrisMode === 'surge' && (cv >= 0.05 || blkFrac >= 0.65) && d >= 0 && d < R) {
-                const pulse = Math.min(0.45, 0.16 + cv * 0.8 + blkFrac * 0.18);
-                if (pulse > surgeDownBoost[d]) surgeDownBoost[d] = pulse;
-              }
-            }
+          if (t === safeTargetStep) {
+            const omega = (rhoMix * 9.81 * qBulk * reach.slope) / Math.max(1.5, topWidthM);
+            qWaterSnap[r] = qOut;
+            qBulkSnap[r] = qBulk;
+            stageNormalSnap[r] = stageM;
+            sedimentCvSnap[r] = cv;
+            streamPowerSnap[r] = omega;
           }
-          // Propagate attenuated surge pulse one more reach downstream
-          if (debrisMode === 'surge' && surgeDownBoost[r] > 0.08 && d >= 0 && d < R) {
-            const nextPulse = surgeDownBoost[r] * 0.68;
-            if (nextPulse > surgeDownBoost[d]) surgeDownBoost[d] = nextPulse;
+
+          if (rCross.length > 0) {
+            const woodyDebrisBonus =
+              forceClearedCrossings || params.drainCondition === 'cleared'
+                ? 0
+                : Math.min(20, (routedCumSedM3[r] / 2500) * 10);
+
+            for (let ci = 0; ci < rCross.length; ci++) {
+              const cr = rCross[ci];
+              const overrideVal = overrides[cr.id];
+              let blkPct: number;
+              if (typeof overrideVal === 'number' && Number.isFinite(overrideVal)) {
+                blkPct = overrideVal;
+              } else if (forceClearedCrossings || params.drainCondition === 'cleared') {
+                blkPct = Math.min(15, globalBlkPct);
+              } else if (cr.verified) {
+                const statusFloor =
+                  cr.status === 'critical'
+                    ? 72
+                    : cr.status === 'damaged'
+                      ? 52
+                      : cr.status === 'clogged'
+                        ? 60
+                        : cr.defaultBlockagePct;
+                const baseBlk =
+                  cr.status === 'normal' ? Math.min(globalBlkPct * 0.45, 35) : Math.max(statusFloor, globalBlkPct * 0.85);
+                blkPct = Math.min(94, baseBlk + woodyDebrisBonus);
+              } else {
+                blkPct = Math.min(94, globalBlkPct + woodyDebrisBonus);
+              }
+              const blkFrac = Math.max(0, Math.min(0.94, blkPct / 100));
+              const capScale = cr.measuredOpening ? member.capScaleVerified : member.capScaleUnverified;
+              const reliefBoost = forceClearedCrossings || params.drainCondition === 'cleared' ? 1.22 : 1.05;
+              const qCapEff = Math.max(0.4, cr.qCapM3s * reliefBoost * (1 - blkFrac) * capScale);
+
+              if (qBulk > qCapEff) {
+                if (t === safeTargetStep) {
+                  chokedNow++;
+                  chokedIdsNow.push(cr.id);
+                  const qExcess = qBulk - qCapEff;
+                  const roadWeirW = Math.max(3.5, topWidthM * 1.4);
+                  const dh = Math.min(
+                    2.6,
+                    0.42 * Math.pow(qExcess / roadWeirW, 2 / 3) + 0.32 * blkFrac * Math.min(1.6, stageM)
+                  );
+                  if (dh > backwaterHeadSnap[r]) {
+                    backwaterHeadSnap[r] = dh;
+                    backwaterStartLongSnap[r] = cr.longFrac;
+                    const lBwM = Math.max(85, (0.72 * dh) / Math.max(0.008, reach.slope));
+                    backwaterLenFracSnap[r] = Math.min(1.5, lBwM / Math.max(40, reach.lengthM));
+                  }
+                }
+                if (debrisMode === 'surge' && (cv >= 0.05 || blkFrac >= 0.65) && d >= 0 && d < R) {
+                  const pulse = Math.min(0.45, 0.16 + cv * 0.8 + blkFrac * 0.18);
+                  if (pulse > surgeDownBoost[d]) surgeDownBoost[d] = pulse;
+                }
+              }
+            }
           }
         }
+      }
+      // Propagate attenuated surge pulse one reach downstream causally at every step in surge mode
+      if (debrisMode === 'surge' && surgeDownBoost[r] > 0.08 && d >= 0 && d < R) {
+        const nextPulse = surgeDownBoost[r] * 0.68;
+        if (nextPulse > surgeDownBoost[d]) surgeDownBoost[d] = nextPulse;
       }
     }
 
@@ -776,7 +966,7 @@ export function routeReachNetwork(opts: {
             const u = ups[ui];
             if (spillHead > backwaterHeadSnap[u]) {
               backwaterHeadSnap[u] = spillHead;
-              backwaterStartLongSnap[u] = 0; // starts right at upstream reach outlet
+              backwaterStartLongSnap[u] = 0;
               const lBwU = Math.max(60, (0.7 * spillHead) / Math.max(0.008, network.reaches[u].slope));
               backwaterLenFracSnap[u] = Math.min(1.0, lBwU / Math.max(40, network.reaches[u].lengthM));
             }
@@ -785,6 +975,15 @@ export function routeReachNetwork(opts: {
       }
     }
   }
+
+  const denomArea = wbAreaWeight > 0 ? wbAreaWeight : 1;
+  const rainInputMm = wbRainAreaSum / denomArea;
+  const interceptionMm = wbIaAreaSum / denomArea;
+  const totalRunoffMm = wbRunoffAreaSum / denomArea;
+  const soilStorageDeltaMm = wbStorageDeltaAreaSum / denomArea;
+  const deepPercolationMm = wbDeepPercAreaSum / denomArea;
+  const closureErrorMm = rainInputMm - (interceptionMm + totalRunoffMm + soilStorageDeltaMm + deepPercolationMm);
+  const closureErrorPct = rainInputMm > 1e-6 ? (closureErrorMm / rainInputMm) * 100 : 0;
 
   return {
     qWater: qWaterSnap,
@@ -800,6 +999,15 @@ export function routeReachNetwork(opts: {
     outletHydrographQ,
     outletHydrographBulkQ,
     peakOutletQ,
-    meanRunoffMm: meanRunoffMmSnap
+    meanRunoffMm: meanRunoffMmSnap,
+    waterBalance: {
+      rainInputMm: Number(rainInputMm.toFixed(3)),
+      interceptionMm: Number(interceptionMm.toFixed(3)),
+      totalRunoffMm: Number(totalRunoffMm.toFixed(3)),
+      soilStorageDeltaMm: Number(soilStorageDeltaMm.toFixed(3)),
+      deepPercolationMm: Number(deepPercolationMm.toFixed(3)),
+      closureErrorMm: Number(closureErrorMm.toFixed(5)),
+      closureErrorPct: Number(closureErrorPct.toFixed(4))
+    }
   };
 }

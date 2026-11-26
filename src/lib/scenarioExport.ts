@@ -72,6 +72,9 @@ export function buildScenarioExportJson(
       exportedAt: new Date().toISOString(),
       modelNotice:
         'Exploratory open-literature screening simulation (uncalibrated against live stream gauges). Not an official BNPB/BPBD/BMKG hazard forecast.',
+      uncertaintyMethod:
+        '7-member deterministic scenario sensitivity envelope (Low/Central/High; parameter + +/-25% rainfall perturbations, not statistical P10/P90 percentiles)',
+      waterBalance: kpis.waterBalance ?? null,
       params,
       kpis,
       reaches: reachesSummary

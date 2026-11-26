@@ -237,9 +237,9 @@ export const GLOSSARY_ENTRIES: GlossaryEntry[] = [
     shortId: 'Grafik perubahan volume aliran sungai dari waktu ke waktu (m³/s)',
     shortEn: 'Streamflow volume curve over time (m³/s)',
     descId:
-      'Grafik yang menyandingkan curah hujan dari waktu ke waktu (batang biru atas) dengan perkiraan laju volume air di saluran utama Q dalam meter kubik per detik (garis biru). Kurva menunjukkan waktu naik menuju puncak, fase surut setelah hujan berhenti, serta rentang ketidakpastian P10–P90 karena model belum terkalibrasi alat ukur sungai (AWLR).',
+      'Grafik yang menyandingkan curah hujan dari waktu ke waktu (batang biru atas) dengan perkiraan laju volume air di saluran utama Q dalam meter kubik per detik (garis biru). Kurva menunjukkan waktu naik menuju puncak, fase surut setelah hujan berhenti, serta rentang sensitivitas 7 skenario (Rendah–Tinggi, bukan persentil statistik) karena model belum terkalibrasi alat ukur sungai (AWLR).',
     descEn:
-      'A chart pairing rainfall input over time (top blue bars) with estimated main-channel flow rate Q in cubic meters per second (blue curve). Shows rising lag to peak flow, post-storm recession drain, and P10–P90 uncertainty spread because the model is not yet calibrated against a physical river gauge.',
+      'A chart pairing rainfall input over time (top blue bars) with estimated main-channel flow rate Q in cubic meters per second (blue curve). Shows rising lag to peak flow, post-storm recession drain, and a 7-scenario sensitivity envelope (Low–High, not calibrated statistical percentiles) because the model is not yet calibrated against a physical river gauge.',
     links: [
       {
         kind: 'article',

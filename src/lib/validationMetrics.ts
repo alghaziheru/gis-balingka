@@ -18,6 +18,7 @@ export interface ValidationInputs {
   fosP50: Float32Array;
   reachStreamPowerWm2: Float32Array | null;
   calibrationMarks?: CalibrationMarkFeature[];
+  splitMode?: 'all' | 'calibration' | 'holdout';
   evaluateAtStorm?: (params: CascadeSimParams) => {
     sampleAtLngLat: (lng: number, lat: number) => {
       depthM: number;
@@ -25,6 +26,23 @@ export interface ValidationInputs {
       fos: number;
     };
   };
+}
+
+/**
+ * Deterministic 10x10-cell (~330m) checkerboard spatial block split to eliminate
+ * pixel-autocorrelation leakage between bounded calibration and holdout validation.
+ */
+export function isCellInSpatialSplit(
+  cellIdx: number,
+  width: number,
+  splitMode: 'all' | 'calibration' | 'holdout' = 'all',
+  blockSize = 10
+): boolean {
+  if (splitMode === 'all') return true;
+  const r = Math.floor(cellIdx / width);
+  const c = cellIdx - r * width;
+  const parity = (Math.floor(r / blockSize) + Math.floor(c / blockSize)) & 1;
+  return splitMode === 'calibration' ? parity === 0 : parity === 1;
 }
 
 /**
@@ -77,6 +95,7 @@ export function computeValidationMetrics(input: ValidationInputs): ValidationMet
     fosP50,
     reachStreamPowerWm2,
     calibrationMarks = [],
+    splitMode = 'all',
     evaluateAtStorm
   } = input;
 
@@ -95,6 +114,7 @@ export function computeValidationMetrics(input: ValidationInputs): ValidationMet
     for (let i = 0; i < n; i++) {
       if (nagariMask && nagariMask[i] === 0) continue;
       if (handDm[i] > 50) continue; // Only active fluvial corridor (HAND <= 5.0 m)
+      if (!isCellInSpatialSplit(i, fields.width, splitMode)) continue;
       const obs = scourMask[i] >= 1;
       if (obs) scourSampleCount++;
 
@@ -128,6 +148,7 @@ export function computeValidationMetrics(input: ValidationInputs): ValidationMet
     // Evaluate across full Nagari territory (off >= 2 Medium/High vs off <= 1 Low/Unmapped)
     for (let i = 0; i < n; i += 2) {
       if (nagariMask && nagariMask[i] === 0) continue;
+      if (!isCellInSpatialSplit(i, fields.width, splitMode)) continue;
       const off = officialLandslide[i];
       const isPos = off >= 2 ? 1 : 0;
       const fos = fosP50[i] || 3.0;
@@ -150,9 +171,14 @@ export function computeValidationMetrics(input: ValidationInputs): ValidationMet
   }
 
   // 3. Field Calibration Marks (High-Water Marks / Observed Scour / Landslide Scars)
+  const activeMarks =
+    splitMode !== 'all' && calibrationMarks.length >= 4
+      ? calibrationMarks.filter((_, idx) => (splitMode === 'calibration' ? idx % 2 === 0 : idx % 2 === 1))
+      : calibrationMarks;
+
   let hwmRmseM: number | null = null;
   let hwmHitRatePct: number | null = null;
-  const hwmCount = calibrationMarks.length;
+  const hwmCount = activeMarks.length;
 
   if (hwmCount > 0 && evaluateAtStorm) {
     let sqErrSum = 0;
@@ -161,7 +187,7 @@ export function computeValidationMetrics(input: ValidationInputs): ValidationMet
 
     // Group marks by storm scenario to avoid redundant evaluations
     const groups = new Map<string, CalibrationMarkFeature[]>();
-    for (const m of calibrationMarks) {
+    for (const m of activeMarks) {
       const p = m.properties;
       const key = `${p.rain_mm_hr}|${p.duration_min}|${p.antecedent_5d_mm}`;
       const list = groups.get(key);
@@ -218,17 +244,18 @@ export function computeValidationMetrics(input: ValidationInputs): ValidationMet
     landslideCsi,
     hwmRmseM,
     hwmHitRatePct,
-    hwmCount
+    hwmCount,
+    validationSplit: splitMode
   };
 }
 
 /**
- * Deterministic bounded local parameter calibration solver.
- * Optimizes regional (manningMult, cnOffset, cohesionMult) against field calibration marks
- * (depth RMSE & hit rate) and independent open-data benchmarks (Sentinel-2 scour CSI + Agam AUC).
+ * Deterministic bounded local parameter calibration solver with strict spatial-block split:
+ * fits regional (manningMult, cnOffset, cohesionMult) on the 50% 'calibration' fold,
+ * then reports unbiased performance exclusively on the unseen 50% 'holdout' fold.
  */
 export function solveBoundedCalibration(
-  evaluateCandidate: (profile: CalibrationProfile) => ValidationMetrics
+  evaluateCandidate: (profile: CalibrationProfile, splitMode: 'calibration' | 'holdout') => ValidationMetrics
 ): {
   profile: CalibrationProfile;
   metrics: ValidationMetrics;
@@ -236,7 +263,7 @@ export function solveBoundedCalibration(
   evaluatedCount: number;
 } {
   const baselineProfile: CalibrationProfile = { manningMult: 1.0, cnOffset: 0, cohesionMult: 1.0 };
-  const baselineMetrics = evaluateCandidate(baselineProfile);
+  const baselineCalMetrics = evaluateCandidate(baselineProfile, 'calibration');
 
   const scoreOf = (m: ValidationMetrics): number => {
     let score = 0;
@@ -257,11 +284,10 @@ export function solveBoundedCalibration(
   };
 
   let bestProfile = baselineProfile;
-  let bestMetrics = baselineMetrics;
-  let bestScore = scoreOf(baselineMetrics);
+  let bestScore = scoreOf(baselineCalMetrics);
   let evaluatedCount = 1;
 
-  // Compact bounded physical search grid (3 x 3 x 3 = 27 evaluations -> ~180 ms deterministic)
+  // Compact bounded physical search grid (3 x 3 x 3 = 27 evaluations -> ~200 ms deterministic)
   const manningCandidates = [0.82, 1.0, 1.22];
   const cnCandidates = [-4, 0, 4];
   const cohesionCandidates = [0.85, 1.0, 1.15];
@@ -271,27 +297,30 @@ export function solveBoundedCalibration(
       for (const cohesionMult of cohesionCandidates) {
         if (manningMult === 1.0 && cnOffset === 0 && cohesionMult === 1.0) continue;
         const cand: CalibrationProfile = { manningMult, cnOffset, cohesionMult };
-        const metrics = evaluateCandidate(cand);
+        const metrics = evaluateCandidate(cand, 'calibration');
         evaluatedCount++;
         const s = scoreOf(metrics);
         if (s > bestScore + 0.05) {
           bestScore = s;
           bestProfile = cand;
-          bestMetrics = metrics;
         }
       }
     }
   }
 
+  // Evaluate both baseline and calibrated profile strictly on unseen holdout fold
+  const baselineHoldoutMetrics = evaluateCandidate(baselineProfile, 'holdout');
+  const bestHoldoutMetrics = evaluateCandidate(bestProfile, 'holdout');
+
   return {
     profile: {
       ...bestProfile,
-      rmseM: bestMetrics.hwmRmseM,
-      scourCsi: bestMetrics.scourCsi,
-      landslideAuc: bestMetrics.landslideAuc
+      rmseM: bestHoldoutMetrics.hwmRmseM,
+      scourCsi: bestHoldoutMetrics.scourCsi,
+      landslideAuc: bestHoldoutMetrics.landslideAuc
     },
-    metrics: bestMetrics,
-    baselineMetrics,
+    metrics: bestHoldoutMetrics,
+    baselineMetrics: baselineHoldoutMetrics,
     evaluatedCount
   };
 }

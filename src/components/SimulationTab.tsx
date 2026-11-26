@@ -962,7 +962,7 @@ export function SimulationTab({
             {(
               [
                 ['depth', isEn ? 'Depth' : 'Genangan'],
-                ['confidence', isEn ? 'Agree %' : 'Ansambel'],
+                ['confidence', isEn ? 'Spread' : 'Sebaran'],
                 ['scour', isEn ? 'Scour ω' : 'Gerusan'],
                 ['survey', isEn ? 'Survey' : 'Survei']
               ] as const
@@ -1120,11 +1120,18 @@ export function SimulationTab({
                     ? 'Independent Benchmark Skill'
                     : 'Validasi Independen Model'}
               </span>
-              {hasCalibrationProfile && (
-                <span className="rounded bg-[#0369a1]/10 px-1.5 py-0.5 text-[10px] font-bold text-[#0369a1]">
-                  {isEn ? 'Profile Active' : 'Profil Aktif'}
-                </span>
-              )}
+              <div className="flex items-center gap-1">
+                {kpis.validation.validationSplit === 'holdout' && (
+                  <span className="rounded bg-[#047857]/10 px-1.5 py-0.5 text-[10px] font-bold text-[#047857]">
+                    {isEn ? 'Holdout' : 'Uji Terpisah'}
+                  </span>
+                )}
+                {hasCalibrationProfile && (
+                  <span className="rounded bg-[#0369a1]/10 px-1.5 py-0.5 text-[10px] font-bold text-[#0369a1]">
+                    {isEn ? 'Profile Active' : 'Profil Aktif'}
+                  </span>
+                )}
+              </div>
             </div>
             <div className="grid grid-cols-3 gap-1.5 text-center">
               <div className="rounded bg-white px-1.5 py-1 border border-[#161c1a]/8">

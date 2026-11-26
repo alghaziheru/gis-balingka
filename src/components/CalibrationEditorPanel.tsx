@@ -78,7 +78,7 @@ export function CalibrationEditorPanel({
   const [name, setName] = useState('');
   const [kind, setKind] = useState<CalibrationMarkKind>('hwm');
   const [depthStr, setDepthStr] = useState('0.8');
-  const [rainStr, setRainStr] = useState('90');
+  const [rainStr, setRainStr] = useState('40');
   const [durStr, setDurStr] = useState('180');
   const [p5Str, setP5Str] = useState('120');
   const [notes, setNotes] = useState('');
@@ -355,7 +355,9 @@ export function CalibrationEditorPanel({
         {autoProposal && (
           <div className="mt-2.5 rounded-lg border border-[#0369a1]/25 bg-[#0369a1]/6 px-2.5 py-2 text-[11.5px] text-[#161c1a]">
             <div className="font-bold text-[#0369a1]">
-              {isEn ? 'Bounded Solver Recommendation' : 'Rekomendasi Kalibrasi Terbatas'}
+              {isEn
+                ? 'Bounded Solver (50% Spatial Block Holdout)'
+                : 'Rekomendasi Kalibrasi (Uji Terpisah 50% Blok Spasial)'}
             </div>
             <div className="font-mono-num mt-0.5 text-[11px] text-[#434d49]">
               n×{autoProposal.profile.manningMult.toFixed(2)} · CN {autoProposal.profile.cnOffset >= 0 ? '+' : ''}

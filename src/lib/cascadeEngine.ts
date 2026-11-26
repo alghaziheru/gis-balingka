@@ -14,6 +14,7 @@ import type {
 } from '../types/gis';
 import {
   buildHyetograph,
+  computeNominalReachSmaHistory,
   estimateReachBankfullDepthM,
   RECESSION_MULTIPLIER,
   resolveHyetograph,
@@ -109,6 +110,11 @@ export interface PointSimDiagnostics {
   reachId: number;
   reachName: string | null;
   dataConfidence: DataConfidenceLevel;
+}
+
+export interface EvaluateOptions {
+  skipValidation?: boolean;
+  validationSplit?: 'all' | 'calibration' | 'holdout';
 }
 
 export class CascadeEngine {
@@ -624,7 +630,7 @@ export class CascadeEngine {
     return Math.max(0, stage - bfDepth);
   }
 
-  evaluate(params: CascadeSimParams, opts?: { skipValidation?: boolean }): CascadeKpis {
+  evaluate(params: CascadeSimParams, opts?: EvaluateOptions): CascadeKpis {
     const p = Math.max(0, Math.min(1, params.progress));
     const ov = params.structureBlockageOverrides;
     const ovKey = ov
@@ -634,6 +640,12 @@ export class CascadeEngine {
           .join(',')
       : '';
     const cal = params.calibrationProfile;
+    const isCustomCal = Boolean(
+      cal && (cal.manningMult !== 1 || cal.cnOffset !== 0 || cal.cohesionMult !== 1)
+    );
+    const activeSplitMode: 'all' | 'calibration' | 'holdout' =
+      opts?.validationSplit ?? (isCustomCal ? 'holdout' : 'all');
+
     const evalKey = [
       params.rainMmHr,
       params.durationMin,
@@ -651,7 +663,8 @@ export class CascadeEngine {
       params.debrisCoupling ?? '',
       cal ? `${cal.manningMult}|${cal.cnOffset}|${cal.cohesionMult}` : '',
       this.calibrationMarks.length,
-      opts?.skipValidation ? 1 : 0
+      opts?.skipValidation ? 1 : 0,
+      activeSplitMode
     ].join('|');
 
     if (evalKey === this.lastEvalKey && this.lastEvalKpis) {
@@ -764,7 +777,16 @@ export class CascadeEngine {
     const net = this.fields.network;
     const R = net.reachCount;
 
-    // 1. Leakage-free Physical Slope Stability (Infinite-Slope FoS) + Hillslope Sediment Yield per Reach
+    // 1. Precompute causal nominal SMA soil-moisture trajectory F(t)/S (shared by runoff & pore pressure)
+    const smaHistory = computeNominalReachSmaHistory({
+      network: net,
+      minElevM: this.fields.minElev,
+      params,
+      hyetographSteps: steps,
+      dtMin
+    });
+
+    // 2. Leakage-free, SMA-coupled Slope Stability (Infinite-Slope FoS) + Causal Mobilized Sediment Series
     const slopeRes = evaluateSlopeStability(
       {
         fields: this.fields,
@@ -781,6 +803,9 @@ export class CascadeEngine {
         reachId: this.reachId,
         nagariMask: this.nagariMask,
         params,
+        hyetographSteps: steps,
+        targetStepIdx,
+        reachSmaFillSeries: smaHistory.smaFillSeries,
         cumRainMm: accumulatedMm,
         cellAreaM2: this.cellAreaM2
       },
@@ -794,7 +819,12 @@ export class CascadeEngine {
     this.landslideRiskGrid.set(slopeRes.landslideRiskGrid);
     this.landslideRunoutGrid.set(slopeRes.landslideRunoutGrid);
 
-    // 2. Run 7-Member Deterministic Sigma-Point Hydraulic Ensemble (<3 ms total!)
+    const reachSedimentSeries = {
+      checkpointSteps: slopeRes.checkpointSteps,
+      cumSedM3ByCheckpoint: slopeRes.cumSedM3ByCheckpoint
+    };
+
+    // 3. Run 7-Scenario Deterministic Sensitivity Hydraulic Ensemble (strictly causal)
     const M = SIGMA_ENSEMBLE_MEMBERS.length;
     const routedMembers: RoutedReachState[] = new Array(M);
     for (let m = 0; m < M; m++) {
@@ -806,7 +836,7 @@ export class CascadeEngine {
         hyetographSteps: steps,
         dtMin,
         targetStepIdx,
-        reachSedimentSupplyM3: slopeRes.reachSedimentSupplyM3
+        reachSedimentSeries
       });
     }
 
@@ -819,7 +849,7 @@ export class CascadeEngine {
       hyetographSteps: steps,
       dtMin,
       targetStepIdx,
-      reachSedimentSupplyM3: slopeRes.reachSedimentSupplyM3,
+      reachSedimentSeries,
       forceClearedCrossings: true
     });
 
@@ -1052,10 +1082,10 @@ export class CascadeEngine {
       alertLevel = 'waspada';
     }
 
-    // 6. Independent Validation Metrics (memoized by scenario + calibration profile to stay <1 ms while scrubbing)
+    // 6. Independent Validation Metrics (memoized by scenario + split + calibration profile to stay <1 ms while scrubbing)
     let validation = emptyVal;
     if (!opts?.skipValidation) {
-      const valKey = `${params.rainMmHr}|${params.durationMin}|${params.soilMoisture}|${params.antecedent5dMm ?? ''}|${params.drainCondition}|${params.forestScenario}|${params.debrisCoupling ?? ''}|${params.calibrationProfile?.manningMult ?? 1}|${params.calibrationProfile?.cnOffset ?? 0}|${params.calibrationProfile?.cohesionMult ?? 1}|${this.calibrationMarks.length}|${targetStepIdx >= Math.floor(stormSteps * 0.7) ? 'peak' : 'early'}`;
+      const valKey = `${params.rainMmHr}|${params.durationMin}|${params.soilMoisture}|${params.antecedent5dMm ?? ''}|${params.drainCondition}|${params.forestScenario}|${params.debrisCoupling ?? ''}|${params.calibrationProfile?.manningMult ?? 1}|${params.calibrationProfile?.cnOffset ?? 0}|${params.calibrationProfile?.cohesionMult ?? 1}|${this.calibrationMarks.length}|${targetStepIdx >= Math.floor(stormSteps * 0.7) ? 'peak' : 'early'}|${activeSplitMode}`;
       if (valKey !== this.cachedValidationKey || !this.cachedValidation) {
         this.cachedValidationKey = valKey;
         this.cachedValidation = computeValidationMetrics({
@@ -1070,6 +1100,7 @@ export class CascadeEngine {
           fosP50: this.fosGrid,
           reachStreamPowerWm2: nom.streamPowerWm2,
           calibrationMarks: this.calibrationMarks,
+          splitMode: activeSplitMode,
           evaluateAtStorm:
             this.calibrationMarks.length > 0
               ? stormParams => {
@@ -1126,7 +1157,8 @@ export class CascadeEngine {
         peakDischargeM3s: { p10: peakQP10, p50: peakQP50, p90: peakQP90 }
       },
       hydrograph,
-      validation
+      validation,
+      waterBalance: nom.waterBalance
     };
     this.lastEvalKey = evalKey;
     this.lastEvalKpis = result;
@@ -1134,8 +1166,8 @@ export class CascadeEngine {
   }
 
   /**
-   * Runs bounded deterministic local parameter calibration against Sentinel-2 scour,
-   * held-out Pemkab Agam polygons, and any field-recorded High-Water Marks.
+   * Runs bounded deterministic local parameter calibration on an IDF-admissible storm (40 mm/h x 3h)
+   * using a strict 50/50 spatial-block split: fits on the calibration blocks, reports unbiased holdout skill.
    */
   runLocalCalibration(): {
     profile: CalibrationProfile;
@@ -1144,7 +1176,7 @@ export class CascadeEngine {
     evaluatedCount: number;
   } {
     const benchStorm: CascadeSimParams = {
-      rainMmHr: 95,
+      rainMmHr: 40,
       durationMin: 180,
       progress: 0.78,
       soilMoisture: 'saturated',
@@ -1156,9 +1188,12 @@ export class CascadeEngine {
       debrisCoupling: 'coupled'
     };
 
-    return solveBoundedCalibration(candidate => {
+    return solveBoundedCalibration((candidate, splitMode) => {
       const sub = new CascadeEngine(this.fields, [], this.totalCrossings, this.calibrationMarks);
-      const res = sub.evaluate({ ...benchStorm, calibrationProfile: candidate });
+      const res = sub.evaluate(
+        { ...benchStorm, calibrationProfile: candidate },
+        { validationSplit: splitMode }
+      );
       return res.validation;
     });
   }

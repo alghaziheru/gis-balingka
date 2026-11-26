@@ -2,7 +2,8 @@ import type { CascadeSimParams, SimFieldsData } from '../types/gis';
 import {
   computeSpatialRainFactor,
   resolveAntecedent5dMm,
-  type EnsembleMemberConfig
+  type EnsembleMemberConfig,
+  type HyetographStep
 } from './reachRouter.ts';
 
 export interface SlopeStabilityInputs {
@@ -20,6 +21,9 @@ export interface SlopeStabilityInputs {
   reachId: Uint16Array | null;
   nagariMask: Uint8Array | null;
   params: CascadeSimParams;
+  hyetographSteps: HyetographStep[];
+  targetStepIdx: number;
+  reachSmaFillSeries?: Float32Array | null;
   cumRainMm: number;
   cellAreaM2: number;
 }
@@ -27,12 +31,14 @@ export interface SlopeStabilityInputs {
 export interface SlopeStabilityResult {
   fosP50: Float32Array;
   landslideRiskGrid: Float32Array; // 0..1 instability intensity (strictly leakage-free: zero officialLandslide bias!)
-  landslideProbGrid: Float32Array; // 0..1 ensemble failure probability across sensitivity geotech bounds
+  landslideProbGrid: Float32Array; // 0..1 3-scenario deterministic sensitivity agreement index (not a calibrated probability)
   landslideRunoutGrid: Float32Array; // 0..1 indicative ~20 deg geometric downslope runout shadow
   reachSedimentSupplyM3: Float32Array;
-  landslideCellsP10: number;
-  landslideCellsP50: number;
-  landslideCellsP90: number;
+  checkpointSteps: number[];
+  cumSedM3ByCheckpoint: Float32Array[]; // Causal cumulative mobilized hillslope sediment (m³) per storm checkpoint
+  landslideCellsP10: number; // Low sensitivity scenario cell count
+  landslideCellsP50: number; // Central scenario cell count
+  landslideCellsP90: number; // High sensitivity scenario cell count
   runoutCells: number;
 }
 
@@ -78,6 +84,9 @@ export function evaluateSlopeStability(
     reachId,
     nagariMask,
     params,
+    hyetographSteps,
+    targetStepIdx,
+    reachSmaFillSeries = null,
     cumRainMm,
     cellAreaM2
   } = input;
@@ -88,7 +97,35 @@ export function evaluateSlopeStability(
   const landslideRiskGrid = new Float32Array(n);
   const landslideProbGrid = new Float32Array(n);
   const landslideRunoutGrid = new Float32Array(n);
-  const reachSedimentSupplyM3 = new Float32Array(Math.max(1, reachCount));
+  const safeReachCount = Math.max(1, reachCount);
+  const reachSedimentSupplyM3 = new Float32Array(safeReachCount);
+
+  // Storm-intrinsic causal checkpoints (never depend on playback targetStepIdx)
+  const T = Math.max(1, hyetographSteps.length);
+  const safeTargetStep = Math.max(0, Math.min(T - 1, targetStepIdx));
+  const targetCpCount = Math.min(T, 10);
+  const checkpointSet = new Set<number>();
+  for (let k = 0; k < targetCpCount; k++) {
+    const idx = targetCpCount === 1 ? 0 : Math.round((k / (targetCpCount - 1)) * (T - 1));
+    checkpointSet.add(idx);
+  }
+  const checkpointSteps = Array.from(checkpointSet).sort((a, b) => a - b);
+  const K = checkpointSteps.length;
+  const cumSedM3ByCheckpoint = checkpointSteps.map(() => new Float32Array(safeReachCount));
+  const cpProgArr = new Float64Array(K);
+  const cpRampArr = new Float64Array(K);
+  const cpCumRainArr = new Float64Array(K);
+  const cpInstRainArr = new Float64Array(K);
+  const cpElapsedHrArr = new Float64Array(K);
+  for (let k = 0; k < K; k++) {
+    const sIdx = checkpointSteps[k];
+    const cpProg = T > 1 ? sIdx / (T - 1) : 1;
+    cpProgArr[k] = cpProg;
+    cpRampArr[k] = smoothstep(0.06, 0.35, cpProg);
+    cpCumRainArr[k] = hyetographSteps[sIdx]?.cumRainMm ?? cumRainMm;
+    cpInstRainArr[k] = hyetographSteps[sIdx]?.rainMmHr ?? params.rainMmHr;
+    cpElapsedHrArr[k] = (hyetographSteps[sIdx]?.timeMin ?? 0) / 60;
+  }
 
   const antecedent5d = resolveAntecedent5dMm(params);
   const calCohesion = params.calibrationProfile?.cohesionMult ?? 1.0;
@@ -100,6 +137,7 @@ export function evaluateSlopeStability(
   const baseWetness = 0.05 + 0.45 * Math.pow(p5Frac, 0.92);
   const stormRamp = smoothstep(0.06, 0.35, params.progress);
   const elapsedHr = Math.max(0, (params.durationMin / 60) * Math.min(1, params.progress * 1.15));
+  const targetInstRain = hyetographSteps[safeTargetStep]?.rainMmHr ?? params.rainMmHr;
 
   let landslideCellsP10 = 0;
   let landslideCellsP50 = 0;
@@ -118,7 +156,6 @@ export function evaluateSlopeStability(
     const zM = Math.max(0.25, zBaseM * mem.soilDepthScale);
     const cEff = Math.max(0.8, cBaseKpa * calCohesion * mem.cohesionScale);
     const phiRad = ((phiBaseDeg + mem.phiDeltaDeg) * Math.PI) / 180;
-    // Lower Ks traps perched pore pressure longer near soil-bedrock interface
     const mEff = Math.max(0, Math.min(1.0, mBase / Math.sqrt(Math.max(0.5, mem.ksMult))));
     const cohesTerm = cEff / Math.max(0.5, gammaS * zM * sinCosB);
     const fricTerm = (Math.tan(phiRad) / Math.max(0.05, tanB)) * Math.max(0.12, 1 - mEff * (9.81 / gammaS));
@@ -140,22 +177,16 @@ export function evaluateSlopeStability(
       const isAndosol = soilErodibility ? soilErodibility[i] >= 200 : true;
       const gammaS = isAndosol ? 17.4 : 18.8; // kN/m³ (volcanic Andosol is porous & lighter)
 
-      // Lithology factor from PSG geology: weathered pyroclastic tuff (82-92) vs intact Andesite bedrock (104-118)
       const geoMult = geologyFactor ? geologyFactor[i] / 100 : 1.0;
       const isIntactBedrock = geoMult >= 1.03;
-
-      // Internal friction angle modulated physically by soil type & bedrock/lithology interlock
       const phiBaseDeg = (isAndosol ? 27.5 : 30.8) + (geoMult - 0.98) * 32;
 
-      // Soil depth Z (m) from BBSDLP soilDepthCm; steep intact bedrock slopes (>44%) retain thinner colluvium
       let zBaseM = soilDepthCm ? Math.max(0.32, soilDepthCm[i] / 100) : isAndosol ? 1.25 : 1.0;
       if (isIntactBedrock && sl > 42) {
         zBaseM = Math.max(0.32, zBaseM * Math.max(0.45, 1 - ((sl - 42) / 60) * 0.55));
       }
 
       const cSoilKpa = (isAndosol ? 2.0 : 3.0) * Math.pow(geoMult, 2.6);
-
-      // Effective root cohesion crossing basal slip plane (stronger where thin soil lets roots anchor into bedrock)
       const anchorBonus = zBaseM < 0.9 ? 1 + (0.9 - zBaseM) * 1.15 : 1.0;
       let cRootKpa = (0.35 + (rootCohesion[i] / 255) * 4.4) * anchorBonus;
       const isUpForest = isForest[i] === 1 && uplandWeight[i] >= 115;
@@ -165,7 +196,6 @@ export function evaluateSlopeStability(
       }
       const cBaseKpa = cSoilKpa + cRootKpa;
 
-      // Topographic wetness (TWI) & concave hollow convergence boost perched water table
       const twiVal = twi ? 2 + (twi[i] / 255) * 16 : 7.5;
       const twiBoost = 0.65 + 0.68 * smoothstep(5.0, 12.2, twiVal);
       const curvNorm = curvature ? (curvature[i] - 128) / 120 : 0; // <0 = convergent hollow
@@ -174,35 +204,46 @@ export function evaluateSlopeStability(
       const lng = bbox.west + (c + 0.5) * dLng;
       const cellElev = elevM ? elevM[i] : minElev + (uplandWeight[i] / 255) * 1400;
       const spatialMult = computeSpatialRainFactor(cellElev, minElev, uplandWeight[i] / 255, [lng, lat], params);
-      const localCumRain = cumRainMm * spatialMult;
 
-      // Transient 1D wetting-front pore-water ratio m(t) minus steady lateral subsurface drainage
-      // Humid volcanic Andosol drains ~1.2 mm/hr laterally above field capacity (drainable porosity n_e ≈ 0.155);
-      // prolonged multi-day cumulative wetting (130-270 mm, Caine 1980 / Guzzetti 2008) saturates steep regolith.
       const kLatMmHr = (isAndosol ? 1.2 : 0.95) / Math.max(0.75, twiBoost * 0.92);
       const infilStorageMm = Math.max(70, zBaseM * (isAndosol ? 155 : 130));
-      const latDrainMm = Math.min(
-        infilStorageMm * 0.32,
-        kLatMmHr * elapsedHr * Math.min(1.05, 0.5 + (1 - p5Frac) * 0.45)
-      );
-      const evalWetness = (rainScale: number): number => {
-        const scaledCumRain = localCumRain * rainScale;
-        const scaledRateRatio = Math.min(1.4, Math.max(0.28, (params.rainMmHr * rainScale) / 35));
+      const p5DrainMult = Math.min(1.05, 0.5 + (1 - p5Frac) * 0.45);
+      const rid = reachId ? reachId[i] : 65535;
+      const hasValidReach = Boolean(reachSmaFillSeries && rid < reachCount);
+
+      const evalWetnessAt = (
+        cumRain: number,
+        instRain: number,
+        elHr: number,
+        smaFill: number,
+        rainScale: number
+      ): number => {
+        const scaledCumRain = cumRain * spatialMult * rainScale;
+        const latDrainMm = Math.min(infilStorageMm * 0.32, kLatMmHr * elHr * p5DrainMult);
         const netAccum = Math.max(0, scaledCumRain - latDrainMm);
         const prolongedSat = smoothstep(130, 270, scaledCumRain);
+        const effRate = Math.max(instRain, params.rainMmHr * 0.5) * rainScale;
+        const scaledRateRatio = Math.min(1.4, Math.max(0.28, effRate / 35));
         const rateEff = Math.max(0.64 + 0.36 * scaledRateRatio, prolongedSat);
+        // Unify hillslope pore pressure with dynamic reach SMA soil-moisture fullness F(t)/S
+        const scaledSma = Math.max(0, Math.min(1, smaFill * (0.85 + 0.15 * rainScale)));
+        const unifiedBase = hasValidReach ? baseWetness * 0.48 + scaledSma * 0.52 : baseWetness;
         const stormDelta = Math.min(0.98, (netAccum / infilStorageMm) * twiBoost * hollowBoost * rateEff);
-        return Math.min(1.0, baseWetness * twiBoost * 0.72 + stormDelta);
+        const smaStormBoost = hasValidReach ? 0.78 + 0.22 * scaledSma : 1.0;
+        return Math.min(1.0, unifiedBase * twiBoost * 0.72 + stormDelta * smaStormBoost);
       };
 
-      const mBase = evalWetness(nominalMember.rainScale);
+      const targetSma = hasValidReach
+        ? reachSmaFillSeries![safeTargetStep * reachCount + rid]
+        : baseWetness;
+      const mBase = evalWetnessAt(cumRainMm, targetInstRain, elapsedHr, targetSma, nominalMember.rainScale);
       const fosNom = evalCellFos(tanB, sinCosB, zBaseM, gammaS, cBaseKpa, phiBaseDeg, mBase, nominalMember);
       fosP50[i] = Number(Math.min(5.0, fosNom).toFixed(2));
 
       if (sl < 20) continue; // Only steep slopes (>=20%) contribute to shallow landslide failure & debris yield
 
-      const mCons = evalWetness(conservativeMember.rainScale);
-      const mOpt = evalWetness(optimisticMember.rainScale);
+      const mCons = evalWetnessAt(cumRainMm, targetInstRain, elapsedHr, targetSma, conservativeMember.rainScale);
+      const mOpt = evalWetnessAt(cumRainMm, targetInstRain, elapsedHr, targetSma, optimisticMember.rainScale);
       const fosCons = evalCellFos(tanB, sinCosB, zBaseM, gammaS, cBaseKpa, phiBaseDeg, mCons, conservativeMember);
       const fosOpt = evalCellFos(tanB, sinCosB, zBaseM, gammaS, cBaseKpa, phiBaseDeg, mOpt, optimisticMember);
 
@@ -213,7 +254,7 @@ export function evaluateSlopeStability(
 
       if (riskNom > 0.06) landslideRiskGrid[i] = riskNom;
 
-      // Probability of FoS < 1.05 across conservative / nominal / optimistic envelope
+      // 3-scenario deterministic sensitivity agreement index across low/central/high geotech bounds
       const failScore =
         (fosOpt < 1.05 ? 0.34 : 0) +
         (fosNom < 1.05 ? 0.36 : 0) +
@@ -224,14 +265,48 @@ export function evaluateSlopeStability(
       if (riskNom >= 0.28) landslideCellsP50++;
       if (riskCons >= 0.28) landslideCellsP90++;
 
-      // Couple failing hillslopes directly into their downstream D8 reach sediment supply
-      if (reachId && fosNom < 1.12 && stormRamp > 0.05) {
-        const rid = reachId[i];
-        if (rid < reachCount) {
+      // Couple failing hillslopes causally into their downstream D8 reach sediment supply
+      if (reachId && rid < reachCount) {
+        const deliveryEfficiency = 0.06 + 0.12 * smoothstep(24, 50, sl);
+        const baseCellVol = cellAreaM2 * zBaseM * deliveryEfficiency;
+        if (fosNom < 1.12 && stormRamp > 0.05) {
           const mobFrac = invSmoothstep(0.72, 1.12, fosNom) * stormRamp;
-          const deliveryEfficiency = 0.06 + 0.12 * smoothstep(24, 50, sl);
-          const volM3 = cellAreaM2 * zBaseM * mobFrac * deliveryEfficiency;
-          reachSedimentSupplyM3[rid] += volM3;
+          reachSedimentSupplyM3[rid] += baseCellVol * mobFrac;
+        }
+
+        // Precompute fast, strictly causal cumulative sediment trajectory across storm checkpoints
+        const zNom = Math.max(0.25, zBaseM * nominalMember.soilDepthScale);
+        const cNom = Math.max(0.8, cBaseKpa * calCohesion * nominalMember.cohesionScale);
+        const phiRadNom = ((phiBaseDeg + nominalMember.phiDeltaDeg) * Math.PI) / 180;
+        const cohesTermNom = cNom / Math.max(0.5, gammaS * zNom * sinCosB);
+        const fricSlopeNom = Math.tan(phiRadNom) / Math.max(0.05, tanB);
+        const ksScaleNom = Math.sqrt(Math.max(0.5, nominalMember.ksMult));
+        const gammaRatio = 9.81 / gammaS;
+
+        let cellPeakMob = 0;
+        for (let k = 0; k < K; k++) {
+          const cpRamp = cpRampArr[k];
+          if (cpRamp > 0.05) {
+            const cpSma = hasValidReach
+              ? reachSmaFillSeries![checkpointSteps[k] * reachCount + rid]
+              : baseWetness;
+            const mCp = evalWetnessAt(
+              cpCumRainArr[k],
+              cpInstRainArr[k],
+              cpElapsedHrArr[k],
+              cpSma,
+              nominalMember.rainScale
+            );
+            const mEffCp = Math.max(0, Math.min(1.0, mCp / ksScaleNom));
+            const fosCp = cohesTermNom + fricSlopeNom * Math.max(0.12, 1 - mEffCp * gammaRatio);
+            if (fosCp < 1.12) {
+              const mobCp = invSmoothstep(0.72, 1.12, fosCp) * cpRamp;
+              if (mobCp > cellPeakMob) cellPeakMob = mobCp;
+            }
+          }
+          if (cellPeakMob > 0) {
+            cumSedM3ByCheckpoint[k][rid] += baseCellVol * cellPeakMob;
+          }
         }
       }
     }
@@ -304,6 +379,8 @@ export function evaluateSlopeStability(
     landslideProbGrid,
     landslideRunoutGrid,
     reachSedimentSupplyM3,
+    checkpointSteps,
+    cumSedM3ByCheckpoint,
     landslideCellsP10,
     landslideCellsP50,
     landslideCellsP90,

@@ -321,8 +321,8 @@ function InfoDataModalContent({
                       : '2. Penelusuran 1D Muskingum-Cunge & Kurva Kapasitas DEMNAS:'}
                   </strong>{' '}
                   {isEn
-                    ? 'Priority-Flood D8 routing builds a reach network with full-resolution HAND Synthetic Rating Curves (overridden by field-measured cross-sections), directional upstream culvert backwater, coupled leakage-free Infinite-Slope stability (FoS) with ~20° downslope shadow and debris bulking, and a 7-scenario sensitivity ensemble (soil/channel parameters + ±25% rainfall).'
-                    : 'Penelusuran Priority-Flood D8 membentuk jaringan segmen sungai dengan Synthetic Rating Curves HAND beresolusi penuh (mengikuti ukuran penampang lapangan bila tersedia), efek balik air (backwater) arah hulu di gorong-gorong, analisis kestabilan lereng Infinite-Slope (FoS) dengan bayangan lintasan ~20° dan pengali sedimen, serta ansambel sensitivitas 7 skenario (parameter + ±25% hujan).'}
+                    ? 'Priority-Flood D8 routing builds a reach network with full-resolution HAND Synthetic Rating Curves (overridden by field-measured cross-sections), directional upstream culvert backwater, causally coupled SMA soil-wetness → Infinite-Slope stability (FoS) with ~20° downslope shadow and debris bulking, exact water-balance closure, and a 7-scenario deterministic sensitivity envelope (Low/Central/High, not Monte Carlo probabilities).'
+                    : 'Penelusuran Priority-Flood D8 membentuk jaringan segmen sungai dengan Synthetic Rating Curves HAND beresolusi penuh (mengikuti ukuran penampang lapangan bila tersedia), efek balik air (backwater) arah hulu di gorong-gorong, kopel kausal kebasahan tanah SMA → kestabilan lereng Infinite-Slope (FoS) dengan bayangan lintasan ~20° dan aliran sedimen, neraca massa air tertutup, serta rentang sensitivitas deterministik 7 skenario (Rendah/Tengah/Tinggi, bukan probabilitas statistik).'}
                 </p>
                 <p className="m-0 text-[13px] text-[#434d49]">
                   <strong className="text-[#161c1a]">

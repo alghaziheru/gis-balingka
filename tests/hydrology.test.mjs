@@ -50,6 +50,7 @@ import { computeRunoffMergeNetwork } from '../src/lib/geometry.ts';
 import { getOverlayContrastPalette, isDarkBasemap } from '../src/lib/mapPalette.ts';
 import { lookupAgamAtPoint } from '../src/lib/agamLookup.ts';
 import { CLIMATE_BASELINE, MODEL_PARAMETER_AUDIT } from '../src/data/climateBaseline.ts';
+import { isCellInSpatialSplit } from '../src/lib/validationMetrics.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT_DIR = path.resolve(__dirname, '..');
@@ -1643,4 +1644,191 @@ test('IDF envelope, uncalibrated readiness cap, sub-hourly multi-day steps, dual
   const surveyCsv = buildFieldSurveyPriorityCsv(simFields.network);
   assert.ok(surveyCsv.includes('observed_width_m,observed_height_or_depth_m'));
   assert.ok(surveyCsv.split('\n').length >= 10);
+});
+
+test('Phase 1 methodological hygiene: strict causality, water-balance closure, unified SMA-FoS, and holdout calibration', t => {
+  // 1. Spatial block split partitions cells disjointly and exhaustively
+  const w = 40;
+  const h = 40;
+  let calCount = 0;
+  let holdCount = 0;
+  for (let i = 0; i < w * h; i++) {
+    const inCal = isCellInSpatialSplit(i, w, 'calibration');
+    const inHold = isCellInSpatialSplit(i, w, 'holdout');
+    assert.notEqual(inCal, inHold, 'calibration and holdout blocks must be strictly disjoint');
+    assert.equal(isCellInSpatialSplit(i, w, 'all'), true);
+    if (inCal) calCount++;
+    if (inHold) holdCount++;
+  }
+  assert.equal(calCount + holdCount, w * h);
+  assert.ok(calCount > 400 && holdCount > 400);
+
+  const simPath = path.join(DATA_DIR, 'sim-fields.json');
+  if (!fs.existsSync(simPath)) {
+    t.skip('sim-fields.json not present yet');
+    return;
+  }
+  const simFields = JSON.parse(fs.readFileSync(simPath, 'utf8'));
+  const settlements = fs.existsSync(path.join(DATA_DIR, 'settlements.geojson'))
+    ? JSON.parse(fs.readFileSync(path.join(DATA_DIR, 'settlements.geojson'), 'utf8'))
+    : { type: 'FeatureCollection', features: [] };
+  const engine = new CascadeEngine(simFields, extractBuildingCentroids(settlements), 37);
+
+  // 2. Strict temporal causality: full hydrograph[t] and peakDischargeM3s must not change when scrubbing progress
+  for (const scenario of [
+    {
+      rainMmHr: 40,
+      durationMin: 180,
+      soilMoisture: 'saturated',
+      antecedent5dMm: 140,
+      rainPattern: 'upland',
+      drainCondition: 'clogged',
+      forestScenario: 'actual',
+      hyetograph: 'alternating_block',
+      debrisCoupling: 'coupled'
+    },
+    {
+      rainMmHr: 7,
+      durationMin: 2880,
+      soilMoisture: 'moist',
+      antecedent5dMm: 75,
+      rainPattern: 'upland',
+      drainCondition: 'surge',
+      forestScenario: 'actual',
+      hyetograph: 'alternating_block',
+      debrisCoupling: 'surge'
+    }
+  ]) {
+    const early = engine.evaluate({ ...scenario, progress: 0.45 }, { skipValidation: true });
+    const late = engine.evaluate({ ...scenario, progress: 0.9 }, { skipValidation: true });
+    assert.equal(
+      early.peakDischargeM3s,
+      late.peakDischargeM3s,
+      `peakDischargeM3s must be causal and invariant to playback progress (${early.peakDischargeM3s} vs ${late.peakDischargeM3s})`
+    );
+    assert.equal(early.hydrograph.length, late.hydrograph.length);
+    for (let k = 0; k < early.hydrograph.length; k++) {
+      assert.equal(
+        early.hydrograph[k].qP50,
+        late.hydrograph[k].qP50,
+        `hydrograph[${k}].qP50 leaked future progress`
+      );
+      assert.equal(
+        early.hydrograph[k].qBulkP50,
+        late.hydrograph[k].qBulkP50,
+        `hydrograph[${k}].qBulkP50 leaked future progress`
+      );
+      assert.equal(
+        early.hydrograph[k].qP10,
+        late.hydrograph[k].qP10,
+        `hydrograph[${k}].qP10 leaked future progress`
+      );
+      assert.equal(
+        early.hydrograph[k].qP90,
+        late.hydrograph[k].qP90,
+        `hydrograph[${k}].qP90 leaked future progress`
+      );
+    }
+  }
+
+  // 3. Exact SMA water-balance closure (< 0.05% error) across dry, saturated, and 48h storms
+  for (const wbParams of [
+    {
+      rainMmHr: 15,
+      durationMin: 120,
+      progress: 0.9,
+      soilMoisture: 'dry',
+      antecedent5dMm: 10,
+      rainPattern: 'uniform',
+      drainCondition: 'cleared',
+      forestScenario: 'actual'
+    },
+    {
+      rainMmHr: 40,
+      durationMin: 180,
+      progress: 0.85,
+      soilMoisture: 'saturated',
+      antecedent5dMm: 180,
+      rainPattern: 'upland',
+      drainCondition: 'clogged',
+      forestScenario: 'actual'
+    },
+    {
+      rainMmHr: 7,
+      durationMin: 2880,
+      progress: 0.85,
+      soilMoisture: 'moist',
+      antecedent5dMm: 75,
+      rainPattern: 'upland',
+      drainCondition: 'surge',
+      forestScenario: 'actual'
+    }
+  ]) {
+    const res = engine.evaluate(wbParams, { skipValidation: true });
+    assert.ok(res.waterBalance, 'expected waterBalance summary on CascadeKpis');
+    assert.ok(res.waterBalance.rainInputMm > 0);
+    assert.ok(res.waterBalance.totalRunoffMm > 0);
+    assert.ok(
+      Math.abs(res.waterBalance.closureErrorPct) < 0.05,
+      `water-balance closure error too large: ${res.waterBalance.closureErrorPct}%`
+    );
+  }
+
+  // 4. Unified SMA -> slope stability coupling responds to early convective wetness
+  const earlyConvective = engine.evaluate(
+    {
+      rainMmHr: 45,
+      durationMin: 180,
+      progress: 0.3,
+      soilMoisture: 'moist',
+      antecedent5dMm: 95,
+      rainPattern: 'upland',
+      drainCondition: 'clogged',
+      forestScenario: 'actual',
+      hyetograph: 'convective_front'
+    },
+    { skipValidation: true }
+  );
+  const earlyCenterPeak = engine.evaluate(
+    {
+      rainMmHr: 45,
+      durationMin: 180,
+      progress: 0.3,
+      soilMoisture: 'moist',
+      antecedent5dMm: 95,
+      rainPattern: 'upland',
+      drainCondition: 'clogged',
+      forestScenario: 'actual',
+      hyetograph: 'alternating_block'
+    },
+    { skipValidation: true }
+  );
+  assert.ok(
+    earlyConvective.landslideAreaHa >= earlyCenterPeak.landslideAreaHa,
+    `early convective burst (${earlyConvective.landslideAreaHa} ha) should wet slopes >= center-peak (${earlyCenterPeak.landslideAreaHa} ha) at progress=0.30`
+  );
+
+  // 5. IDF-admissible local calibration reports strictly on unseen 50% spatial holdout + JSON metadata
+  const cal = engine.runLocalCalibration();
+  assert.equal(cal.metrics.validationSplit, 'holdout');
+  assert.equal(cal.baselineMetrics.validationSplit, 'holdout');
+  if (IS_BALINGKA) {
+    assert.ok(cal.metrics.landslideAuc !== null && cal.metrics.landslideAuc > 0.5);
+  }
+  const exported = JSON.parse(buildScenarioExportJson(
+    {
+      rainMmHr: 40,
+      durationMin: 180,
+      progress: 0.78,
+      soilMoisture: 'saturated',
+      rainPattern: 'upland',
+      drainCondition: 'clogged',
+      forestScenario: 'actual'
+    },
+    earlyConvective,
+    simFields.network,
+    engine.getLastRoutedNominal()
+  ));
+  assert.ok(typeof exported.uncertaintyMethod === 'string' && exported.uncertaintyMethod.includes('sensitivity envelope'));
+  assert.ok(exported.waterBalance && Math.abs(exported.waterBalance.closureErrorPct) < 0.05);
 });

@@ -252,6 +252,17 @@ export interface ValidationMetrics {
   hwmRmseM: number | null;
   hwmHitRatePct: number | null;
   hwmCount: number;
+  validationSplit?: 'all' | 'calibration' | 'holdout';
+}
+
+export interface WaterBalanceSummary {
+  rainInputMm: number;
+  interceptionMm: number;
+  totalRunoffMm: number;
+  soilStorageDeltaMm: number;
+  deepPercolationMm: number;
+  closureErrorMm: number;
+  closureErrorPct: number;
 }
 
 export interface CascadeKpis {
@@ -292,6 +303,7 @@ export interface CascadeKpis {
   };
   hydrograph: HydrographPoint[];
   validation: ValidationMetrics;
+  waterBalance?: WaterBalanceSummary;
 }
 
 export interface LandCoverStats {
