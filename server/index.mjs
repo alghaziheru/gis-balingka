@@ -153,10 +153,24 @@ function tryServeStatic(req, res, distDir, pathname) {
   }
 
   const ext = path.extname(targetFile).toLowerCase();
+  const relFromDist = path.relative(path.resolve(distDir), targetFile).replace(/\\/g, '/');
+  let cacheControl = 'public, max-age=3600';
+  if (ext === '.html') {
+    cacheControl = 'no-cache, must-revalidate';
+  } else if (relFromDist.startsWith('assets/')) {
+    cacheControl = 'public, max-age=31536000, immutable';
+  } else if (relFromDist.startsWith('data/')) {
+    cacheControl = 'public, max-age=300, must-revalidate';
+  }
   res.writeHead(200, {
     ...SECURITY_HEADERS,
-    'Content-Type': MIME_TYPES[ext] || 'application/octet-stream'
+    'Content-Type': MIME_TYPES[ext] || 'application/octet-stream',
+    'Cache-Control': cacheControl
   });
+  if ((req.method || 'GET').toUpperCase() === 'HEAD') {
+    res.end();
+    return true;
+  }
   fs.createReadStream(targetFile).pipe(res);
   return true;
 }

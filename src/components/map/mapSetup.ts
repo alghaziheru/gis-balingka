@@ -2,6 +2,7 @@ import type { MutableRefObject } from 'react';
 import { Marker, type Map as MapLibreMap, type StyleSpecification } from 'maplibre-gl';
 import type { RegionConfig } from '../../config/region';
 import { isPointInBoundary } from '../../lib/geometry';
+import { getLocalDemTileUrl } from '../../lib/localTerrainProtocol';
 import { getOverlayContrastPalette } from '../../lib/mapPalette';
 import type { ActiveTool, BasemapId, BBox, GeoFeature, TabId } from '../../types/gis';
 import {
@@ -197,8 +198,13 @@ export function registerCartographicIcons(map: MapLibreMap): void {
   });
 }
 
-export function createInitialMapStyle(bbox: BBox, dataBasePath = '/data'): StyleSpecification {
+export function createInitialMapStyle(
+  bbox: BBox,
+  dataBasePath = '/data',
+  regionId = 'nagari-balingka'
+): StyleSpecification {
   const base = dataBasePath.replace(/\/+$/, '');
+  const localDemTileUrl = getLocalDemTileUrl(regionId);
   const hasCustomImagery = Boolean(import.meta.env.VITE_CUSTOM_IMAGERY_URL);
   const satTileUrl =
     import.meta.env.VITE_CUSTOM_IMAGERY_URL ||
@@ -244,14 +250,14 @@ export function createInitialMapStyle(bbox: BBox, dataBasePath = '/data'): Style
       'img-hand-cleared-high': { type: 'image', url: `${base}/raster-hand-cleared-high.png`, coordinates: imgCoords },
       'dem-terrain': {
         type: 'raster-dem',
-        tiles: ['https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png'],
+        tiles: [localDemTileUrl],
         tileSize: 256,
         maxzoom: 15,
         encoding: 'terrarium'
       },
       'dem-hillshade': {
         type: 'raster-dem',
-        tiles: ['https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png'],
+        tiles: [localDemTileUrl],
         tileSize: 256,
         maxzoom: 15,
         encoding: 'terrarium'

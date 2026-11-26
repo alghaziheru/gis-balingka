@@ -22,7 +22,118 @@
     <title>Peta Nagari Balingka — Portal Data Spasial Topografi &amp; Drainase</title>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <style>
+        .boot-shell {
+          position: fixed;
+          inset: 0;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          padding: 16px;
+          background: #e8ebe7;
+          font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+          color: #161c1a;
+          box-sizing: border-box;
+        }
+        .boot-card {
+          width: 100%;
+          max-width: 360px;
+          background: #fafaf8;
+          border: 1px solid rgba(22, 28, 26, 0.12);
+          border-radius: 14px;
+          padding: 20px;
+          box-shadow: 0 10px 28px rgba(22, 28, 26, 0.08);
+          box-sizing: border-box;
+        }
+        .boot-head {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+        }
+        .boot-badge {
+          width: 34px;
+          height: 34px;
+          border-radius: 8px;
+          background: #0369a1;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          flex-shrink: 0;
+        }
+        .boot-title {
+          margin: 0;
+          font-size: 14px;
+          font-weight: 700;
+          line-height: 1.3;
+          color: #161c1a;
+        }
+        .boot-subtitle {
+          margin: 2px 0 0;
+          font-size: 12px;
+          font-weight: 500;
+          line-height: 1.4;
+          color: #636f6a;
+        }
+        .boot-track {
+          margin-top: 16px;
+          height: 4px;
+          width: 100%;
+          background: #e5e8e4;
+          border-radius: 999px;
+          overflow: hidden;
+        }
+        .boot-bar {
+          height: 100%;
+          width: 38%;
+          background: #0369a1;
+          border-radius: 999px;
+          animation: boot-slide 1.2s ease-in-out infinite;
+        }
+        .boot-noscript {
+          margin: 12px 0 0;
+          font-size: 11px;
+          color: #636f6a;
+        }
+        @keyframes boot-slide {
+          0% { transform: translateX(-110%); }
+          100% { transform: translateX(280%); }
+        }
+        @media (prefers-reduced-motion: reduce) {
+          .boot-bar {
+            animation: none;
+            width: 45%;
+            transform: none;
+          }
+        }
+      </style>
+      <div class="boot-shell" data-testid="boot-placeholder" role="status" aria-live="polite">
+        <div class="boot-card">
+          <div class="boot-head">
+            <div class="boot-badge" aria-hidden="true">
+              <svg width="18" height="18" viewBox="0 0 32 32" fill="none">
+                <path
+                  d="M16 6.5l6.4 6.7a9 9 0 1 1-12.8 0z"
+                  stroke="#ffffff"
+                  stroke-width="2.6"
+                  stroke-linejoin="round"
+                />
+              </svg>
+            </div>
+            <div>
+              <p class="boot-title">Peta Nagari Balingka</p>
+              <p class="boot-subtitle">Memuat aplikasi &amp; data spasial…</p>
+            </div>
+          </div>
+          <div class="boot-track" aria-hidden="true">
+            <div class="boot-bar"></div>
+          </div>
+          <noscript>
+            <p class="boot-noscript">Aktifkan JavaScript untuk membuka peta interaktif.</p>
+          </noscript>
+        </div>
+      </div>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

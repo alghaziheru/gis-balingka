@@ -12,6 +12,7 @@ import {
 import maplibreWorkerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url';
 import { buildFlowCorridors } from '../lib/flowRibbons';
 import { computeRunoffMergeNetwork, haversineMeters, type MergedWaterwayReach } from '../lib/geometry';
+import { registerLocalDemRegion } from '../lib/localTerrainProtocol';
 import type { GeoFeature } from '../types/gis';
 import { FlowFilamentOverlay } from './FlowFilamentOverlay';
 import {
@@ -41,13 +42,50 @@ import {
   type LoadedDatasets,
   type MapCameraState,
   type MapControlHandle,
+  type MapLoadState,
   type MapViewProps
 } from './map/types';
+import type { BasemapId } from '../types/gis';
 import { useMapEditing } from './map/useMapEditing';
 
-export type { FlyRequest, LoadedDatasets, MapCameraState, MapControlHandle };
+export type { FlyRequest, LoadedDatasets, MapCameraState, MapControlHandle, MapLoadState };
 
 setWorkerUrl(maplibreWorkerUrl);
+
+function getBasemapSourceId(bm: BasemapId): string {
+  switch (bm) {
+    case 'sat':
+      return 'src-sat';
+    case 'topo':
+      return 'src-topo';
+    case 'osm':
+      return 'src-osm';
+    case 'elev':
+      return 'img-elev';
+    case 'relief':
+      return 'img-relief';
+    case 'slope':
+      return 'img-slope';
+  }
+}
+
+function isSourceLoadedSafe(map: MapLibreMap, sourceId: string): boolean {
+  try {
+    return Boolean(map.getSource(sourceId) && map.isSourceLoaded(sourceId));
+  } catch {
+    return false;
+  }
+}
+
+const INITIAL_VISIBLE_VECTOR_SOURCES = [
+  'src-settlements',
+  'src-flows',
+  'src-mask',
+  'src-nagari-boundary',
+  'src-verified-waterways',
+  'src-verified-structures',
+  'src-verified-merged-flow'
+] as const;
 
 export function MapView(props: MapViewProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -160,15 +198,51 @@ export function MapView(props: MapViewProps) {
   const mergingFlowIdsRef = useRef<Set<string>>(new Set());
   const particlesClearedRef = useRef(true);
   const isDraggingVertexRef = useRef(false);
+  const onLoadStateChangeRef = useRef(props.onLoadStateChange);
+  onLoadStateChangeRef.current = props.onLoadStateChange;
+  const activeBasemapRef = useRef(props.basemap);
+  activeBasemapRef.current = props.basemap;
+  const is3DRef = useRef(props.is3D);
+  is3DRef.current = props.is3D;
+  const prevBasemapRef = useRef<BasemapId>(props.basemap);
+  const basemapCleanupRef = useRef<(() => void) | null>(null);
+  const hydratedSyncedRef = useRef(false);
+  const loadStateRef = useRef<MapLoadState>({
+    styleReady: false,
+    initialTilesReady: false,
+    initialTimedOut: false,
+    tileProgress: 0,
+    basemapSwitching: false,
+    basemapTimedOut: false,
+    activeBasemap: props.basemap
+  });
+
+  const emitLoadState = (patch: Partial<MapLoadState>) => {
+    loadStateRef.current = { ...loadStateRef.current, ...patch };
+    onLoadStateChangeRef.current?.({ ...loadStateRef.current });
+  };
 
   useEffect(() => {
     if (!containerRef.current) return;
+    hydratedSyncedRef.current = false;
+    emitLoadState({
+      styleReady: false,
+      initialTilesReady: false,
+      initialTimedOut: false,
+      tileProgress: 0,
+      basemapSwitching: false,
+      basemapTimedOut: false,
+      activeBasemap: props.basemap
+    });
+
+    registerLocalDemRegion(props.region.id, props.demClient);
+
     const { bbox, center } = props.datasets;
     const pad = 0.02;
     const centerPreset = props.region.cameraPresets[0];
     const map = new MapLibreMap({
       container: containerRef.current,
-      style: createInitialMapStyle(bbox, props.dataBasePath),
+      style: createInitialMapStyle(bbox, props.dataBasePath, props.region.id),
       center,
       zoom: props.region.defaultView.zoom ?? 15.6,
       minZoom: 11.4,
@@ -217,9 +291,118 @@ export function MapView(props: MapViewProps) {
     };
 
     let stopParticles: (() => void) | null = null;
-    map.on('load', () => {
+    let layersMounted = false;
+    let initialFinished = false;
+    let settlingInitial = false;
+    let outerTimeoutId: number | null = null;
+    let initialTimeoutId: number | null = null;
+    let initialRafId: number | null = null;
+    let settleRaf1: number | null = null;
+    let settleRaf2: number | null = null;
+    let initialPollId: number | null = null;
+
+    const onSettleRender = () => {
+      if (initialFinished) return;
+      settleRaf1 = requestAnimationFrame(() => {
+        if (initialFinished) return;
+        settleRaf2 = requestAnimationFrame(() => {
+          finishInitialLoad(false);
+        });
+      });
+    };
+
+    const cleanupInitialWatchers = () => {
+      if (outerTimeoutId !== null) {
+        window.clearTimeout(outerTimeoutId);
+        outerTimeoutId = null;
+      }
+      if (initialTimeoutId !== null) {
+        window.clearTimeout(initialTimeoutId);
+        initialTimeoutId = null;
+      }
+      if (initialRafId !== null) {
+        cancelAnimationFrame(initialRafId);
+        initialRafId = null;
+      }
+      if (settleRaf1 !== null) {
+        cancelAnimationFrame(settleRaf1);
+        settleRaf1 = null;
+      }
+      if (settleRaf2 !== null) {
+        cancelAnimationFrame(settleRaf2);
+        settleRaf2 = null;
+      }
+      if (initialPollId !== null) {
+        window.clearInterval(initialPollId);
+        initialPollId = null;
+      }
+      map.off('style.load', onStyleLoad);
+      map.off('sourcedata', onSourceData);
+      map.off('render', onSettleRender);
+    };
+
+    const finishInitialLoad = (timedOut: boolean) => {
+      if (initialFinished) return;
+      initialFinished = true;
+      cleanupInitialWatchers();
+      emitLoadState({
+        styleReady: true,
+        initialTilesReady: true,
+        initialTimedOut: timedOut,
+        tileProgress: 1
+      });
+    };
+
+    const checkInitialReady = () => {
+      if (initialFinished || settlingInitial || !mapLoadedRef.current || !hydratedSyncedRef.current) return;
+      const ready =
+        isSourceLoadedSafe(map, getBasemapSourceId(activeBasemapRef.current)) &&
+        (!is3DRef.current || isSourceLoadedSafe(map, 'dem-terrain')) &&
+        INITIAL_VISIBLE_VECTOR_SOURCES.every(id => isSourceLoadedSafe(map, id));
+      if (ready) {
+        settlingInitial = true;
+        if (initialPollId !== null) {
+          window.clearInterval(initialPollId);
+          initialPollId = null;
+        }
+        map.once('render', onSettleRender);
+        map.triggerRepaint();
+      }
+    };
+
+    const onSourceData = (e: {
+      dataType?: string;
+      sourceId?: string;
+      isSourceLoaded?: boolean;
+      tile?: unknown;
+    }) => {
+      if (initialFinished || e.sourceId === 'src-flow-particles') return;
+      if (e.dataType === 'source' && (e.tile || e.isSourceLoaded)) {
+        const cap = mapLoadedRef.current ? 0.96 : 0.85;
+        const prev = loadStateRef.current.tileProgress;
+        const next = Math.min(cap, prev + (cap - prev) * 0.22);
+        if (next > prev) {
+          emitLoadState({ tileProgress: next });
+        }
+      }
+      if (mapLoadedRef.current) {
+        checkInitialReady();
+      }
+    };
+
+    const onStyleLoad = () => {
+      if (layersMounted) return;
+      layersMounted = true;
+      if (outerTimeoutId !== null) {
+        window.clearTimeout(outerTimeoutId);
+        outerTimeoutId = null;
+      }
+      if (!initialFinished && initialTimeoutId === null) {
+        initialTimeoutId = window.setTimeout(() => finishInitialLoad(true), 12_000);
+      }
+
       const ds = props.datasets;
-      addDataSourcesAndLayers(map, ds, props.basemap);
+      addDataSourcesAndLayers(map, ds, activeBasemapRef.current);
       contourMarkersRef.current = addStaticPlaceAndContourMarkers(map, ds, {
         region: props.region,
         activeToolRef,
@@ -246,13 +429,29 @@ export function MapView(props: MapViewProps) {
       mapLoadedRef.current = true;
       setMapReady(true);
       telemetryControls.emitCamera(true);
-    });
+      emitLoadState({
+        styleReady: true,
+        tileProgress: Math.max(loadStateRef.current.tileProgress, 0.2)
+      });
+      initialRafId = requestAnimationFrame(() => checkInitialReady());
+      if (!initialFinished) {
+        initialPollId = window.setInterval(checkInitialReady, 150);
+      }
+    };
+
+    outerTimeoutId = window.setTimeout(() => finishInitialLoad(true), 15_000);
+    map.on('sourcedata', onSourceData);
+    map.once('style.load', onStyleLoad);
 
     attachMapClickAndCursorHandlers(map, interactionRefs);
 
     return () => {
+      cleanupInitialWatchers();
+      basemapCleanupRef.current?.();
+      basemapCleanupRef.current = null;
       telemetryControls.cleanup();
       stopParticles?.();
+      hydratedSyncedRef.current = false;
       mapLoadedRef.current = false;
       setMapReady(false);
       map.remove();
@@ -275,6 +474,115 @@ export function MapView(props: MapViewProps) {
     map.setLayoutProperty('surface-relief', 'visibility', vis(props.basemap === 'relief' || props.basemap === 'slope'));
     map.setLayoutProperty('surface-elev', 'visibility', vis(props.basemap === 'elev'));
     map.setLayoutProperty('surface-slope-base', 'visibility', vis(props.basemap === 'slope'));
+
+    if (prevBasemapRef.current !== props.basemap) {
+      const nextBm = props.basemap;
+      prevBasemapRef.current = nextBm;
+      basemapCleanupRef.current?.();
+      basemapCleanupRef.current = null;
+
+      if (loadStateRef.current.initialTilesReady) {
+        const targetSourceId = getBasemapSourceId(nextBm);
+        let settled = false;
+        let started = false;
+        let settleCheckTimer: number | null = null;
+        let settleRaf = 0;
+        let pollId: number | null = null;
+        let timeoutId: number | null = null;
+        let renderTriggered = false;
+
+        const cleanupWatcher = () => {
+          settled = true;
+          if (settleCheckTimer !== null) window.clearTimeout(settleCheckTimer);
+          if (settleRaf) cancelAnimationFrame(settleRaf);
+          if (pollId !== null) window.clearInterval(pollId);
+          if (timeoutId !== null) window.clearTimeout(timeoutId);
+          map.off('sourcedataloading', onSourceDataLoading);
+          map.off('sourcedata', onBmSourceData);
+          map.off('render', onBmRender);
+        };
+
+        const finishSwitch = (timedOut: boolean) => {
+          if (settled) return;
+          const wasStarted = started;
+          cleanupWatcher();
+          basemapCleanupRef.current = null;
+          if (wasStarted) {
+            emitLoadState({
+              basemapSwitching: false,
+              basemapTimedOut: timedOut,
+              activeBasemap: nextBm
+            });
+          }
+        };
+
+        const beginTracking = () => {
+          if (settled || started) return;
+          started = true;
+          if (settleCheckTimer !== null) {
+            window.clearTimeout(settleCheckTimer);
+            settleCheckTimer = null;
+          }
+          map.off('render', onBmRender);
+          emitLoadState({
+            basemapSwitching: true,
+            basemapTimedOut: false,
+            activeBasemap: nextBm
+          });
+          timeoutId = window.setTimeout(() => finishSwitch(true), 10_000);
+          pollId = window.setInterval(() => {
+            if (!settled && isSourceLoadedSafe(map, targetSourceId)) {
+              settleRaf = requestAnimationFrame(() => finishSwitch(false));
+            }
+          }, 150);
+        };
+
+        const onSourceDataLoading = (e: { sourceId?: string }) => {
+          if (!settled && e.sourceId === targetSourceId) {
+            beginTracking();
+          }
+        };
+
+        const onBmSourceData = (e: { sourceId?: string }) => {
+          if (settled || e.sourceId !== targetSourceId) return;
+          if (!started && !isSourceLoadedSafe(map, targetSourceId)) {
+            beginTracking();
+          } else if (started && isSourceLoadedSafe(map, targetSourceId)) {
+            settleRaf = requestAnimationFrame(() => finishSwitch(false));
+          }
+        };
+
+        const onBmRender = () => {
+          if (settled || started || renderTriggered) return;
+          renderTriggered = true;
+          if (!isSourceLoadedSafe(map, targetSourceId)) {
+            beginTracking();
+          }
+        };
+
+        map.on('sourcedataloading', onSourceDataLoading);
+        map.on('sourcedata', onBmSourceData);
+        map.on('render', onBmRender);
+        basemapCleanupRef.current = cleanupWatcher;
+        map.triggerRepaint();
+
+        // Give MapLibre time to render and queue tiles for the newly enabled basemap
+        settleCheckTimer = window.setTimeout(() => {
+          if (settled || started) return;
+          if (isSourceLoadedSafe(map, targetSourceId)) {
+            cleanupWatcher();
+            basemapCleanupRef.current = null;
+            emitLoadState({
+              basemapSwitching: false,
+              basemapTimedOut: false,
+              activeBasemap: nextBm
+            });
+          } else {
+            beginTracking();
+          }
+        }, 450);
+      }
+    }
 
     map.setLayoutProperty('hillshade-layer', 'visibility', vis(props.layers.hillshade));
     const nextExag = props.is3D ? props.exaggeration : 0.4;
@@ -547,9 +855,14 @@ export function MapView(props: MapViewProps) {
       map.setFilter('draft-points', ['any', ...anyClauses] as FilterSpecification);
     }
 
+    if (props.editorHydrated) {
+      hydratedSyncedRef.current = true;
+    }
+
     return cleanupCascade;
   }, [
     mapReady,
+    props.editorHydrated,
     props.basemap,
     props.is3D,
     props.exaggeration,

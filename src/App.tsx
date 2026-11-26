@@ -16,8 +16,10 @@ import { EditorUnlockModal } from './components/EditorUnlockModal';
 import { ElevationProfileModal } from './components/ElevationProfileModal';
 import { FeedbackModal } from './components/FeedbackModal';
 import { InfoDataModal, type InfoModalTab } from './components/InfoDataModal';
-import { MapView, type FlyRequest, type MapCameraState, type MapControlHandle } from './components/MapView';
+import { MapLoadingOverlay } from './components/MapLoadingOverlay';
+import { MapView, type FlyRequest, type MapCameraState, type MapControlHandle, type MapLoadState } from './components/MapView';
 import { RainOverlay } from './components/RainOverlay';
+import { SidebarSkeleton } from './components/SidebarSkeleton';
 import { SimulationTab } from './components/SimulationTab';
 import { TelemetryDock } from './components/TelemetryDock';
 import { TerrainTab } from './components/TerrainTab';
@@ -71,6 +73,18 @@ const DEFAULT_LAYERS: LayerToggles = {
 };
 
 const DEFAULT_FLOW_DENSITY = 1;
+
+function makeInitialMapLoadState(basemap: BasemapId): MapLoadState {
+  return {
+    styleReady: false,
+    initialTilesReady: false,
+    initialTimedOut: false,
+    tileProgress: 0,
+    basemapSwitching: false,
+    basemapTimedOut: false,
+    activeBasemap: basemap
+  };
+}
 
 function getInitialRegionIdFromUrl(): string {
   if (typeof window === 'undefined') return DEFAULT_REGION_ID;
@@ -143,6 +157,9 @@ export function App() {
 
   const [toast, setToast] = useState<string | null>(null);
   const toastTimerRef = useRef<number | null>(null);
+  const [mapLoad, setMapLoad] = useState<MapLoadState>(() => makeInitialMapLoadState(basemap));
+  const basemapRef = useRef(basemap);
+  basemapRef.current = basemap;
 
   const t = useMemo(() => getTranslations(activeRegion)[lang], [activeRegion, lang]);
 
@@ -172,8 +189,26 @@ export function App() {
     []
   );
 
-  const { datasets, metadata, demClient, simFields, loadError, initialTelemetry, reloadHydrologyData } =
-    useRegionDatasets(activeRegion);
+  const {
+    datasets,
+    metadata,
+    demClient,
+    simFields,
+    loadError,
+    datasetProgress,
+    retryLoad,
+    initialTelemetry,
+    reloadHydrologyData
+  } = useRegionDatasets(activeRegion);
+
+  useEffect(() => {
+    setMapLoad(makeInitialMapLoadState(basemapRef.current));
+  }, [activeRegionId]);
+
+  const handleRetryLoad = useCallback(() => {
+    setMapLoad(makeInitialMapLoadState(basemapRef.current));
+    retryLoad();
+  }, [retryLoad]);
 
   useEffect(() => {
     if (initialTelemetry) {
@@ -426,6 +461,7 @@ export function App() {
           jorongBoundaries={editor.jorongBoundaries}
           suppressedDemIds={editor.suppressedDemIds}
           dataVersion={editor.dataVersion}
+          editorHydrated={editor.editorHydrated}
           apiAvailable={editor.apiAvailable}
           requiresPassphrase={editor.requiresPassphrase}
           editorUnlocked={editor.editorUnlocked}
@@ -453,15 +489,10 @@ export function App() {
           }}
           onSnapFeedback={notify}
           onCursorTelemetry={setCursorTelemetry}
+          onLoadStateChange={setMapLoad}
         />
       ) : (
-        <div className="flex h-full w-full items-center justify-center bg-[#e8ebe7] p-4">
-          <div className="surface-panel rounded-2xl px-6 py-4 text-center">
-            <div className="text-[14px] font-bold text-[#161c1a]">
-              {loadError ? `Error: ${loadError}` : t.loadingData}
-            </div>
-          </div>
-        </div>
+        <div className="h-full w-full bg-[#e8ebe7]" />
       )}
 
       {/* Falling Rain Animation Overlay during Simulation */}
@@ -589,6 +620,10 @@ export function App() {
             mobileSheetMode === 'peek' ? 'max-md:hidden' : ''
           }`}
         >
+          {!datasets || !demClient ? (
+            <SidebarSkeleton lang={lang} loadError={loadError} onRetry={handleRetryLoad} />
+          ) : (
+            <>
           {tab === 'terrain' && (
             <TerrainTab
               lang={lang}
@@ -731,6 +766,8 @@ export function App() {
               auditLogs={editor.auditLogs}
               {...editor.editorTabActions}
             />
+          )}
+            </>
           )}
         </div>
 
@@ -902,6 +939,30 @@ export function App() {
           editor.setEditorUnlocked(true);
           notify(lang === 'en' ? 'Editor Mode unlocked.' : 'Mode Editor berhasil dibuka.');
         }}
+      />
+
+      <MapLoadingOverlay
+        lang={lang}
+        regionName={activeRegion.name}
+        sidebarCollapsed={sidebarCollapsed}
+        datasetProgress={datasetProgress}
+        loadError={loadError}
+        editorHydrated={editor.editorHydrated}
+        mapLoad={mapLoad}
+        basemapLabel={
+          basemap === 'sat'
+            ? t.bmSat
+            : basemap === 'osm'
+            ? t.bmOsm
+            : basemap === 'topo'
+            ? t.bmTopo
+            : basemap === 'elev'
+            ? t.bmElev
+            : basemap === 'relief'
+            ? t.bmRelief
+            : t.bmSlope
+        }
+        onRetry={handleRetryLoad}
       />
 
       {toast && (

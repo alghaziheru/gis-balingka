@@ -86,6 +86,7 @@ export function useEditorActions(opts: {
     verifiedWaterwayCount: 0
   });
   const [recomputingHydro, setRecomputingHydro] = useState(false);
+  const [editorHydrated, setEditorHydrated] = useState(false);
   const hydratedKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -98,6 +99,8 @@ export function useEditorActions(opts: {
     setEditingJorong(null);
     setAuditLogs([]);
     setDataVersion(0);
+    setEditorHydrated(false);
+    hydratedKeyRef.current = null;
     setActorName(loadEditorName(region.authorities.defaultEditorName));
   }, [regionId, region.authorities.defaultEditorName]);
 
@@ -148,6 +151,8 @@ export function useEditorActions(opts: {
         }
       } catch {
         // Ignore hydration errors; static datasets remain viewable
+      } finally {
+        if (!cancelled) setEditorHydrated(true);
       }
     }
     hydrateEditor();
@@ -805,6 +810,7 @@ export function useEditorActions(opts: {
     mapEditingStructure,
     auditLogs,
     dataVersion,
+    editorHydrated,
     hydroStatus,
     recomputingHydro,
     resetEditorForSimpleMode,

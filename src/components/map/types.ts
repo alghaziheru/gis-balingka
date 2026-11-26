@@ -47,6 +47,16 @@ export interface MapControlHandle {
   getCameraAngles?: () => { pitch: number; bearing: number };
 }
 
+export interface MapLoadState {
+  styleReady: boolean;
+  initialTilesReady: boolean;
+  initialTimedOut: boolean;
+  tileProgress: number;
+  basemapSwitching: boolean;
+  basemapTimedOut: boolean;
+  activeBasemap: BasemapId;
+}
+
 export interface LoadedDatasets {
   bbox: BBox;
   center: [number, number];
@@ -93,6 +103,7 @@ export interface MapViewProps {
   jorongBoundaries: JorongBoundaryFeature[];
   suppressedDemIds: string[];
   dataVersion: number;
+  editorHydrated: boolean;
   apiAvailable: boolean;
   requiresPassphrase: boolean;
   editorUnlocked: boolean;
@@ -121,6 +132,7 @@ export interface MapViewProps {
   onChangeEditingCoords: (coords: [number, number][]) => void;
   onSnapFeedback?: (msg: string) => void;
   onCursorTelemetry: (t: { lng: number; lat: number; elev: number; slope: number }) => void;
+  onLoadStateChange?: (state: MapLoadState) => void;
 }
 
 export type MapGeoInput = Parameters<GeoJSONSource['setData']>[0];

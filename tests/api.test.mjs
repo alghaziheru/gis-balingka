@@ -935,3 +935,60 @@ test('Multi-region API isolates SQLite waterways and suggestions per ?region=<id
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('Static file server emits strict Cache-Control headers for HTML, hashed assets, data, and HEAD requests', async () => {
+  const { dir, dbPath } = makeTempDb('balingka-cache-headers-');
+  const { dataDir, osmPath } = makeSyntheticPublicData(dir);
+  const fakeDistDir = path.join(dir, 'dist');
+  fs.mkdirSync(path.join(fakeDistDir, 'assets'), { recursive: true });
+  fs.mkdirSync(path.join(fakeDistDir, 'data'), { recursive: true });
+  fs.writeFileSync(path.join(fakeDistDir, 'index.html'), '<!doctype html><html><body>ok</body></html>');
+  fs.writeFileSync(path.join(fakeDistDir, 'assets', 'index-abc123.js'), 'console.log("ok");');
+  fs.writeFileSync(path.join(fakeDistDir, 'data', 'metadata.json'), '{"ok":true}');
+  fs.writeFileSync(path.join(fakeDistDir, 'favicon.ico'), 'ico');
+
+  const { server } = createAppServer({
+    dbPath,
+    publicDataDir: dataDir,
+    seedGeoJsonPath: osmPath,
+    distDir: fakeDistDir,
+    adminPassphrase: ''
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const { port } = server.address();
+  const base = `http://127.0.0.1:${port}`;
+
+  try {
+    const rootRes = await fetch(`${base}/`);
+    assert.equal(rootRes.status, 200);
+    assert.equal(rootRes.headers.get('cache-control'), 'no-cache, must-revalidate');
+
+    const indexRes = await fetch(`${base}/index.html`);
+    assert.equal(indexRes.status, 200);
+    assert.equal(indexRes.headers.get('cache-control'), 'no-cache, must-revalidate');
+
+    const spaRes = await fetch(`${base}/some-client-route`);
+    assert.equal(spaRes.status, 200);
+    assert.equal(spaRes.headers.get('cache-control'), 'no-cache, must-revalidate');
+
+    const assetRes = await fetch(`${base}/assets/index-abc123.js`);
+    assert.equal(assetRes.status, 200);
+    assert.equal(assetRes.headers.get('cache-control'), 'public, max-age=31536000, immutable');
+
+    const dataRes = await fetch(`${base}/data/metadata.json`);
+    assert.equal(dataRes.status, 200);
+    assert.equal(dataRes.headers.get('cache-control'), 'public, max-age=300, must-revalidate');
+
+    const icoRes = await fetch(`${base}/favicon.ico`);
+    assert.equal(icoRes.status, 200);
+    assert.equal(icoRes.headers.get('cache-control'), 'public, max-age=3600');
+
+    const headRes = await fetch(`${base}/`, { method: 'HEAD' });
+    assert.equal(headRes.status, 200);
+    assert.equal(headRes.headers.get('cache-control'), 'no-cache, must-revalidate');
+    assert.equal(await headRes.text(), '');
+  } finally {
+    await new Promise(resolve => server.close(resolve));
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

@@ -11,6 +11,32 @@ export interface CursorTelemetry {
   slope: number;
 }
 
+export interface DatasetLoadProgress {
+  loadedFiles: number;
+  totalFiles: number;
+  fraction: number;
+  status: 'loading' | 'ready' | 'error';
+}
+
+const DATASET_WEIGHTS = {
+  metadata: 0.016,
+  demGrid: 0.2,
+  mask: 0.016,
+  watershed: 0.016,
+  nagariBoundary: 0.016,
+  subBoundaries: 0.016,
+  settlements: 0.11,
+  contours: 0.24,
+  flowPaths: 0.05,
+  osmContext: 0.04,
+  drainageDraft: 0.02,
+  simFields: 0.16,
+  agamRbiRivers: 0.08,
+  agamContext: 0.02
+} as const;
+
+const TOTAL_DATASET_FILES = Object.keys(DATASET_WEIGHTS).length;
+
 export function useRegionDatasets(region: RegionConfig = REGION) {
   const [datasets, setDatasets] = useState<LoadedDatasets | null>(null);
   const [metadata, setMetadata] = useState<DatasetMetadata | null>(null);
@@ -18,8 +44,19 @@ export function useRegionDatasets(region: RegionConfig = REGION) {
   const [simFields, setSimFields] = useState<SimFieldsData | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [initialTelemetry, setInitialTelemetry] = useState<CursorTelemetry | null>(null);
+  const [datasetProgress, setDatasetProgress] = useState<DatasetLoadProgress>({
+    loadedFiles: 0,
+    totalFiles: TOTAL_DATASET_FILES,
+    fraction: 0,
+    status: 'loading'
+  });
+  const [retryNonce, setRetryNonce] = useState(0);
 
   const dataBasePath = getRegionDataBasePath(region);
+
+  const retryLoad = useCallback(() => {
+    setRetryNonce(n => n + 1);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -28,46 +65,58 @@ export function useRegionDatasets(region: RegionConfig = REGION) {
     setDemClient(null);
     setSimFields(null);
     setLoadError(null);
+    setDatasetProgress({
+      loadedFiles: 0,
+      totalFiles: TOTAL_DATASET_FILES,
+      fraction: 0,
+      status: 'loading'
+    });
 
     async function loadAll() {
       try {
-        const [
-          metaRes,
-          demRes,
-          maskRes,
-          wsRes,
-          nbRes,
-          sbRes,
-          stRes,
-          cntRes,
-          flRes,
-          osmRes,
-          drnRes,
-          sfRes,
-          rbiRes,
-          agamCtxRes
-        ] = await Promise.all([
-          fetch(`${dataBasePath}/metadata.json`),
-          fetch(`${dataBasePath}/dem-grid.json`),
-          fetch(`${dataBasePath}/mask.geojson`),
-          fetch(`${dataBasePath}/watershed.geojson`),
-          fetch(`${dataBasePath}/nagari-boundary.geojson`),
-          fetch(`${dataBasePath}/sub-boundaries.geojson`),
-          fetch(`${dataBasePath}/settlements.geojson`),
-          fetch(`${dataBasePath}/contours.geojson`),
-          fetch(`${dataBasePath}/flow-paths.geojson`),
-          fetch(`${dataBasePath}/osm-context.geojson`),
-          fetch(`${dataBasePath}/drainage-draft.geojson`),
-          fetch(`${dataBasePath}/sim-fields.json`),
-          fetch(`${dataBasePath}/agam-rbi-rivers.geojson`),
-          fetch(`${dataBasePath}/agam-context.json`)
-        ]);
-
-        if (!metaRes.ok || !demRes.ok) {
-          throw new Error(`Failed to load geospatial datasets from ${dataBasePath}/`);
-        }
-
         const emptyFc = { type: 'FeatureCollection' as const, features: [] };
+        let loadedFiles = 0;
+        let loadedWeight = 0;
+
+        const fetchPart = async <T,>(
+          path: string,
+          weight: number,
+          opts: { required?: boolean; fallback?: T } = {}
+        ): Promise<T> => {
+          const res = await fetch(`${dataBasePath}/${path}`);
+          if (!res.ok) {
+            if (opts.required) {
+              throw new Error(`Failed to load geospatial datasets from ${dataBasePath}/`);
+            }
+            if ('fallback' in opts) {
+              loadedFiles += 1;
+              loadedWeight = Math.min(1, loadedWeight + weight);
+              if (!cancelled) {
+                setDatasetProgress({
+                  loadedFiles,
+                  totalFiles: TOTAL_DATASET_FILES,
+                  fraction: loadedWeight,
+                  status: 'loading'
+                });
+              }
+              return opts.fallback as T;
+            }
+            throw new Error(`Failed to load ${path} from ${dataBasePath}/`);
+          }
+          const json = (await res.json()) as T;
+          loadedFiles += 1;
+          loadedWeight = Math.min(1, loadedWeight + weight);
+          if (!cancelled) {
+            setDatasetProgress({
+              loadedFiles,
+              totalFiles: TOTAL_DATASET_FILES,
+              fraction: loadedWeight,
+              status: 'loading'
+            });
+          }
+          return json;
+        };
+
         const [
           meta,
           demGrid,
@@ -84,20 +133,30 @@ export function useRegionDatasets(region: RegionConfig = REGION) {
           agamRbiRivers,
           agamContext
         ] = await Promise.all([
-          metaRes.json(),
-          demRes.json(),
-          maskRes.json(),
-          wsRes.json(),
-          nbRes.ok ? nbRes.json() : Promise.resolve(emptyFc),
-          sbRes.ok ? sbRes.json() : Promise.resolve(emptyFc),
-          stRes.ok ? stRes.json() : Promise.resolve(emptyFc),
-          cntRes.json(),
-          flRes.json(),
-          osmRes.json(),
-          drnRes.json(),
-          sfRes.ok ? sfRes.json() : Promise.resolve(null),
-          rbiRes.ok ? rbiRes.json() : Promise.resolve(emptyFc),
-          agamCtxRes.ok ? agamCtxRes.json() : Promise.resolve(null)
+          fetchPart<DatasetMetadata>('metadata.json', DATASET_WEIGHTS.metadata, { required: true }),
+          fetchPart<DemGridData>('dem-grid.json', DATASET_WEIGHTS.demGrid, { required: true }),
+          fetchPart<LoadedDatasets['mask']>('mask.geojson', DATASET_WEIGHTS.mask),
+          fetchPart<LoadedDatasets['watershed']>('watershed.geojson', DATASET_WEIGHTS.watershed),
+          fetchPart<LoadedDatasets['nagariBoundary']>('nagari-boundary.geojson', DATASET_WEIGHTS.nagariBoundary, {
+            fallback: emptyFc
+          }),
+          fetchPart<LoadedDatasets['subBoundaries']>('sub-boundaries.geojson', DATASET_WEIGHTS.subBoundaries, {
+            fallback: emptyFc
+          }),
+          fetchPart<LoadedDatasets['settlements']>('settlements.geojson', DATASET_WEIGHTS.settlements, {
+            fallback: emptyFc
+          }),
+          fetchPart<LoadedDatasets['contours']>('contours.geojson', DATASET_WEIGHTS.contours),
+          fetchPart<LoadedDatasets['flowPaths']>('flow-paths.geojson', DATASET_WEIGHTS.flowPaths),
+          fetchPart<LoadedDatasets['osmContext']>('osm-context.geojson', DATASET_WEIGHTS.osmContext),
+          fetchPart<LoadedDatasets['drainageDraft']>('drainage-draft.geojson', DATASET_WEIGHTS.drainageDraft),
+          fetchPart<SimFieldsData | null>('sim-fields.json', DATASET_WEIGHTS.simFields, { fallback: null }),
+          fetchPart<LoadedDatasets['agamRbiRivers']>('agam-rbi-rivers.geojson', DATASET_WEIGHTS.agamRbiRivers, {
+            fallback: emptyFc
+          }),
+          fetchPart<LoadedDatasets['agamContext']>('agam-context.json', DATASET_WEIGHTS.agamContext, {
+            fallback: null
+          })
         ]);
 
         if (cancelled) return;
@@ -145,15 +204,24 @@ export function useRegionDatasets(region: RegionConfig = REGION) {
           elev: client.getElevation(initialCenter[0], initialCenter[1]),
           slope: client.getSlopePercent(initialCenter[0], initialCenter[1])
         });
+        setDatasetProgress({
+          loadedFiles: TOTAL_DATASET_FILES,
+          totalFiles: TOTAL_DATASET_FILES,
+          fraction: 1,
+          status: 'ready'
+        });
       } catch (err) {
-        if (!cancelled) setLoadError(err instanceof Error ? err.message : 'Data load failed');
+        if (!cancelled) {
+          setLoadError(err instanceof Error ? err.message : 'Data load failed');
+          setDatasetProgress(prev => ({ ...prev, status: 'error' }));
+        }
       }
     }
     loadAll();
     return () => {
       cancelled = true;
     };
-  }, [region.id, dataBasePath]);
+  }, [region.id, dataBasePath, retryNonce]);
 
   const reloadHydrologyData = useCallback(
     async (nextVer: number) => {
@@ -192,6 +260,8 @@ export function useRegionDatasets(region: RegionConfig = REGION) {
     demClient,
     simFields,
     loadError,
+    datasetProgress,
+    retryLoad,
     initialTelemetry,
     reloadHydrologyData
   };
