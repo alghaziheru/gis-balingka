@@ -13,6 +13,7 @@ import {
   X
 } from 'lucide-react';
 import { I18N } from '../i18n/translations';
+import type { ClimateBaselineData } from '../data/climateBaseline';
 import { estimateChannelThresholds, resolveWaterwayCatchmentFromNetwork } from '../lib/channelHydraulics';
 import type { DemClient } from '../lib/demClient';
 import { getMaxRealisticRainMmHr, type RoutedReachState } from '../lib/reachRouter';
@@ -74,6 +75,7 @@ interface SimulationTabProps {
   cascadeParams?: CascadeSimParams;
   routedNominal?: RoutedReachState | null;
   hasCalibrationProfile?: boolean;
+  climateBaseline?: ClimateBaselineData;
   demClient?: DemClient | null;
   agamStats?: AgamStats;
   kpis: CascadeKpis;
@@ -181,6 +183,7 @@ export function SimulationTab({
   cascadeParams,
   routedNominal = null,
   hasCalibrationProfile = false,
+  climateBaseline,
   demClient = null,
   agamStats,
   kpis,
@@ -286,8 +289,10 @@ export function SimulationTab({
             ? t.stage3Desc
             : t.stage4Desc;
 
-  const maxRainForDur = getMaxRealisticRainMmHr(durationMin);
+  const maxRainForDur = getMaxRealisticRainMmHr(durationMin, climateBaseline);
   const totalStormInputMm = Math.round(rainMm * (durationMin / 60));
+  const climSrcTag = (climateBaseline?.bmkgStations.length ?? 1) > 0 ? 'BMKG–ERA5' : 'ERA5-Land';
+  const climPeriodTag = climateBaseline?.era5Series?.yearsCount ? '1985–2025' : 'IDF';
   const isCalibrated = Boolean(kpis.inputCoverage?.isCalibrated);
 
   const formatHaValue = (ha: number): string => {
@@ -499,8 +504,8 @@ export function SimulationTab({
           </div>
           <div className="text-[10.5px] font-medium text-[#636f6a]">
             {isEn
-              ? `BMKG–ERA5 (1985–2025) Mononobe cap: ≤${maxRainForDur} mm/hr at ${formatDurationLabel(durationMin, true)} (Total ~${totalStormInputMm} mm)`
-              : `Batas wajar BMKG–ERA5 (1985–2025): ≤${maxRainForDur} mm/jam untuk ${formatDurationLabel(durationMin, false)} (Total ~${totalStormInputMm} mm)`}
+              ? `${climSrcTag} (${climPeriodTag}) Mononobe cap: ≤${maxRainForDur} mm/hr at ${formatDurationLabel(durationMin, true)} (Total ~${totalStormInputMm} mm)`
+              : `Batas wajar ${climSrcTag} (${climPeriodTag}): ≤${maxRainForDur} mm/jam untuk ${formatDurationLabel(durationMin, false)} (Total ~${totalStormInputMm} mm)`}
           </div>
         </div>
 

@@ -661,6 +661,7 @@ export class CascadeEngine {
       params.orographicPctPerKm ?? '',
       params.stormCore ? `${params.stormCore[0].toFixed(4)},${params.stormCore[1].toFixed(4)}` : '',
       params.debrisCoupling ?? '',
+      params.soilProfile ?? '',
       cal ? `${cal.manningMult}|${cal.cnOffset}|${cal.cohesionMult}` : '',
       this.calibrationMarks.length,
       opts?.skipValidation ? 1 : 0,
@@ -1085,7 +1086,7 @@ export class CascadeEngine {
     // 6. Independent Validation Metrics (memoized by scenario + split + calibration profile to stay <1 ms while scrubbing)
     let validation = emptyVal;
     if (!opts?.skipValidation) {
-      const valKey = `${params.rainMmHr}|${params.durationMin}|${params.soilMoisture}|${params.antecedent5dMm ?? ''}|${params.drainCondition}|${params.forestScenario}|${params.debrisCoupling ?? ''}|${params.calibrationProfile?.manningMult ?? 1}|${params.calibrationProfile?.cnOffset ?? 0}|${params.calibrationProfile?.cohesionMult ?? 1}|${this.calibrationMarks.length}|${targetStepIdx >= Math.floor(stormSteps * 0.7) ? 'peak' : 'early'}|${activeSplitMode}`;
+      const valKey = `${params.rainMmHr}|${params.durationMin}|${params.soilMoisture}|${params.antecedent5dMm ?? ''}|${params.drainCondition}|${params.forestScenario}|${params.debrisCoupling ?? ''}|${params.soilProfile ?? ''}|${params.calibrationProfile?.manningMult ?? 1}|${params.calibrationProfile?.cnOffset ?? 0}|${params.calibrationProfile?.cohesionMult ?? 1}|${this.calibrationMarks.length}|${targetStepIdx >= Math.floor(stormSteps * 0.7) ? 'peak' : 'early'}|${activeSplitMode}`;
       if (valKey !== this.cachedValidationKey || !this.cachedValidation) {
         this.cachedValidationKey = valKey;
         this.cachedValidation = computeValidationMetrics({

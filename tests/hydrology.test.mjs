@@ -49,8 +49,15 @@ import {
 import { computeRunoffMergeNetwork } from '../src/lib/geometry.ts';
 import { getOverlayContrastPalette, isDarkBasemap } from '../src/lib/mapPalette.ts';
 import { lookupAgamAtPoint } from '../src/lib/agamLookup.ts';
-import { CLIMATE_BASELINE, MODEL_PARAMETER_AUDIT } from '../src/data/climateBaseline.ts';
+import { CLIMATE_BASELINE, MODEL_PARAMETER_AUDIT, buildModelParameterAudit } from '../src/data/climateBaseline.ts';
 import { isCellInSpatialSplit } from '../src/lib/validationMetrics.ts';
+import {
+  computeAnnualMaxima,
+  computeGumbelQuantiles,
+  computeLp3Quantiles,
+  deriveMononobeIdfEnvelope,
+  buildClimateBaselineFromDailySeries
+} from '../scripts/lib/climate-fetcher.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT_DIR = path.resolve(__dirname, '..');
@@ -1831,4 +1838,119 @@ test('Phase 1 methodological hygiene: strict causality, water-balance closure, u
   ));
   assert.ok(typeof exported.uncertaintyMethod === 'string' && exported.uncertaintyMethod.includes('sensitivity envelope'));
   assert.ok(exported.waterBalance && Math.abs(exported.waterBalance.closureErrorPct) < 0.05);
+});
+
+test('Phase 2 multi-village portability: synthetic climate statistics, IDF bounds, soil presets, and dynamic audit', t => {
+  // 1. SNI 2415:2016 Gumbel / LP3 / Mononobe pipeline on synthetic 40-yr dry vs wet daily series
+  const dates = [];
+  const dryDaily = [];
+  const wetDaily = [];
+  for (let y = 1985; y < 2025; y++) {
+    for (let d = 0; d < 365; d++) {
+      const m = Math.min(12, Math.floor(d / 30) + 1);
+      const day = (d % 30) + 1;
+      dates.push(`${y}-${String(m).padStart(2, '0')}-${String(day).padStart(2, '0')}`);
+      const stormSeed = ((y * 37 + d * 13) % 100) / 100;
+      dryDaily.push(d === 40 ? 60 + stormSeed * 45 : stormSeed > 0.85 ? 6 : 1.5);
+      wetDaily.push(d === 40 || d === 41 ? 115 + stormSeed * 75 : stormSeed > 0.65 ? 18 : 6);
+    }
+  }
+  const dryStats = computeAnnualMaxima(dates, dryDaily);
+  assert.equal(dryStats.yearsCount, 40);
+  const dryGumbel = computeGumbelQuantiles(dryStats.annualMax1d);
+  const dryLp3 = computeLp3Quantiles(dryStats.annualMax1d);
+  assert.ok(dryGumbel.t100 > dryGumbel.t10 && dryGumbel.t10 > dryGumbel.t2);
+  assert.ok(dryLp3.t100 > dryLp3.t10);
+
+  const dryBaseline = buildClimateBaselineFromDailySeries({
+    regionId: 'desa-kupang-uji',
+    regionName: 'Desa Kupang Uji',
+    targetCoord: [-10.17, 123.58],
+    gridCoord: [-10.15, 123.6],
+    gridElevM: 45,
+    dailyDates: dates,
+    dailyMm: dryDaily,
+    biasFactor: 1.0
+  });
+  const wetBaseline = buildClimateBaselineFromDailySeries({
+    regionId: 'desa-basah-uji',
+    regionName: 'Desa Basah Uji',
+    targetCoord: [-0.34, 100.32],
+    gridCoord: [-0.32, 100.34],
+    gridElevM: 1200,
+    dailyDates: dates,
+    dailyMm: wetDaily,
+    biasFactor: 1.07
+  });
+  assert.ok(
+    wetBaseline.returnPeriodsMm.r24.t100Gumbel > dryBaseline.returnPeriodsMm.r24.t100Gumbel,
+    'wet climate 100-yr 24h rainfall must exceed dry climate'
+  );
+  assert.ok(
+    wetBaseline.idfCapsMmHr['180'] > dryBaseline.idfCapsMmHr['180'],
+    `wet 3h IDF cap (${wetBaseline.idfCapsMmHr['180']}) must exceed dry 3h IDF cap (${dryBaseline.idfCapsMmHr['180']})`
+  );
+  const mononobe = deriveMononobeIdfEnvelope(dryBaseline.returnPeriodsMm);
+  assert.ok(mononobe['30'] >= mononobe['60'] && mononobe['60'] >= mononobe['180'] && mononobe['180'] >= mononobe['1440']);
+
+  // 2. getMaxRealisticRainMmHr honors custom regional IDF baseline and falls back cleanly
+  assert.equal(getMaxRealisticRainMmHr(180), 45);
+  assert.equal(getMaxRealisticRainMmHr(180, dryBaseline), dryBaseline.idfCapsMmHr['180']);
+
+  // 3. Audit rows dynamically reflect custom village & soil preset without leaking Balingka strings
+  const audit = buildModelParameterAudit(dryBaseline, 'alluvial_clay', {
+    name: 'Desa Kupang Uji',
+    areaKm2: 14.2,
+    officialBoundaryCode: '53.01.01.2001',
+    regionalOverlays: { enabled: false }
+  });
+  const auditText = JSON.stringify(audit);
+  assert.equal(auditText.includes('Balingka'), false, 'custom audit must not contain Balingka');
+  assert.equal(auditText.includes('Padang Panjang'), false, 'custom audit must not contain Padang Panjang');
+  assert.equal(auditText.includes('Sicincin'), false, 'custom audit must not contain Sicincin');
+  assert.ok(auditText.includes('Alluvial Clay') && auditText.includes('Lempung Aluvial'));
+
+  // 4. Checked-in public/data/climate-baseline.json & reset-region cleanup
+  const climPath = path.join(DATA_DIR, 'climate-baseline.json');
+  assert.ok(fs.existsSync(climPath), 'expected public/data/climate-baseline.json');
+  const climJson = JSON.parse(fs.readFileSync(climPath, 'utf8'));
+  assert.equal(climJson.regionId, 'nagari-balingka');
+  assert.equal(climJson.idfCapsMmHr['2880'], 8);
+
+  const tmpResetDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gis-reset-clim-'));
+  try {
+    fs.mkdirSync(path.join(tmpResetDir, 'public', 'data'), { recursive: true });
+    fs.writeFileSync(path.join(tmpResetDir, 'region.config.json'), JSON.stringify({ id: 'desa-custom', name: 'Desa Custom' }));
+    fs.writeFileSync(path.join(tmpResetDir, 'public', 'data', 'climate-baseline.json'), '{}');
+    const cleanRes = runResetRegion({ rootDir: tmpResetDir });
+    assert.ok(cleanRes.removed.includes('public/data/climate-baseline.json'));
+  } finally {
+    fs.rmSync(tmpResetDir, { recursive: true, force: true });
+  }
+
+  // 5. Soil presets produce physically distinct hydrological/slope response when regional raster is absent
+  const simPath = path.join(DATA_DIR, 'sim-fields.json');
+  if (!fs.existsSync(simPath)) {
+    t.skip('sim-fields.json not present yet');
+    return;
+  }
+  const simFields = JSON.parse(fs.readFileSync(simPath, 'utf8'));
+  const fieldsNoSoilRaster = { ...simFields, soilErodibilityBase64: undefined };
+  const engNoRaster = new CascadeEngine(fieldsNoSoilRaster);
+  const testStorm = {
+    rainMmHr: 40,
+    durationMin: 180,
+    progress: 0.78,
+    soilMoisture: 'moist',
+    antecedent5dMm: 45,
+    rainPattern: 'upland',
+    drainCondition: 'clogged',
+    forestScenario: 'actual'
+  };
+  const clayKpis = engNoRaster.evaluate({ ...testStorm, soilProfile: 'alluvial_clay' }, { skipValidation: true });
+  const karstKpis = engNoRaster.evaluate({ ...testStorm, soilProfile: 'karst_limestone' }, { skipValidation: true });
+  assert.ok(
+    clayKpis.effectiveRunoffMm > karstKpis.effectiveRunoffMm,
+    `alluvial_clay runoff (${clayKpis.effectiveRunoffMm} mm) must exceed permeable karst_limestone (${karstKpis.effectiveRunoffMm} mm)`
+  );
 });

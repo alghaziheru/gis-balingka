@@ -152,7 +152,7 @@ export function App() {
     []
   );
 
-  const { datasets, metadata, demClient, simFields, loadError, initialTelemetry, reloadHydrologyData } =
+  const { datasets, metadata, demClient, simFields, climateBaseline, loadError, initialTelemetry, reloadHydrologyData } =
     useRegionDatasets();
 
   useEffect(() => {
@@ -209,6 +209,7 @@ export function App() {
     simFields,
     settlements: datasets?.settlements,
     metadata,
+    climateBaseline,
     calibrationMarks: editor.calibrationMarks,
     calibrationProfile: editor.calibrationProfile
   });
@@ -692,6 +693,7 @@ export function App() {
               cascadeParams={sim.cascadeParams}
               routedNominal={sim.cascadeEngine?.getLastRoutedNominal() ?? null}
               hasCalibrationProfile={Boolean(editor.calibrationProfile)}
+              climateBaseline={climateBaseline}
               demClient={demClient}
               agamStats={metadata?.agamStats}
               kpis={sim.cascadeKpis}
@@ -942,6 +944,7 @@ export function App() {
       <SimulationDisclaimerModal
         open={simDisclaimerOpen}
         lang={lang}
+        climateBaseline={climateBaseline}
         onConfirm={dontShowAgain => {
           try {
             window.sessionStorage.setItem(SIM_DISCLAIMER_SESSION_KEY, '1');
@@ -971,6 +974,7 @@ export function App() {
         initialTab={infoModalTab ?? 'guide'}
         lang={lang}
         metadata={metadata}
+        climateBaseline={climateBaseline}
         verifiedCount={editor.verifiedWaterways.length}
         onClose={() => setInfoModalTab(null)}
       />

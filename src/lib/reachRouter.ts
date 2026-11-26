@@ -1,3 +1,5 @@
+import { resolveSoilProfile } from '../data/soilProfiles.ts';
+import type { ClimateBaselineData } from '../data/climateBaseline.ts';
 import type {
   CascadeSimParams,
   DebrisCouplingMode,
@@ -146,20 +148,28 @@ export const SIGMA_ENSEMBLE_MEMBERS: EnsembleMemberConfig[] = [
 export const RECESSION_MULTIPLIER = 1.28;
 
 /**
- * Physical upper-bound rainfall intensity envelope (mm/hr) for West Sumatra storms
- * by duration (prevents non-physical extreme-intensity × multi-day totals).
+ * Physical upper-bound rainfall intensity envelope (mm/hr) by duration, using region-specific
+ * SNI 2415:2016 + Mononobe IDF caps when available (preventing non-physical extreme multi-day totals).
  */
-export function getMaxRealisticRainMmHr(durationMin: number): number {
-  if (durationMin <= 30) return 140;
-  if (durationMin <= 60) return 90;
-  if (durationMin <= 120) return 60;
-  if (durationMin <= 180) return 45;
-  if (durationMin <= 360) return 30;
-  if (durationMin <= 720) return 18;
-  if (durationMin <= 1440) return 12;
-  if (durationMin <= 2160) return 9;
-  if (durationMin <= 2880) return 8;
-  return 6;
+export function getMaxRealisticRainMmHr(
+  durationMin: number,
+  baseline?: Pick<ClimateBaselineData, 'idfCapsMmHr'> | null
+): number {
+  const caps = baseline?.idfCapsMmHr;
+  const pick = (key: string, fallback: number) => {
+    const v = caps?.[key];
+    return typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : fallback;
+  };
+  if (durationMin <= 30) return pick('30', 140);
+  if (durationMin <= 60) return pick('60', 90);
+  if (durationMin <= 120) return pick('120', 60);
+  if (durationMin <= 180) return pick('180', 45);
+  if (durationMin <= 360) return pick('360', 30);
+  if (durationMin <= 720) return pick('720', 18);
+  if (durationMin <= 1440) return pick('1440', 12);
+  if (durationMin <= 2160) return pick('2160', 9);
+  if (durationMin <= 2880) return pick('2880', 8);
+  return pick('4320', 6);
 }
 
 /**
@@ -430,6 +440,7 @@ function prepareReachHydroParams(
   const R = network.reachCount;
   const calManning = params.calibrationProfile?.manningMult ?? 1.0;
   const calCnOff = params.calibrationProfile?.cnOffset ?? 0;
+  const soil = resolveSoilProfile(params.soilProfile);
   const antecedent5d = resolveAntecedent5dMm(params);
   const antecedentFill = Math.max(0.06, Math.min(0.84, antecedent5d / 185));
 
@@ -452,15 +463,13 @@ function prepareReachHydroParams(
       reach.midCoord,
       params
     );
-    // Volcanic humic Andosol + intact montane forest provide high infiltration porosity (-4 CN),
-    // which is lost under upland forest degradation.
-    let cn2 = reach.meanCn - 4.0 * reach.forestFrac;
+    let cn2 = reach.meanCn + soil.cnForestDelta * reach.forestFrac;
     if (reach.uplandFrac >= 0.42 && reach.forestFrac > 0.15) {
       if (params.forestScenario === 'degraded30') cn2 = Math.min(92, cn2 + 10 * reach.forestFrac);
       else if (params.forestScenario === 'degraded50') cn2 = Math.min(95, cn2 + 17 * reach.forestFrac);
     }
     const cnBase = Math.max(32, Math.min(95, cn2 + calCnOff + member.cnDelta));
-    const sVal = Math.max(12, (25400 / cnBase - 254) * (1.06 + 0.08 * reach.forestFrac));
+    const sVal = Math.max(12, (25400 / cnBase - 254) * (soil.sRetentionBase + soil.sRetentionForestBonus * reach.forestFrac));
     reachS[r] = sVal;
 
     const initFill = antecedentFill * (1 - 0.15 * reach.forestFrac);
@@ -469,7 +478,10 @@ function prepareReachHydroParams(
     initSoilFill[r] = f0;
     reachIaRem[r] = 0.14 * sVal * Math.max(0.05, 1 - antecedentFill * 1.15);
 
-    reachPercolationMmHr[r] = 0.9 + 1.1 * reach.forestFrac + 0.4 * reach.uplandFrac;
+    reachPercolationMmHr[r] =
+      soil.percolationBaseMmHr +
+      soil.percolationForestMmHr * reach.forestFrac +
+      soil.percolationUplandMmHr * reach.uplandFrac;
 
     const baseN =
       reach.slope >= 0.08

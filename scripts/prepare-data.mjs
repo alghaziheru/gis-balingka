@@ -21,6 +21,7 @@ import {
   haversineMeters
 } from './lib/hydrology.mjs';
 import { decodeScourMaskFromPng } from './lib/reach-network.mjs';
+import { fetchOrBuildClimateBaseline } from './lib/climate-fetcher.mjs';
 import {
   listCopernicusTiles,
   listWorldCoverTiles
@@ -417,6 +418,8 @@ async function main() {
   });
 
   writeJson('metadata.json', metadata);
+  const climateBaseline = await fetchOrBuildClimateBaseline({ rootDir: ROOT, regionCfg: REGION_CFG });
+  writeJson('climate-baseline.json', climateBaseline);
   writeJson('dem-grid.json', demGridJson);
   writeJson('watershed.geojson', watershedGeoJSON);
   writeJson('mask.geojson', maskGeoJSON);

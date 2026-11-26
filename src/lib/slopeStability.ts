@@ -1,3 +1,4 @@
+import { resolveSoilProfile, SOIL_PROFILES } from '../data/soilProfiles.ts';
 import type { CascadeSimParams, SimFieldsData } from '../types/gis';
 import {
   computeSpatialRainFactor,
@@ -174,19 +175,24 @@ export function evaluateSlopeStability(
       const tanB = sl / 100;
       const sinCosB = tanB / (1 + tanB * tanB);
 
-      const isAndosol = soilErodibility ? soilErodibility[i] >= 200 : true;
-      const gammaS = isAndosol ? 17.4 : 18.8; // kN/m³ (volcanic Andosol is porous & lighter)
+      const defaultSoil = resolveSoilProfile(params.soilProfile);
+      const cellSoil = soilErodibility
+        ? soilErodibility[i] >= 200
+          ? SOIL_PROFILES.volcanic_andosol
+          : SOIL_PROFILES.cambisol_loam
+        : defaultSoil;
+      const gammaS = cellSoil.gammaS;
 
       const geoMult = geologyFactor ? geologyFactor[i] / 100 : 1.0;
       const isIntactBedrock = geoMult >= 1.03;
-      const phiBaseDeg = (isAndosol ? 27.5 : 30.8) + (geoMult - 0.98) * 32;
+      const phiBaseDeg = cellSoil.phiDeg + (geoMult - 0.98) * 32;
 
-      let zBaseM = soilDepthCm ? Math.max(0.32, soilDepthCm[i] / 100) : isAndosol ? 1.25 : 1.0;
+      let zBaseM = soilDepthCm ? Math.max(0.32, soilDepthCm[i] / 100) : cellSoil.defaultDepthM;
       if (isIntactBedrock && sl > 42) {
         zBaseM = Math.max(0.32, zBaseM * Math.max(0.45, 1 - ((sl - 42) / 60) * 0.55));
       }
 
-      const cSoilKpa = (isAndosol ? 2.0 : 3.0) * Math.pow(geoMult, 2.6);
+      const cSoilKpa = cellSoil.cSoilKpa * Math.pow(geoMult, 2.6);
       const anchorBonus = zBaseM < 0.9 ? 1 + (0.9 - zBaseM) * 1.15 : 1.0;
       let cRootKpa = (0.35 + (rootCohesion[i] / 255) * 4.4) * anchorBonus;
       const isUpForest = isForest[i] === 1 && uplandWeight[i] >= 115;
@@ -205,8 +211,8 @@ export function evaluateSlopeStability(
       const cellElev = elevM ? elevM[i] : minElev + (uplandWeight[i] / 255) * 1400;
       const spatialMult = computeSpatialRainFactor(cellElev, minElev, uplandWeight[i] / 255, [lng, lat], params);
 
-      const kLatMmHr = (isAndosol ? 1.2 : 0.95) / Math.max(0.75, twiBoost * 0.92);
-      const infilStorageMm = Math.max(70, zBaseM * (isAndosol ? 155 : 130));
+      const kLatMmHr = cellSoil.kLatMmHr / Math.max(0.75, twiBoost * 0.92);
+      const infilStorageMm = Math.max(70, zBaseM * cellSoil.drainablePorosityMmPerM);
       const p5DrainMult = Math.min(1.05, 0.5 + (1 - p5Frac) * 0.45);
       const rid = reachId ? reachId[i] : 65535;
       const hasValidReach = Boolean(reachSmaFillSeries && rid < reachCount);

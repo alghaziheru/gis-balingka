@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { LoadedDatasets } from '../components/MapView';
 import { REGION } from '../config/region';
+import { CLIMATE_BASELINE, type ClimateBaselineData } from '../data/climateBaseline';
 import { DemClient } from '../lib/demClient';
 import type { DatasetMetadata, DemGridData, SimFieldsData } from '../types/gis';
 
@@ -16,6 +17,7 @@ export function useRegionDatasets() {
   const [metadata, setMetadata] = useState<DatasetMetadata | null>(null);
   const [demClient, setDemClient] = useState<DemClient | null>(null);
   const [simFields, setSimFields] = useState<SimFieldsData | null>(null);
+  const [climateBaseline, setClimateBaseline] = useState<ClimateBaselineData>(CLIMATE_BASELINE);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [initialTelemetry, setInitialTelemetry] = useState<CursorTelemetry | null>(null);
 
@@ -36,7 +38,8 @@ export function useRegionDatasets() {
           drnRes,
           sfRes,
           rbiRes,
-          agamCtxRes
+          agamCtxRes,
+          climRes
         ] = await Promise.all([
           fetch('/data/metadata.json'),
           fetch('/data/dem-grid.json'),
@@ -50,7 +53,8 @@ export function useRegionDatasets() {
           fetch('/data/drainage-draft.geojson'),
           fetch('/data/sim-fields.json'),
           fetch('/data/agam-rbi-rivers.geojson'),
-          fetch('/data/agam-context.json')
+          fetch('/data/agam-context.json'),
+          fetch('/data/climate-baseline.json')
         ]);
 
         if (!metaRes.ok || !demRes.ok) {
@@ -71,7 +75,8 @@ export function useRegionDatasets() {
           drainageDraft,
           sfData,
           agamRbiRivers,
-          agamContext
+          agamContext,
+          climData
         ] = await Promise.all([
           metaRes.json(),
           demRes.json(),
@@ -85,11 +90,15 @@ export function useRegionDatasets() {
           drnRes.json(),
           sfRes.ok ? sfRes.json() : Promise.resolve(null),
           rbiRes.ok ? rbiRes.json() : Promise.resolve(emptyFc),
-          agamCtxRes.ok ? agamCtxRes.json() : Promise.resolve(null)
+          agamCtxRes.ok ? agamCtxRes.json() : Promise.resolve(null),
+          climRes.ok ? climRes.json() : Promise.resolve(null)
         ]);
 
         if (cancelled) return;
         const m = meta as DatasetMetadata;
+        if (climData && typeof climData === 'object' && climData.returnPeriodsMm) {
+          setClimateBaseline(climData as ClimateBaselineData);
+        }
         const client = new DemClient(demGrid as DemGridData);
         const balingkaPlace = (
           osmContext as {
@@ -171,6 +180,7 @@ export function useRegionDatasets() {
     metadata,
     demClient,
     simFields,
+    climateBaseline,
     loadError,
     initialTelemetry,
     reloadHydrologyData

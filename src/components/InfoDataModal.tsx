@@ -1,6 +1,11 @@
 import { useEffect, useState } from 'react';
 import { BookOpen, BookText, Code2, Database, ExternalLink, PlayCircle, Search, ShieldAlert, X } from 'lucide-react';
-import { CLIMATE_BASELINE, MODEL_PARAMETER_AUDIT, type ParameterAuditBadge } from '../data/climateBaseline';
+import {
+  buildModelParameterAudit,
+  CLIMATE_BASELINE,
+  type ClimateBaselineData,
+  type ParameterAuditBadge
+} from '../data/climateBaseline';
 import { GLOSSARY_ENTRIES } from '../data/glossary';
 import { REGION } from '../config/region';
 import { I18N } from '../i18n/translations';
@@ -16,6 +21,7 @@ interface InfoDataModalProps {
   initialTab?: InfoModalTab;
   lang: Language;
   metadata: DatasetMetadata | null;
+  climateBaseline?: ClimateBaselineData;
   verifiedCount: number;
   onClose: () => void;
 }
@@ -30,9 +36,13 @@ function InfoDataModalContent({
   initialTab = 'guide',
   lang,
   metadata,
+  climateBaseline,
   verifiedCount,
   onClose
 }: InfoDataModalProps) {
+  const activeBaseline = climateBaseline ?? CLIMATE_BASELINE;
+  const activeSoilProfile = REGION.hydrology?.soilProfile ?? 'volcanic_andosol';
+  const auditRows = buildModelParameterAudit(activeBaseline, activeSoilProfile, REGION);
   const [activeTab, setActiveTab] = useState<InfoModalTab>(initialTab);
   const [glossaryQuery, setGlossaryQuery] = useState('');
 
@@ -447,39 +457,47 @@ function InfoDataModalContent({
                         : 'Kalibrasi Iklim & Sumber Semua Angka Simulasi'}
                     </h4>
                     <p className="mt-1 mb-0 text-[12px] text-[#434d49]">
-                      {isEn
-                        ? `Rainfall scenarios combine 41 years of Open-Meteo ERA5-Land daily rainfall (${CLIMATE_BASELINE.era5Series.period}, n=${CLIMATE_BASELINE.era5Series.daysCount.toLocaleString()} days) bias-corrected (×${CLIMATE_BASELINE.era5Series.biasFactor}) against official BMKG Data Online monthly files, because free BMKG downloads provide 2-year monthly summaries rather than ≥20-year daily gauges.`
-                        : `Skenario curah hujan menggabungkan seri harian ERA5-Land Open-Meteo 41 tahun (${CLIMATE_BASELINE.era5Series.period}, n=${CLIMATE_BASELINE.era5Series.daysCount.toLocaleString()} hari) yang dikoreksi bias (×${CLIMATE_BASELINE.era5Series.biasFactor}) terhadap berkas bulanan resmi BMKG Data Online (akun terbuka hanya menyediakan rekap bulanan 2 tahun, belum seri harian ≥20 tahun).`}
+                      {activeBaseline.bmkgStations.length > 0
+                        ? isEn
+                          ? `Rainfall scenarios combine ${activeBaseline.era5Series.yearsCount} years of Open-Meteo ERA5-Land daily rainfall (${activeBaseline.era5Series.period}, n=${activeBaseline.era5Series.daysCount.toLocaleString()} days) bias-corrected (×${activeBaseline.era5Series.biasFactor}) against official BMKG Data Online monthly files, because free BMKG downloads provide 2-year monthly summaries rather than ≥20-year daily gauges.`
+                          : `Skenario curah hujan menggabungkan seri harian ERA5-Land Open-Meteo ${activeBaseline.era5Series.yearsCount} tahun (${activeBaseline.era5Series.period}, n=${activeBaseline.era5Series.daysCount.toLocaleString()} hari) yang dikoreksi bias (×${activeBaseline.era5Series.biasFactor}) terhadap berkas bulanan resmi BMKG Data Online (akun terbuka hanya menyediakan rekap bulanan 2 tahun, belum seri harian ≥20 tahun).`
+                        : isEn
+                          ? `Rainfall scenarios use ${activeBaseline.era5Series.yearsCount || 41} years of Open-Meteo ERA5-Land daily rainfall (${activeBaseline.era5Series.period}) extracted at ${REGION.name}'s coordinates with bias factor ×${activeBaseline.era5Series.biasFactor} (optional local BMKG station bias factor can be set in region.config.json).`
+                          : `Skenario curah hujan menggunakan seri harian ERA5-Land Open-Meteo ${activeBaseline.era5Series.yearsCount || 41} tahun (${activeBaseline.era5Series.period}) pada koordinat pusat ${REGION.name} dengan faktor bias ×${activeBaseline.era5Series.biasFactor} (faktor koreksi stasiun BMKG lokal dapat ditambahkan di region.config.json).`}
                     </p>
                   </div>
 
-                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                    {CLIMATE_BASELINE.bmkgStations.map(st => (
-                      <div key={st.wmoId} className="rounded-lg border border-[#161c1a]/12 bg-[#fafaf8] p-2.5">
-                        <div className="text-[12px] font-bold text-[#161c1a]">
-                          {st.name} (WMO {st.wmoId})
+                  {activeBaseline.bmkgStations.length > 0 && (
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                      {activeBaseline.bmkgStations.map(st => (
+                        <div key={st.wmoId} className="rounded-lg border border-[#161c1a]/12 bg-[#fafaf8] p-2.5">
+                          <div className="text-[12px] font-bold text-[#161c1a]">
+                            {st.name} (WMO {st.wmoId})
+                          </div>
+                          <div className="text-[11px] text-[#636f6a]">
+                            {st.elevationM} mdpl · {st.distanceKm} km {st.direction} · {st.period} ({st.monthsValid}{' '}
+                            {isEn ? 'mo' : 'bln'})
+                          </div>
+                          <div className="font-mono-num mt-1 text-[11.5px] font-semibold text-[#0369a1]">
+                            {isEn
+                              ? `Mean ${st.meanMonthlyMm} mm/mo (~${st.estAnnualMm} mm/yr) · Peak ${st.peakMonthlyMm} mm (${st.peakMonth}) · Bias ×${st.era5OverlapRatio}`
+                              : `Rata-rata ${st.meanMonthlyMm} mm/bln (~${st.estAnnualMm} mm/thn) · Puncak ${st.peakMonthlyMm} mm (${st.peakMonth}) · Bias ×${st.era5OverlapRatio}`}
+                          </div>
                         </div>
-                        <div className="text-[11px] text-[#636f6a]">
-                          {st.elevationM} mdpl · {st.distanceKm} km {st.direction} · {st.period} ({st.monthsValid}{' '}
-                          {isEn ? 'mo' : 'bln'})
-                        </div>
-                        <div className="font-mono-num mt-1 text-[11.5px] font-semibold text-[#0369a1]">
-                          {isEn
-                            ? `Mean ${st.meanMonthlyMm} mm/mo (~${st.estAnnualMm} mm/yr) · Peak ${st.peakMonthlyMm} mm (${st.peakMonth}) · Bias ×${st.era5OverlapRatio}`
-                            : `Rata-rata ${st.meanMonthlyMm} mm/bln (~${st.estAnnualMm} mm/thn) · Puncak ${st.peakMonthlyMm} mm (${st.peakMonth}) · Bias ×${st.era5OverlapRatio}`}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
+                      ))}
+                    </div>
+                  )}
 
                   <div className="rounded-lg border border-[#161c1a]/12 bg-[#f2f3ef]/70 px-3 py-2 text-[11.5px] text-[#434d49]">
                     <strong className="text-[#161c1a]">
-                      {isEn ? 'SNI 2415:2016 Frequency Summary (Balingka 41-yr ×1.073): ' : 'Ringkasan Kala Ulang SNI 2415:2016 (Balingka 41 thn ×1,073): '}
+                      {isEn
+                        ? `SNI 2415:2016 Frequency Summary (${REGION.name} ×${activeBaseline.era5Series.biasFactor}): `
+                        : `Ringkasan Kala Ulang SNI 2415:2016 (${REGION.name} ×${activeBaseline.era5Series.biasFactor}): `}
                     </strong>
                     <span className="font-mono-num">
-                      1-hari (R24): T10={CLIMATE_BASELINE.returnPeriodsMm.r24.t10Gumbel} mm · T100={CLIMATE_BASELINE.returnPeriodsMm.r24.t100Gumbel} mm (LP3 {CLIMATE_BASELINE.returnPeriodsMm.r24.t100Lp3}) ·{' '}
-                      2-hari (R48): T100={CLIMATE_BASELINE.returnPeriodsMm.r48.t100Gumbel} mm ·{' '}
-                      3-hari (R72): T100={CLIMATE_BASELINE.returnPeriodsMm.r72.t100Gumbel} mm
+                      1-hari (R24): T10={activeBaseline.returnPeriodsMm.r24.t10Gumbel} mm · T100={activeBaseline.returnPeriodsMm.r24.t100Gumbel} mm (LP3 {activeBaseline.returnPeriodsMm.r24.t100Lp3}) ·{' '}
+                      2-hari (R48): T100={activeBaseline.returnPeriodsMm.r48.t100Gumbel} mm ·{' '}
+                      3-hari (R72): T100={activeBaseline.returnPeriodsMm.r72.t100Gumbel} mm
                     </span>
                   </div>
 
@@ -493,7 +511,7 @@ function InfoDataModalContent({
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-[#161c1a]/10">
-                        {MODEL_PARAMETER_AUDIT.map(row => {
+                        {auditRows.map(row => {
                           const badgeMap: Record<ParameterAuditBadge, { cls: string; labelId: string; labelEn: string }> = {
                             observed: {
                               cls: 'bg-[#047857]/12 text-[#047857]',
@@ -536,8 +554,8 @@ function InfoDataModalContent({
                   <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-[#b45309]" />
                   <span>
                     {isEn
-                      ? 'Transparency notice: This app is developed as an open civic spatial tool, not by a government meteorology/hydrology agency. Because Nagari Balingka has no live stream gauges (AWLR) or full cross-section surveys yet, hydrograph and depth outputs are uncalibrated literature estimates and NOT official hazard forecasts.'
-                      : 'Catatan transparansi: Aplikasi ini dikembangkan sebagai alat eksplorasi data spasial terbuka. Karena Nagari Balingka belum memiliki pos duga muka air sungai (AWLR) atau survei penampang menyeluruh, grafik hidrograf dan perkiraan kedalaman merupakan hasil rumus literatur yang belum terkalibrasi lapangan — bukan ramalan cuaca/kebencanaan resmi.'}
+                      ? `Transparency notice: This app is developed as an open civic spatial tool, not by a government meteorology/hydrology agency. Because ${REGION.name} has no live stream gauges (AWLR) or full cross-section surveys yet, hydrograph and depth outputs are uncalibrated literature estimates and NOT official hazard forecasts.`
+                      : `Catatan transparansi: Aplikasi ini dikembangkan sebagai alat eksplorasi data spasial terbuka. Karena ${REGION.name} belum memiliki pos duga muka air sungai (AWLR) atau survei penampang menyeluruh, grafik hidrograf dan perkiraan kedalaman merupakan hasil rumus literatur yang belum terkalibrasi lapangan — bukan ramalan cuaca/kebencanaan resmi.`}
                   </span>
                 </div>
               </div>

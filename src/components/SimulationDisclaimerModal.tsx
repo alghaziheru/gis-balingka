@@ -1,11 +1,13 @@
 import { useEffect, useState } from 'react';
 import { BookOpen, Database, Droplets, ShieldAlert, X } from 'lucide-react';
 import { REGION } from '../config/region';
+import { CLIMATE_BASELINE, type ClimateBaselineData } from '../data/climateBaseline';
 import type { Language } from '../types/gis';
 
 interface SimulationDisclaimerModalProps {
   open: boolean;
   lang: Language;
+  climateBaseline?: ClimateBaselineData;
   onConfirm: (dontShowAgain: boolean) => void;
   onCancel: () => void;
   onOpenSources: () => void;
@@ -14,6 +16,7 @@ interface SimulationDisclaimerModalProps {
 export function SimulationDisclaimerModal({
   open,
   lang,
+  climateBaseline,
   onConfirm,
   onCancel,
   onOpenSources
@@ -92,9 +95,20 @@ export function SimulationDisclaimerModal({
               <span>{isEn ? '2. Data Basis & Current Limits' : '2. Basis Data & Keterbatasan Saat Ini'}</span>
             </div>
             <p className="m-0 text-[12.5px] text-[#434d49]">
-              {isEn
-                ? 'Built from ~13.8 m DEMNAS topography, ESA WorldCover 10m, and 41-year ERA5-Land daily rainfall (1985–2025) bias-corrected (×1.073) to BMKG Padang Panjang (96165) & Sicincin (96167) monthly data. Because Nagari Balingka has no live stream gauges (AWLR) or soil boreholes yet, readiness stays capped at Screening (≤44/100).'
-                : 'Dihitung dari topografi DEMNAS (~13,8 m), tutupan lahan ESA WorldCover 10 m, dan hujan harian ERA5-Land 41 tahun (1985–2025) yang dikoreksi bias (×1,073) terhadap data bulanan BMKG Padang Panjang (96165) & Sicincin (96167). Karena belum ada pos AWLR atau uji bor tanah lapangan, status data dikunci pada Skrining Awal (≤44/100).'}
+              {(() => {
+                const activeClim = climateBaseline ?? CLIMATE_BASELINE;
+                const hasBmkg = activeClim.bmkgStations.length > 0;
+                const stationNames = activeClim.bmkgStations.map(s => `${s.name.replace(/^Stasiun [^ ]+ /, '')} (${s.wmoId})`).join(' & ');
+                const years = activeClim.era5Series.yearsCount || 41;
+                if (isEn) {
+                  return hasBmkg
+                    ? `Built from open topography, ESA WorldCover 10m, and ${years}-year ERA5-Land daily rainfall (${activeClim.era5Series.period}) bias-corrected (×${activeClim.era5Series.biasFactor}) to BMKG ${stationNames} monthly data. Because ${REGION.name} has no live stream gauges (AWLR) or soil boreholes yet, readiness stays capped at Screening (≤44/100).`
+                    : `Built from open topography, ESA WorldCover 10m, and ${years}-year ERA5-Land daily rainfall (${activeClim.era5Series.period}, bias ×${activeClim.era5Series.biasFactor}) for ${REGION.name}. Because no live stream gauges (AWLR) or soil boreholes are configured yet, readiness stays capped at Screening (≤44/100).`;
+                }
+                return hasBmkg
+                  ? `Dihitung dari topografi terbuka, tutupan lahan ESA WorldCover 10 m, dan hujan harian ERA5-Land ${years} tahun (${activeClim.era5Series.period}) yang dikoreksi bias (×${activeClim.era5Series.biasFactor}) terhadap data bulanan BMKG ${stationNames}. Karena ${REGION.name} belum memiliki pos AWLR atau uji bor tanah lapangan, status data dikunci pada Skrining Awal (≤44/100).`
+                  : `Dihitung dari topografi terbuka, tutupan lahan ESA WorldCover 10 m, dan seri hujan harian ERA5-Land ${years} tahun (${activeClim.era5Series.period}, faktor bias ×${activeClim.era5Series.biasFactor}) untuk ${REGION.name}. Karena belum ada pos AWLR atau uji bor tanah lapangan, status data dikunci pada Skrining Awal (≤44/100).`;
+              })()}
             </p>
           </div>
 

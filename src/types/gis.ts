@@ -1,3 +1,5 @@
+import type { SoilProfileId } from '../data/soilProfiles';
+
 export type Language = 'id' | 'en';
 export type ViewMode = 'simple' | 'detail';
 export type TabId = 'terrain' | 'sim' | 'drainage' | 'editor';
@@ -211,6 +213,7 @@ export interface CascadeSimParams {
   culvertBlockagePct?: number;
   structureBlockageOverrides?: Record<string, number>;
   debrisCoupling?: DebrisCouplingMode;
+  soilProfile?: SoilProfileId;
   calibrationProfile?: CalibrationProfile | null;
 }
 

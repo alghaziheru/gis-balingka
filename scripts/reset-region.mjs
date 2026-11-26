@@ -28,6 +28,7 @@ export const REGION_PUBLIC_ARTIFACTS = [
   'public/data/raster-scour-change.png',
   'public/data/landcover-grid.json',
   'public/data/raster-landcover.png',
+  'public/data/climate-baseline.json',
   'public/data/metadata.json'
 ];
 
@@ -41,7 +42,8 @@ export const REGION_RAW_CACHE_ARTIFACTS = [
   'raw-data/agam-gis-cache.json',
   'raw-data/open-buildings-balingka.geojson',
   'raw-data/big-nagari-2026.geojson',
-  'raw-data/big-rbi-2022.json'
+  'raw-data/big-rbi-2022.json',
+  'raw-data/era5-climate-cache.json'
 ];
 
 export function runResetRegion({ rootDir = ROOT, force = false, dryRun = false, includeRawCache = false } = {}) {
