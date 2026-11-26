@@ -29,7 +29,7 @@ export function useSimulationController(opts: {
 }) {
   // Interactive Rainfall -> Hydro-Geomorphic Cascade Simulator (calm 00:00 normal baseline)
   const [simPlaying, setSimPlaying] = useState(false);
-  const [simRain, setSimRain] = useState(25);
+  const [simRain, setSimRain] = useState(15);
   const [simDurationMin, setSimDurationMin] = useState(120);
   const [simProgress, setSimProgress] = useState(0);
   const [soilMoisture, setSoilMoistureState] = useState<SoilMoisture>('moist');
@@ -53,7 +53,7 @@ export function useSimulationController(opts: {
   const setRainSafe = useCallback(
     (rain: number) => {
       const maxRain = getMaxRealisticRainMmHr(simDurationMin);
-      setSimRain(Math.max(5, Math.min(maxRain, Math.round(rain))));
+      setSimRain(Math.max(1, Math.min(maxRain, Math.round(rain))));
     },
     [simDurationMin]
   );
@@ -268,7 +268,8 @@ export function useSimulationController(opts: {
     setSimPlaying(false);
     setStormCore(null);
     if (preset === 'normal') {
-      setSimRain(25);
+      // BMKG Lebat (15 mm/hr x 2h = 30 mm) — stays contained within incised channels
+      setSimRain(15);
       setSimDurationMin(120);
       setSoilMoistureState('moist');
       setAntecedent5dMmState(45);
@@ -280,8 +281,9 @@ export function useSimulationController(opts: {
       setOrographicPctPerKm(15);
       setDebrisCoupling('clear');
     } else if (preset === 'upland') {
-      setSimRain(65);
-      setSimDurationMin(360);
+      // BMKG Sangat Lebat upland storm (40 mm/hr x 3h = 120 mm, within 41-yr Balingka 24h range)
+      setSimRain(40);
+      setSimDurationMin(180);
       setSoilMoistureState('moist');
       setAntecedent5dMmState(65);
       setRainPattern('upland');
@@ -292,8 +294,8 @@ export function useSimulationController(opts: {
       setOrographicPctPerKm(45);
       setDebrisCoupling('coupled');
     } else {
-      // Multi-day continuous above-normal rainfall (~30 mm/hr for 48 hours = 1,440 mm) saturating soil & slopes
-      setSimRain(30);
+      // 48h continuous monsoon event (7 mm/hr x 48h = 336 mm ≈ 100-yr Balingka 2-day Gumbel 337 mm)
+      setSimRain(7);
       setSimDurationMin(2880);
       setSoilMoistureState('moist');
       setAntecedent5dMmState(75);

@@ -177,19 +177,22 @@ export function evaluateSlopeStability(
       const localCumRain = cumRainMm * spatialMult;
 
       // Transient 1D wetting-front pore-water ratio m(t) minus steady lateral subsurface drainage
-      // Porous volcanic Andosol drains ~3.5 mm/hr laterally unless converged into wet hollows;
-      // prolonged multi-day cumulative wetting (>220 mm) drives full saturation even at moderate hourly rates.
-      const kLatMmHr = (isAndosol ? 3.5 : 2.6) / Math.max(0.75, twiBoost * 0.92);
-      const infilStorageMm = Math.max(92, zBaseM * (isAndosol ? 245 : 195));
-      const latDrainMm = kLatMmHr * elapsedHr * Math.min(1.15, 0.65 + (1 - p5Frac) * 0.45);
+      // Humid volcanic Andosol drains ~1.2 mm/hr laterally above field capacity (drainable porosity n_e ≈ 0.155);
+      // prolonged multi-day cumulative wetting (130-270 mm, Caine 1980 / Guzzetti 2008) saturates steep regolith.
+      const kLatMmHr = (isAndosol ? 1.2 : 0.95) / Math.max(0.75, twiBoost * 0.92);
+      const infilStorageMm = Math.max(70, zBaseM * (isAndosol ? 155 : 130));
+      const latDrainMm = Math.min(
+        infilStorageMm * 0.32,
+        kLatMmHr * elapsedHr * Math.min(1.05, 0.5 + (1 - p5Frac) * 0.45)
+      );
       const evalWetness = (rainScale: number): number => {
         const scaledCumRain = localCumRain * rainScale;
-        const scaledRateRatio = Math.min(1.4, Math.max(0.22, (params.rainMmHr * rainScale) / 65));
+        const scaledRateRatio = Math.min(1.4, Math.max(0.28, (params.rainMmHr * rainScale) / 35));
         const netAccum = Math.max(0, scaledCumRain - latDrainMm);
-        const prolongedSat = smoothstep(220, 620, scaledCumRain);
-        const rateEff = Math.max(0.62 + 0.38 * scaledRateRatio, prolongedSat);
-        const stormDelta = Math.min(0.96, (netAccum / infilStorageMm) * twiBoost * hollowBoost * rateEff);
-        return Math.min(1.0, baseWetness * twiBoost * 0.68 + stormDelta);
+        const prolongedSat = smoothstep(130, 270, scaledCumRain);
+        const rateEff = Math.max(0.64 + 0.36 * scaledRateRatio, prolongedSat);
+        const stormDelta = Math.min(0.98, (netAccum / infilStorageMm) * twiBoost * hollowBoost * rateEff);
+        return Math.min(1.0, baseWetness * twiBoost * 0.72 + stormDelta);
       };
 
       const mBase = evalWetness(nominalMember.rainScale);

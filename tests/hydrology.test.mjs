@@ -49,6 +49,7 @@ import {
 import { computeRunoffMergeNetwork } from '../src/lib/geometry.ts';
 import { getOverlayContrastPalette, isDarkBasemap } from '../src/lib/mapPalette.ts';
 import { lookupAgamAtPoint } from '../src/lib/agamLookup.ts';
+import { CLIMATE_BASELINE, MODEL_PARAMETER_AUDIT } from '../src/data/climateBaseline.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT_DIR = path.resolve(__dirname, '..');
@@ -1537,7 +1538,7 @@ test('bankfull channel containment keeps ordinary 2h rain in-channel while 48h c
   const engine = new CascadeEngine(simFields);
 
   const normalKpis = engine.evaluate({
-    rainMmHr: 25,
+    rainMmHr: 15,
     durationMin: 120,
     progress: 0.78,
     soilMoisture: 'moist',
@@ -1546,14 +1547,14 @@ test('bankfull channel containment keeps ordinary 2h rain in-channel while 48h c
     drainCondition: 'cleared',
     forestScenario: 'actual'
   });
-  assert.ok(normalKpis.floodAreaHa <= 0.1, `ordinary 25mm/h 2h rain should stay inside riverbanks (got ${normalKpis.floodAreaHa} ha)`);
-  assert.ok(normalKpis.landslideAreaHa <= 0.5, `ordinary 25mm/h 2h rain should not destabilize slopes (got ${normalKpis.landslideAreaHa} ha)`);
-  assert.ok(normalKpis.representativeStageM > 0.2, `in-channel flow should remain visible (got ${normalKpis.representativeStageM} m)`);
+  assert.ok(normalKpis.floodAreaHa <= 0.1, `ordinary 15mm/h 2h rain should stay inside riverbanks (got ${normalKpis.floodAreaHa} ha)`);
+  assert.ok(normalKpis.landslideAreaHa <= 0.5, `ordinary 15mm/h 2h rain should not destabilize slopes (got ${normalKpis.landslideAreaHa} ha)`);
+  assert.ok(normalKpis.representativeStageM > 0.05, `in-channel flow should remain positive (got ${normalKpis.representativeStageM} m)`);
 
   const multiDayKpis = engine.evaluate({
-    rainMmHr: 30,
+    rainMmHr: 7,
     durationMin: 2880,
-    progress: 0.80,
+    progress: 0.78,
     soilMoisture: 'moist',
     antecedent5dMm: 75,
     rainPattern: 'upland',
@@ -1561,17 +1562,23 @@ test('bankfull channel containment keeps ordinary 2h rain in-channel while 48h c
     forestScenario: 'actual'
   });
   assert.equal(multiDayKpis.totalWindowMin, 3240, '48h event should use bounded 6h drainage recession window');
-  assert.ok(multiDayKpis.floodAreaHa >= 3.0, `48h continuous rain should saturate soil & overflow valley corridors (got ${multiDayKpis.floodAreaHa} ha)`);
-  assert.ok(multiDayKpis.landslideAreaHa >= 15.0, `48h continuous rain should saturate steep slopes (got ${multiDayKpis.landslideAreaHa} ha)`);
+  assert.ok(multiDayKpis.floodAreaHa >= 1.5, `48h 100-yr monsoon (336 mm) should overflow valley corridors (got ${multiDayKpis.floodAreaHa} ha)`);
+  assert.ok(multiDayKpis.landslideAreaHa >= 8.0, `48h 100-yr monsoon (336 mm) should saturate steep slopes (got ${multiDayKpis.landslideAreaHa} ha)`);
   assert.ok(multiDayKpis.peakDischargeM3s > normalKpis.peakDischargeM3s * 2);
 });
 
 test('IDF envelope, uncalibrated readiness cap, sub-hourly multi-day steps, dual-reservoir lag, runout shadow, and exports', t => {
-  assert.equal(getMaxRealisticRainMmHr(120), 150);
-  assert.equal(getMaxRealisticRainMmHr(360), 100);
-  assert.equal(getMaxRealisticRainMmHr(1440), 45);
-  assert.equal(getMaxRealisticRainMmHr(2880), 35);
-  assert.equal(getMaxRealisticRainMmHr(4320), 30);
+  assert.equal(getMaxRealisticRainMmHr(120), 60);
+  assert.equal(getMaxRealisticRainMmHr(360), 30);
+  assert.equal(getMaxRealisticRainMmHr(1440), 12);
+  assert.equal(getMaxRealisticRainMmHr(2880), 8);
+  assert.equal(getMaxRealisticRainMmHr(4320), 6);
+
+  assert.equal(CLIMATE_BASELINE.era5Series.yearsCount, 41);
+  assert.ok(Math.abs(CLIMATE_BASELINE.era5Series.biasFactor - 1.073) < 0.01);
+  const badges = new Set(MODEL_PARAMETER_AUDIT.map(r => r.badge));
+  assert.ok(badges.has('observed') && badges.has('literature') && badges.has('conceptual'));
+  assert.ok(MODEL_PARAMETER_AUDIT.every(r => r.paramId && r.paramEn && r.sourceId && r.sourceEn && r.valueText));
 
   const simPath = path.join(DATA_DIR, 'sim-fields.json');
   if (!fs.existsSync(simPath)) {
@@ -1587,7 +1594,7 @@ test('IDF envelope, uncalibrated readiness cap, sub-hourly multi-day steps, dual
   assert.equal(conf.coverage.isCalibrated, false);
 
   const normalParams = {
-    rainMmHr: 25,
+    rainMmHr: 15,
     durationMin: 120,
     progress: 0.78,
     soilMoisture: 'moist',
@@ -1598,14 +1605,14 @@ test('IDF envelope, uncalibrated readiness cap, sub-hourly multi-day steps, dual
   };
   const normalKpis = engine.evaluate(normalParams);
   assert.ok(
-    normalKpis.peakDischargeM3s < 45,
-    `dual-reservoir volcanic interflow should attenuate ordinary 25mm/h 2h peakQ < 45 m3/s (got ${normalKpis.peakDischargeM3s})`
+    normalKpis.peakDischargeM3s < 35,
+    `dual-reservoir volcanic interflow should attenuate ordinary 15mm/h 2h peakQ < 35 m3/s (got ${normalKpis.peakDischargeM3s})`
   );
 
   const multiParams = {
-    rainMmHr: 30,
+    rainMmHr: 7,
     durationMin: 2880,
-    progress: 0.8,
+    progress: 0.78,
     soilMoisture: 'moist',
     antecedent5dMm: 75,
     rainPattern: 'upland',
@@ -1620,11 +1627,11 @@ test('IDF envelope, uncalibrated readiness cap, sub-hourly multi-day steps, dual
   const dt0 = multiKpis.hydrograph[1].timeMin - multiKpis.hydrograph[0].timeMin;
   assert.ok(dt0 <= 30, `48h timestep should be <= 30 min, got ${dt0} min`);
   assert.ok(
-    (multiKpis.runoutAreaHa ?? 0) > 1.0,
+    (multiKpis.runoutAreaHa ?? 0) >= 1.5,
     `saturated steep slopes should generate indicative ~20 deg runout shadow area (got ${multiKpis.runoutAreaHa})`
   );
   assert.ok(
-    multiKpis.ensemble.peakDischargeM3s.p90 - multiKpis.ensemble.peakDischargeM3s.p10 >= 80,
+    multiKpis.ensemble.peakDischargeM3s.p90 - multiKpis.ensemble.peakDischargeM3s.p10 >= 30,
     'sensitivity envelope with +/-25% rain perturbation should reflect meaningful discharge spread'
   );
 

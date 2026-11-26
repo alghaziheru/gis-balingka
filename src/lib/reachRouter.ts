@@ -145,14 +145,16 @@ export const RECESSION_MULTIPLIER = 1.28;
  * by duration (prevents non-physical extreme-intensity × multi-day totals).
  */
 export function getMaxRealisticRainMmHr(durationMin: number): number {
-  if (durationMin <= 120) return 150;
-  if (durationMin <= 180) return 120;
-  if (durationMin <= 360) return 100;
-  if (durationMin <= 720) return 65;
-  if (durationMin <= 1440) return 45;
-  if (durationMin <= 2160) return 40;
-  if (durationMin <= 2880) return 35;
-  return 30;
+  if (durationMin <= 30) return 140;
+  if (durationMin <= 60) return 90;
+  if (durationMin <= 120) return 60;
+  if (durationMin <= 180) return 45;
+  if (durationMin <= 360) return 30;
+  if (durationMin <= 720) return 18;
+  if (durationMin <= 1440) return 12;
+  if (durationMin <= 2160) return 9;
+  if (durationMin <= 2880) return 8;
+  return 6;
 }
 
 /**
@@ -164,9 +166,9 @@ export function estimateReachBankfullDepthM(reach: SimReachNode): number {
   if (reach.measuredDepthM != null && Number.isFinite(reach.measuredDepthM) && reach.measuredDepthM > 0.2) {
     return Math.min(2.2, reach.measuredDepthM * 0.85);
   }
-  const areaTerm = 0.56 * Math.pow(Math.max(0.08, reach.upstreamAreaKm2), 0.22);
-  const kindBoost = reach.waterwayKind === 'river' ? 0.16 : 0.0;
-  return Math.max(0.55, Math.min(1.22, areaTerm + kindBoost));
+  const areaTerm = 0.42 * Math.pow(Math.max(0.08, reach.upstreamAreaKm2), 0.18);
+  const kindBoost = reach.waterwayKind === 'river' ? 0.12 : 0.0;
+  return Math.max(0.40, Math.min(0.88, areaTerm + kindBoost));
 }
 
 export function resolveAntecedent5dMm(params: CascadeSimParams): number {
@@ -247,16 +249,16 @@ export function buildHyetograph(
     const u = (t + 0.5) / stormSteps;
     let w = 1.0;
     if (isMultiDay) {
-      // Multi-day monsoon pattern: steady background rain saturating regolith + stronger day-2 convective rainbands
+      // Multi-day monsoon pattern: steady background rain saturating regolith + realistic embedded convective rainband(s)
       if (hyetograph === 'convective_front') {
-        w = 0.52 + 1.45 * Math.exp(-Math.pow((u - 0.35) / 0.16, 2));
+        w = 0.44 + 4.0 * Math.exp(-Math.pow((u - 0.36) / 0.07, 2));
       } else if (hyetograph === 'alternating_block') {
-        w = 0.48 + 1.65 * Math.exp(-Math.pow((u - 0.72) / 0.14, 2));
+        w = 0.40 + 4.5 * Math.exp(-Math.pow((u - 0.80) / 0.065, 2));
       } else if (hyetograph === 'double_burst') {
         w =
-          0.46 +
-          1.15 * Math.exp(-Math.pow((u - 0.36) / 0.12, 2)) +
-          1.55 * Math.exp(-Math.pow((u - 0.78) / 0.12, 2));
+          0.36 +
+          2.5 * Math.exp(-Math.pow((u - 0.38) / 0.065, 2)) +
+          3.6 * Math.exp(-Math.pow((u - 0.80) / 0.065, 2));
       }
     } else if (hyetograph === 'convective_front') {
       // Intense tropical convective burst peaking early (~22% into storm)
@@ -458,14 +460,14 @@ export function routeReachNetwork(opts: {
     );
     // Volcanic humic Andosol + intact montane forest provide high infiltration porosity (-7 CN),
     // which is lost under upland forest degradation.
-    let cn2 = reach.meanCn - 7.0 * reach.forestFrac;
+    let cn2 = reach.meanCn - 4.0 * reach.forestFrac;
     if (reach.uplandFrac >= 0.42 && reach.forestFrac > 0.15) {
       if (params.forestScenario === 'degraded30') cn2 = Math.min(92, cn2 + 10 * reach.forestFrac);
       else if (params.forestScenario === 'degraded50') cn2 = Math.min(95, cn2 + 17 * reach.forestFrac);
     }
     const cnBase = Math.max(32, Math.min(95, cn2 + calCnOff + member.cnDelta));
-    // Volcanic Andosol retention multiplier (~1.38x baseline S for porous ash soils)
-    const sVal = Math.max(12, (25400 / cnBase - 254) * (1.28 + 0.18 * reach.forestFrac));
+    // Volcanic Andosol retention multiplier (~1.08x baseline S for humic volcanic soils)
+    const sVal = Math.max(12, (25400 / cnBase - 254) * (1.06 + 0.08 * reach.forestFrac));
     reachS[r] = sVal;
 
     // Initialize continuous soil moisture storage F(0) and initial interception Ia(0)
@@ -474,8 +476,8 @@ export function routeReachNetwork(opts: {
     reachSoilFill[r] = sVal * initFill;
     reachIaRem[r] = 0.14 * sVal * Math.max(0.05, 1 - antecedentFill * 1.15);
 
-    // Steady subsurface percolation drains light intermittent showers before storage saturates
-    reachPercolationMmHr[r] = 2.6 + 2.8 * reach.forestFrac + 1.2 * reach.uplandFrac;
+    // Realistic tropical subsoil percolation drains light showers slowly over multi-day storms
+    reachPercolationMmHr[r] = 0.9 + 1.1 * reach.forestFrac + 0.4 * reach.uplandFrac;
 
     // Physical Manning's n: rougher on steep cobble/forested mountain creeks, smoother on wider rivers
     const baseN =

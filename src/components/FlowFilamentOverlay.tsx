@@ -134,9 +134,9 @@ export function FlowFilamentOverlay({
 
       const elapsedSec = reducedMotion ? 1.8 : (performance.now() - startTime) / 1000;
       const isMobile = width < 768;
-      const rainNorm = Math.max(0.1, Math.min(1, st.rainMmHr / 150));
+      const rainNorm = Math.max(0.12, Math.min(1, st.rainMmHr / 60));
       const speedMult = 0.62 + rainNorm * 0.85;
-      const maxTier = st.progress >= 0.3 || st.rainMmHr >= 55 ? 2 : 1;
+      const maxTier = st.progress >= 0.3 || st.rainMmHr >= 30 || st.durationMin >= 720 ? 2 : 1;
 
       const refTravel = st.cascadeEngine ? Math.max(18, st.cascadeEngine.fields.p90TravelMin) : 75;
       const waveFrontMin = Math.max(st.durationMin * st.progress, st.progress * refTravel * 1.32);
@@ -225,7 +225,13 @@ export function FlowFilamentOverlay({
 
             if (st.cascadeEngine && waveFrontMin < hydro.tcMin - 4) continue;
 
-            // Couple cell-level SCS-CN effective runoff (reflects all 7 parameters)
+            // Couple cell-level SCS-CN effective runoff & local depth so mild rain stays quiet in minor gullies
+            const localActivity = st.cascadeEngine
+              ? Math.max(Math.min(1, hydro.runoffMm / 38), Math.min(1, hydro.depth / 0.28))
+              : 0.75;
+            if (st.cascadeEngine && !isMainVerified && localActivity < 0.16) {
+              continue;
+            }
             if (st.cascadeEngine && st.soilMoisture === 'dry' && hydro.runoffMm < 1.5 && !isMainVerified) {
               continue;
             }
@@ -279,7 +285,10 @@ export function FlowFilamentOverlay({
                 : isCenterCore
                   ? 0.84
                   : 0.62;
-            const baseAlpha = baseStrength * (0.58 + 0.42 * runoffGain);
+            const activityFactor = isMainVerified
+              ? 0.38 + 0.62 * Math.max(runoffGain, Math.min(1, hydro.depth / 0.4))
+              : 0.14 + 0.86 * localActivity;
+            const baseAlpha = baseStrength * activityFactor;
 
             // High-contrast deep ocean blue / teal for light DEMNAS Relief, Elevasi & Lereng surfaces
             const rgb = isMainVerified

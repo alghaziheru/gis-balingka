@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { BookOpen, BookText, Code2, Database, ExternalLink, PlayCircle, Search, ShieldAlert, X } from 'lucide-react';
+import { CLIMATE_BASELINE, MODEL_PARAMETER_AUDIT, type ParameterAuditBadge } from '../data/climateBaseline';
 import { GLOSSARY_ENTRIES } from '../data/glossary';
 import { REGION } from '../config/region';
 import { I18N } from '../i18n/translations';
@@ -134,6 +135,13 @@ function InfoDataModalContent({
               ? 'Ground-movement map, soil, geology, BMKG rainfall & protected forest'
               : 'Peta gerakan tanah, jenis tanah, geologi, curah hujan BMKG & kawasan hutan',
             license: 'Public Gov Data'
+          },
+          {
+            name: 'BMKG Data Online (96165 & 96167) & Open-Meteo ERA5-Land',
+            role: isEn
+              ? 'Padang Panjang & Sicincin monthly baseline (2024–2026) + 41-yr bias-corrected daily rainfall (1985–2025)'
+              : 'Basis bulanan Padang Panjang & Sicincin (2024–2026) + hujan harian ERA5-Land 41 tahun terkoreksi bias (1985–2025)',
+            license: 'BMKG / CC-BY-4.0'
           }
         ]
       : []),
@@ -426,6 +434,102 @@ function InfoDataModalContent({
                         : 'Kenaikan muka air hulu gorong-gorong dan lonjakan sumbatan bersifat perkiraan sesaat (bukan perambatan jebolnya bendungan alami secara dinamis); slider hujan dibatasi kurva wajar IDF.'}
                     </li>
                   </ul>
+                </div>
+
+                <div
+                  data-testid="method-parameter-audit"
+                  className="mt-1 flex flex-col gap-3 rounded-xl border border-[#161c1a]/14 bg-white p-3.5 text-[12px] text-[#434d49]"
+                >
+                  <div>
+                    <h4 className="m-0 text-[13px] font-bold text-[#161c1a]">
+                      {isEn
+                        ? 'Climate Calibration & Audit of Every Simulation Number'
+                        : 'Kalibrasi Iklim & Sumber Semua Angka Simulasi'}
+                    </h4>
+                    <p className="mt-1 mb-0 text-[12px] text-[#434d49]">
+                      {isEn
+                        ? `Rainfall scenarios combine 41 years of Open-Meteo ERA5-Land daily rainfall (${CLIMATE_BASELINE.era5Series.period}, n=${CLIMATE_BASELINE.era5Series.daysCount.toLocaleString()} days) bias-corrected (×${CLIMATE_BASELINE.era5Series.biasFactor}) against official BMKG Data Online monthly files, because free BMKG downloads provide 2-year monthly summaries rather than ≥20-year daily gauges.`
+                        : `Skenario curah hujan menggabungkan seri harian ERA5-Land Open-Meteo 41 tahun (${CLIMATE_BASELINE.era5Series.period}, n=${CLIMATE_BASELINE.era5Series.daysCount.toLocaleString()} hari) yang dikoreksi bias (×${CLIMATE_BASELINE.era5Series.biasFactor}) terhadap berkas bulanan resmi BMKG Data Online (akun terbuka hanya menyediakan rekap bulanan 2 tahun, belum seri harian ≥20 tahun).`}
+                    </p>
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                    {CLIMATE_BASELINE.bmkgStations.map(st => (
+                      <div key={st.wmoId} className="rounded-lg border border-[#161c1a]/12 bg-[#fafaf8] p-2.5">
+                        <div className="text-[12px] font-bold text-[#161c1a]">
+                          {st.name} (WMO {st.wmoId})
+                        </div>
+                        <div className="text-[11px] text-[#636f6a]">
+                          {st.elevationM} mdpl · {st.distanceKm} km {st.direction} · {st.period} ({st.monthsValid}{' '}
+                          {isEn ? 'mo' : 'bln'})
+                        </div>
+                        <div className="font-mono-num mt-1 text-[11.5px] font-semibold text-[#0369a1]">
+                          {isEn
+                            ? `Mean ${st.meanMonthlyMm} mm/mo (~${st.estAnnualMm} mm/yr) · Peak ${st.peakMonthlyMm} mm (${st.peakMonth}) · Bias ×${st.era5OverlapRatio}`
+                            : `Rata-rata ${st.meanMonthlyMm} mm/bln (~${st.estAnnualMm} mm/thn) · Puncak ${st.peakMonthlyMm} mm (${st.peakMonth}) · Bias ×${st.era5OverlapRatio}`}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="rounded-lg border border-[#161c1a]/12 bg-[#f2f3ef]/70 px-3 py-2 text-[11.5px] text-[#434d49]">
+                    <strong className="text-[#161c1a]">
+                      {isEn ? 'SNI 2415:2016 Frequency Summary (Balingka 41-yr ×1.073): ' : 'Ringkasan Kala Ulang SNI 2415:2016 (Balingka 41 thn ×1,073): '}
+                    </strong>
+                    <span className="font-mono-num">
+                      1-hari (R24): T10={CLIMATE_BASELINE.returnPeriodsMm.r24.t10Gumbel} mm · T100={CLIMATE_BASELINE.returnPeriodsMm.r24.t100Gumbel} mm (LP3 {CLIMATE_BASELINE.returnPeriodsMm.r24.t100Lp3}) ·{' '}
+                      2-hari (R48): T100={CLIMATE_BASELINE.returnPeriodsMm.r48.t100Gumbel} mm ·{' '}
+                      3-hari (R72): T100={CLIMATE_BASELINE.returnPeriodsMm.r72.t100Gumbel} mm
+                    </span>
+                  </div>
+
+                  <div className="overflow-x-auto rounded-lg border border-[#161c1a]/12">
+                    <table className="w-full border-collapse text-left text-[11.5px]">
+                      <thead>
+                        <tr className="border-b border-[#161c1a]/12 bg-[#fafaf8] text-[11px] font-bold text-[#161c1a]">
+                          <th className="px-2.5 py-2">{isEn ? 'Parameter' : 'Parameter'}</th>
+                          <th className="px-2.5 py-2">{isEn ? 'Value in Model' : 'Nilai di Model'}</th>
+                          <th className="px-2.5 py-2">{isEn ? 'Status & Source' : 'Status & Sumber'}</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-[#161c1a]/10">
+                        {MODEL_PARAMETER_AUDIT.map(row => {
+                          const badgeMap: Record<ParameterAuditBadge, { cls: string; labelId: string; labelEn: string }> = {
+                            observed: {
+                              cls: 'bg-[#047857]/12 text-[#047857]',
+                              labelId: 'Observasi Lokal',
+                              labelEn: 'Observed Local'
+                            },
+                            literature: {
+                              cls: 'bg-[#0369a1]/12 text-[#0369a1]',
+                              labelId: 'Literatur Baku',
+                              labelEn: 'Published Literature'
+                            },
+                            conceptual: {
+                              cls: 'bg-[#b45309]/14 text-[#92400e]',
+                              labelId: 'Prior Konseptual',
+                              labelEn: 'Conceptual Prior'
+                            }
+                          };
+                          const b = badgeMap[row.badge];
+                          return (
+                            <tr key={row.id} className="align-top">
+                              <td className="px-2.5 py-2 font-semibold text-[#161c1a]">
+                                {isEn ? row.paramEn : row.paramId}
+                              </td>
+                              <td className="font-mono-num px-2.5 py-2 text-[#161c1a]">{row.valueText}</td>
+                              <td className="px-2.5 py-2 text-[#434d49]">
+                                <span className={`mb-1 inline-block rounded px-1.5 py-0.5 text-[10px] font-bold ${b.cls}`}>
+                                  {isEn ? b.labelEn : b.labelId}
+                                </span>
+                                <div>{isEn ? row.sourceEn : row.sourceId}</div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
 
                 <div className="mt-1 flex items-start gap-2 rounded-lg border border-[#b45309]/25 bg-[#b45309]/8 px-3 py-2 text-[12px] text-[#78350f]">

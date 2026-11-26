@@ -220,21 +220,21 @@ export function SimulationTab({
   const overrideCount = Object.keys(structureBlockageOverrides).length;
 
   const activeScenario: 'normal' | 'upland' | 'extreme' | 'custom' =
-    rainMm === 25 &&
+    rainMm === 15 &&
     durationMin === 120 &&
     soilMoisture === 'moist' &&
     rainPattern === 'uniform' &&
     drainCondition === 'cleared' &&
     (!isDetail || forestScenario === 'actual')
       ? 'normal'
-      : rainMm === 65 &&
-          durationMin === 360 &&
+      : rainMm === 40 &&
+          durationMin === 180 &&
           soilMoisture === 'moist' &&
           rainPattern === 'upland' &&
           drainCondition === 'clogged' &&
           (!isDetail || forestScenario === 'actual')
         ? 'upland'
-        : rainMm === 30 &&
+        : rainMm === 7 &&
             durationMin === 2880 &&
             soilMoisture === 'moist' &&
             rainPattern === 'upland' &&
@@ -244,13 +244,15 @@ export function SimulationTab({
           : 'custom';
 
   const rainCategoryLabel =
-    rainMm <= 32
+    rainMm < 5
       ? t.rainPresetLight
-      : rainMm <= 62
+      : rainMm < 10
         ? t.rainPresetMed
-        : rainMm <= 100
+        : rainMm < 20
           ? t.rainPresetHeavy
-          : t.rainPresetExtreme;
+          : rainMm <= 50
+            ? t.rainPresetVeryHeavy
+            : t.rainPresetExtreme;
 
   const alertText =
     kpis.alertLevel === 'kritis'
@@ -481,27 +483,25 @@ export function SimulationTab({
           <input
             id={`${uid}-rain`}
             type="range"
-            min={5}
+            min={1}
             max={maxRainForDur}
-            step={5}
+            step={maxRainForDur <= 24 ? 1 : 5}
             value={Math.min(rainMm, maxRainForDur)}
             onChange={e => onChangeRain(parseInt(e.target.value, 10))}
             className="w-full cursor-pointer accent-[#0369a1]"
           />
           <div className="flex justify-between text-[11px] font-medium text-[#636f6a]">
             <span>{t.rainLight}</span>
-            {maxRainForDur >= 90 && <span>{t.rainHeavy}</span>}
+            {maxRainForDur >= 50 && <span>{t.rainHeavy}</span>}
             <span>
               {isEn ? `Max (${maxRainForDur})` : `Maks (${maxRainForDur})`}
             </span>
           </div>
-          {maxRainForDur < 150 && (
-            <div className="text-[10.5px] font-medium text-[#636f6a]">
-              {isEn
-                ? `IDF envelope cap: ≤${maxRainForDur} mm/hr at ${formatDurationLabel(durationMin, true)} (Total ~${totalStormInputMm} mm)`
-                : `Batas wajar IDF: ≤${maxRainForDur} mm/jam untuk ${formatDurationLabel(durationMin, false)} (Total ~${totalStormInputMm} mm)`}
-            </div>
-          )}
+          <div className="text-[10.5px] font-medium text-[#636f6a]">
+            {isEn
+              ? `BMKG–ERA5 (1985–2025) Mononobe cap: ≤${maxRainForDur} mm/hr at ${formatDurationLabel(durationMin, true)} (Total ~${totalStormInputMm} mm)`
+              : `Batas wajar BMKG–ERA5 (1985–2025): ≤${maxRainForDur} mm/jam untuk ${formatDurationLabel(durationMin, false)} (Total ~${totalStormInputMm} mm)`}
+          </div>
         </div>
 
         {/* Slider 2: Storm Duration (stepped 30 min -> 72 hr / 3 days) */}

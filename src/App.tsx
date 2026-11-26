@@ -17,6 +17,7 @@ import { FeedbackModal } from './components/FeedbackModal';
 import { InfoDataModal, type InfoModalTab } from './components/InfoDataModal';
 import { MapView, type FlyRequest, type MapCameraState, type MapControlHandle } from './components/MapView';
 import { RainOverlay } from './components/RainOverlay';
+import { SimulationDisclaimerModal } from './components/SimulationDisclaimerModal';
 import { SimulationTab } from './components/SimulationTab';
 import { TelemetryDock } from './components/TelemetryDock';
 import { TerrainTab } from './components/TerrainTab';
@@ -64,6 +65,8 @@ const DEFAULT_LAYERS: LayerToggles = {
 const DEFAULT_FLOW_DENSITY = 1;
 const DEFAULT_VIEW_CENTER: [number, number] = REGION.defaultView.center;
 const DEFAULT_VIEW_ZOOM = REGION.defaultView.zoom;
+const SIM_DISCLAIMER_SESSION_KEY = 'balingka_sim_disclaimer_session_v1';
+const SIM_DISCLAIMER_HIDE_KEY = 'balingka_sim_disclaimer_hide_v1';
 
 const MAP_LAYER_KEYS: (keyof LayerToggles)[] = [
   'verifiedWaterways',
@@ -101,6 +104,9 @@ export function App() {
   const [mobileSheetMode, setMobileSheetMode] = useState<'peek' | 'half' | 'full'>('peek');
   const [infoModalTab, setInfoModalTab] = useState<InfoModalTab | null>(null);
   const [feedbackOpen, setFeedbackOpen] = useState(false);
+  const [simDisclaimerOpen, setSimDisclaimerOpen] = useState(false);
+  const prevTabBeforeSimRef = useRef<TabId>('terrain');
+  const simPauseRef = useRef<() => void>(() => {});
   const [layers, setLayers] = useState<LayerToggles>(DEFAULT_LAYERS);
 
   const [activeTool, setActiveTool] = useState<ActiveTool>(null);
@@ -163,6 +169,19 @@ export function App() {
       if (prevTab !== 'sim' && nextTab === 'sim') {
         preSimBasemapRef.current = basemapRef.current;
         setBasemap('relief');
+        let seen = false;
+        try {
+          seen =
+            window.sessionStorage.getItem(SIM_DISCLAIMER_SESSION_KEY) === '1' ||
+            window.localStorage.getItem(SIM_DISCLAIMER_HIDE_KEY) === '1';
+        } catch {
+          seen = false;
+        }
+        if (!seen) {
+          prevTabBeforeSimRef.current = prevTab;
+          simPauseRef.current();
+          setSimDisclaimerOpen(true);
+        }
       } else if (prevTab === 'sim' && nextTab !== 'sim') {
         const saved = preSimBasemapRef.current;
         setBasemap(viewMode === 'simple' && saved !== 'sat' && saved !== 'osm' ? 'sat' : saved);
@@ -193,6 +212,7 @@ export function App() {
     calibrationMarks: editor.calibrationMarks,
     calibrationProfile: editor.calibrationProfile
   });
+  simPauseRef.current = () => sim.setSimPlaying(false);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -917,6 +937,33 @@ export function App() {
           }
         }}
         onClose={() => setFeedbackOpen(false)}
+      />
+
+      <SimulationDisclaimerModal
+        open={simDisclaimerOpen}
+        lang={lang}
+        onConfirm={dontShowAgain => {
+          try {
+            window.sessionStorage.setItem(SIM_DISCLAIMER_SESSION_KEY, '1');
+            if (dontShowAgain) window.localStorage.setItem(SIM_DISCLAIMER_HIDE_KEY, '1');
+          } catch {
+            // ignore storage errors
+          }
+          setSimDisclaimerOpen(false);
+        }}
+        onCancel={() => {
+          setSimDisclaimerOpen(false);
+          handleTabChange(prevTabBeforeSimRef.current);
+        }}
+        onOpenSources={() => {
+          try {
+            window.sessionStorage.setItem(SIM_DISCLAIMER_SESSION_KEY, '1');
+          } catch {
+            // ignore storage errors
+          }
+          setSimDisclaimerOpen(false);
+          setInfoModalTab('method');
+        }}
       />
 
       <InfoDataModal

@@ -125,10 +125,11 @@ export const I18N = {
     rainPresetLight: 'Ringan',
     rainPresetMed: 'Sedang',
     rainPresetHeavy: 'Lebat',
+    rainPresetVeryHeavy: 'Sangat Lebat',
     rainPresetExtreme: 'Ekstrem',
-    rainLight: 'Ringan (5)',
-    rainHeavy: 'Lebat (80)',
-    rainExtreme: 'Ekstrem (150)',
+    rainLight: 'Ringan (1)',
+    rainHeavy: 'Sangat Lebat (40)',
+    rainExtreme: 'Ekstrem (>50)',
     lblDrainState: 'Kondisi saluran',
     lblDrainShortSimple: 'Kondisi saluran',
     lblDrainShort: 'Kondisi saluran',
@@ -152,16 +153,16 @@ export const I18N = {
     forestDeg50: '-50% Pohon',
     presetQuickTitle: 'Skenario cepat',
     presetCustom: 'Atur manual',
-    presetNormal: 'Hujan Normal (2 jam)',
-    presetUpland: 'Hujan Lebat Hulu (6 jam)',
-    presetExtreme: 'Hujan Menerus 2 Hari (48 jam)',
+    presetNormal: 'Hujan Normal (2 jam · 30 mm)',
+    presetUpland: 'Hujan Lebat Hulu (3 jam · 120 mm)',
+    presetExtreme: 'Hujan Menerus 2 Hari (48 jam · 336 mm)',
     agamCalibrationBadge: 'Data Peta Terbuka Pemkab Agam',
     infoScenario:
       'Pilih skenario cepat untuk langsung memuat pengaturan & memutar simulasi, atau ubah parameter secara manual di bawah (otomatis beralih ke Atur manual).',
     infoRainIntensity:
-      'Laju curah hujan per jam yang dimasukkan ke model. Acuan kategori BMKG: Ringan (<20), Sedang (20–50), Lebat (50–100), dan Ekstrem (>100 mm/jam).',
+      'Laju curah hujan rata-rata per jam selama durasi skenario. Kategori operasional BMKG: Ringan (<5), Sedang (5–<10), Lebat (10–<20), Sangat Lebat (20–50), dan Ekstrem (>50 mm/jam).',
     infoDuration:
-      'Lama durasi hujan pada simulasi (30 mnt hingga 72 jam / 3 hari) dengan batas atas intensitas IDF Sumatera Barat agar total hujan tetap realistis. Hujan menerus multi-hari mengisi tampungan tanah Andosol secara bertahap hingga jenuh air dan memicu kejenuhan lereng serta luapan lembah.',
+      'Lama durasi hujan pada simulasi (30 mnt hingga 72 jam / 3 hari) dengan batas atas kurva IDF Mononobe dari seri ERA5-Land 41 tahun terkoreksi BMKG Padang Panjang & Sicincin agar total hujan tetap realistis.',
     infoSoilMoisture:
       'Kondisi awal kelembapan tanah pada rumus SCS-CN. Tanah yang jenuh air menaikkan limpasan permukaan dan indeks kejenuhan lereng dalam perhitungan model.',
     infoDrainState:
@@ -481,10 +482,11 @@ export const I18N = {
     rainPresetLight: 'Light',
     rainPresetMed: 'Moderate',
     rainPresetHeavy: 'Heavy',
+    rainPresetVeryHeavy: 'Very Heavy',
     rainPresetExtreme: 'Extreme',
-    rainLight: 'Light (5)',
-    rainHeavy: 'Heavy (80)',
-    rainExtreme: 'Extreme (150)',
+    rainLight: 'Light (1)',
+    rainHeavy: 'Very Heavy (40)',
+    rainExtreme: 'Extreme (>50)',
     lblDrainState: 'Channel condition',
     lblDrainShortSimple: 'Channel condition',
     lblDrainShort: 'Channel condition',
@@ -508,16 +510,16 @@ export const I18N = {
     forestDeg50: '-50% Trees',
     presetQuickTitle: 'Quick input scenarios',
     presetCustom: 'Custom (manual)',
-    presetNormal: 'Normal Rain (2h)',
-    presetUpland: 'Heavy Upland (6h)',
-    presetExtreme: '2-Day Continuous (48h)',
+    presetNormal: 'Normal Rain (2h · 30 mm)',
+    presetUpland: 'Heavy Upland (3h · 120 mm)',
+    presetExtreme: '2-Day Continuous (48h · 336 mm)',
     agamCalibrationBadge: 'Pemkab Agam Open Map Inputs',
     infoScenario:
       'Choose a quick input scenario to load parameters and start playback immediately, or tweak controls below (switches to Custom).',
     infoRainIntensity:
-      'Hourly rainfall rate used as model input. BMKG category reference: Light (<20), Moderate (20–50), Heavy (50–100), and Extreme (>100 mm/hr).',
+      'Mean hourly rainfall intensity across the storm duration. Official BMKG hourly classes: Light (<5), Moderate (5–<10), Heavy (10–<20), Very Heavy (20–50), Extreme (>50 mm/hr).',
     infoDuration:
-      'Storm duration parameter (30 min up to 72 hr / 3 days) paired with an upper-bound West Sumatra IDF intensity cap so total storm rainfall remains physically plausible. Multi-day continuous rainfall progressively saturates porous volcanic Andosol storage, triggering slope saturation and valley overflow.',
+      'Storm duration parameter (30 min up to 72 hr / 3 days) paired with a Mononobe IDF cap derived from 41-yr ERA5-Land daily rainfall bias-corrected to BMKG Padang Panjang & Sicincin.',
     infoSoilMoisture:
       'Initial soil-wetness parameter in the SCS-CN equation. Saturated values raise modeled surface runoff and slope saturation index.',
     infoDrainState:
