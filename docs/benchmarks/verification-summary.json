@@ -1,0 +1,157 @@
+{
+  "generatedAt": "2026-11-26T06:14:40.591Z",
+  "regionId": "nagari-balingka",
+  "regionName": "Nagari Balingka",
+  "analytical": {
+    "scsCnAnalytical": {
+      "cn": 72,
+      "sMm": 98.78,
+      "iaMm": 13.83,
+      "samplePoints": 15,
+      "r2": 1,
+      "nse": 1,
+      "rmseMm": 0.028
+    },
+    "muskingumChannel": {
+      "reachCount": 10,
+      "channelLengthKm": 2.5,
+      "peakRainMin": 27.8,
+      "peakOutletMin": 47.1,
+      "lagMin": 19.3,
+      "peakOutletQ": 38.75,
+      "minQ": 0.0035,
+      "generatedRunoffVolM3": 164247,
+      "routedOutVolM3": 154303,
+      "volumeBalanceDiffPct": -6.05
+    },
+    "fhwaHds5Orifice": {
+      "maxRelErrPct": 0.147,
+      "cases": [
+        {
+          "label": "Pipe Ø 0.80m",
+          "qModelM3s": 1.14,
+          "qAnalyticalM3s": 1.14,
+          "relErrPct": 0.147
+        },
+        {
+          "label": "Box 1.50m × 1.20m",
+          "qModelM3s": 5.31,
+          "qAnalyticalM3s": 5.31,
+          "relErrPct": 0.086
+        },
+        {
+          "label": "Bridge 4.0m × 2.5m",
+          "qModelM3s": 47.31,
+          "qAnalyticalM3s": 47.31,
+          "relErrPct": 0.002
+        }
+      ]
+    },
+    "waterBalanceClosure": {
+      "maxAbsClosureErrorPct": 0,
+      "scenarios": [
+        {
+          "scenario": "normal_2h_dry",
+          "rainInputMm": 31.684,
+          "interceptionMm": 19.113,
+          "totalRunoffMm": 2.218,
+          "soilStorageDeltaMm": 10.184,
+          "deepPercolationMm": 0.169,
+          "closureErrorPct": 0,
+          "peakDischargeM3s": 4.7,
+          "floodAreaHa": 0,
+          "landslideAreaHa": 0.1
+        },
+        {
+          "scenario": "upland_3h_clogged",
+          "rainInputMm": 107.123,
+          "interceptionMm": 12.235,
+          "totalRunoffMm": 64.398,
+          "soilStorageDeltaMm": 28.65,
+          "deepPercolationMm": 1.841,
+          "closureErrorPct": 0,
+          "peakDischargeM3s": 125.8,
+          "floodAreaHa": 2.2,
+          "landslideAreaHa": 1.6
+        },
+        {
+          "scenario": "monsoon_48h_surge",
+          "rainInputMm": 274.984,
+          "interceptionMm": 10.958,
+          "totalRunoffMm": 199.712,
+          "soilStorageDeltaMm": 38.849,
+          "deepPercolationMm": 25.464,
+          "closureErrorPct": 0,
+          "peakDischargeM3s": 140.7,
+          "floodAreaHa": 2.6,
+          "landslideAreaHa": 17.1
+        }
+      ]
+    },
+    "browserEngineLatencyMs": {
+      "normal_2h_dry": {
+        "medianMs": 58.63,
+        "p95Ms": 117.56
+      },
+      "upland_3h_clogged": {
+        "medianMs": 48.4,
+        "p95Ms": 52.46
+      },
+      "monsoon_48h_surge": {
+        "medianMs": 106.63,
+        "p95Ms": 124.76
+      }
+    }
+  },
+  "nasaPowerCrossCheck": {
+    "available": true,
+    "source": "NASA POWER Daily Agroclimatology (PRECTOTCORR, ~0.5° MERRA-2 + satellite blend)",
+    "period": "1985-01-01 – 2025-12-31",
+    "yearsCount": 41,
+    "daysCount": 14975,
+    "meanAnnualMm": 3419,
+    "returnPeriodsMm": {
+      "r24": {
+        "max41yr": 221,
+        "t2": 109,
+        "t10Gumbel": 160,
+        "t10Lp3": 159,
+        "t50Gumbel": 204,
+        "t50Lp3": 213,
+        "t100Gumbel": 223,
+        "t100Lp3": 239
+      },
+      "r48": {
+        "max41yr": 247,
+        "t2": 151,
+        "t10Gumbel": 204,
+        "t10Lp3": 205,
+        "t50Gumbel": 250,
+        "t50Lp3": 250,
+        "t100Gumbel": 270,
+        "t100Lp3": 269
+      },
+      "r72": {
+        "max41yr": 275,
+        "t2": 171,
+        "t10Gumbel": 231,
+        "t10Lp3": 232,
+        "t50Gumbel": 284,
+        "t50Lp3": 283,
+        "t100Gumbel": 307,
+        "t100Lp3": 305
+      }
+    },
+    "comparison": {
+      "era5RawMeanAnnualMm": 3919,
+      "era5BmkgCorrectedMeanAnnualMm": 4203,
+      "nasaPowerMeanAnnualMm": 3419,
+      "era5BmkgR24T100": 259,
+      "nasaPowerR24T100": 223,
+      "era5BmkgR48T100": 337,
+      "nasaPowerR48T100": 270,
+      "era5BmkgR72T100": 380,
+      "nasaPowerR72T100": 307
+    }
+  }
+}

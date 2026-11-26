@@ -115,6 +115,7 @@ export interface PointSimDiagnostics {
 export interface EvaluateOptions {
   skipValidation?: boolean;
   validationSplit?: 'all' | 'calibration' | 'holdout';
+  nominalOnly?: boolean;
 }
 
 export class CascadeEngine {
@@ -665,7 +666,8 @@ export class CascadeEngine {
       cal ? `${cal.manningMult}|${cal.cnOffset}|${cal.cohesionMult}` : '',
       this.calibrationMarks.length,
       opts?.skipValidation ? 1 : 0,
-      activeSplitMode
+      activeSplitMode,
+      opts?.nominalOnly ? 1 : 0
     ].join('|');
 
     if (evalKey === this.lastEvalKey && this.lastEvalKpis) {
@@ -825,8 +827,9 @@ export class CascadeEngine {
       cumSedM3ByCheckpoint: slopeRes.cumSedM3ByCheckpoint
     };
 
-    // 3. Run 7-Scenario Deterministic Sensitivity Hydraulic Ensemble (strictly causal)
-    const M = SIGMA_ENSEMBLE_MEMBERS.length;
+    // 3. Run Deterministic Hydraulic Routing (full 7-scenario envelope, or fast nominalOnly for LHS sweeps)
+    const nominalOnly = Boolean(opts?.nominalOnly);
+    const M = nominalOnly ? 1 : SIGMA_ENSEMBLE_MEMBERS.length;
     const routedMembers: RoutedReachState[] = new Array(M);
     for (let m = 0; m < M; m++) {
       routedMembers[m] = routeReachNetwork({
@@ -842,17 +845,19 @@ export class CascadeEngine {
     }
 
     // Counterfactual cleared run on nominal member for exact culvert-clearing reduction %
-    const clearedRef = routeReachNetwork({
-      network: net,
-      minElevM: this.fields.minElev,
-      params,
-      member: SIGMA_ENSEMBLE_MEMBERS[0],
-      hyetographSteps: steps,
-      dtMin,
-      targetStepIdx,
-      reachSedimentSeries,
-      forceClearedCrossings: true
-    });
+    const clearedRef = nominalOnly
+      ? routedMembers[0]
+      : routeReachNetwork({
+          network: net,
+          minElevM: this.fields.minElev,
+          params,
+          member: SIGMA_ENSEMBLE_MEMBERS[0],
+          hyetographSteps: steps,
+          dtMin,
+          targetStepIdx,
+          reachSedimentSeries,
+          forceClearedCrossings: true
+        });
 
     const nom = routedMembers[0];
     this.lastRoutedNominal = nom;

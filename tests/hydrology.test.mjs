@@ -58,6 +58,12 @@ import {
   deriveMononobeIdfEnvelope,
   buildClimateBaselineFromDailySeries
 } from '../scripts/lib/climate-fetcher.mjs';
+import {
+  generateLatinHypercube,
+  computeSpearmanRankCorrelation,
+  runSensitivityAnalysis
+} from '../scripts/lib/sensitivity.mjs';
+import { runAnalyticalVerifications } from '../scripts/lib/verification-benchmarks.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT_DIR = path.resolve(__dirname, '..');
@@ -1953,4 +1959,71 @@ test('Phase 2 multi-village portability: synthetic climate statistics, IDF bound
     clayKpis.effectiveRunoffMm > karstKpis.effectiveRunoffMm,
     `alluvial_clay runoff (${clayKpis.effectiveRunoffMm} mm) must exceed permeable karst_limestone (${karstKpis.effectiveRunoffMm} mm)`
   );
+});
+
+test('Phase 3 paper benchmarks: LHS stratification, nominalOnly parity, sensitivity sweep, and analytical verification', t => {
+  // 1. Stratified Latin Hypercube determinism & uniform coverage across strata
+  const nLhs = 20;
+  const lhsA = generateLatinHypercube(nLhs, 4, 2026);
+  const lhsB = generateLatinHypercube(nLhs, 4, 2026);
+  assert.equal(lhsA.length, nLhs);
+  assert.deepEqual(Array.from(lhsA[0]), Array.from(lhsB[0]));
+  for (let d = 0; d < 4; d++) {
+    const strataHit = new Set(lhsA.map(row => Math.floor(row[d] * nLhs)));
+    assert.equal(strataHit.size, nLhs, `dimension ${d} must place exactly 1 sample in each stratum`);
+  }
+  assert.equal(computeSpearmanRankCorrelation([1, 2, 3, 4, 5], [10, 20, 30, 40, 50]), 1);
+  assert.equal(computeSpearmanRankCorrelation([1, 2, 3, 4, 5], [50, 40, 30, 20, 10]), -1);
+
+  const simPath = path.join(DATA_DIR, 'sim-fields.json');
+  if (!fs.existsSync(simPath)) {
+    t.skip('sim-fields.json not present yet');
+    return;
+  }
+  const simFields = JSON.parse(fs.readFileSync(simPath, 'utf8'));
+  const settlements = fs.existsSync(path.join(DATA_DIR, 'settlements.geojson'))
+    ? JSON.parse(fs.readFileSync(path.join(DATA_DIR, 'settlements.geojson'), 'utf8'))
+    : { type: 'FeatureCollection', features: [] };
+  const engine = new CascadeEngine(simFields, extractBuildingCentroids(settlements), 37);
+
+  // 2. nominalOnly fast path matches full evaluation bit-for-bit on nominal metrics
+  const probeScenario = {
+    rainMmHr: 40,
+    durationMin: 180,
+    progress: 0.78,
+    soilMoisture: 'moist',
+    antecedent5dMm: 65,
+    rainPattern: 'upland',
+    drainCondition: 'clogged',
+    forestScenario: 'actual',
+    hyetograph: 'alternating_block',
+    debrisCoupling: 'coupled'
+  };
+  const full = engine.evaluate(probeScenario, { skipValidation: true });
+  const fast = engine.evaluate(probeScenario, { skipValidation: true, nominalOnly: true });
+  assert.equal(fast.peakDischargeM3s, full.peakDischargeM3s);
+  assert.equal(fast.floodAreaHa, full.floodAreaHa);
+  assert.equal(fast.landslideAreaHa, full.landslideAreaHa);
+  assert.equal(fast.effectiveRunoffMm, full.effectiveRunoffMm);
+  assert.deepEqual(fast.waterBalance, full.waterBalance);
+
+  // 3. Fast offline LHS + Morris sensitivity check
+  const sens = runSensitivityAnalysis({
+    engine,
+    baseScenario: probeScenario,
+    nLhs: 12,
+    morrisTrajectories: 2,
+    seed: 99
+  });
+  assert.ok(sens.distributions.peakDischargeM3s.p10 <= sens.distributions.peakDischargeM3s.p50);
+  assert.ok(sens.distributions.peakDischargeM3s.p50 <= sens.distributions.peakDischargeM3s.p90);
+  assert.ok(sens.morris.landslideAreaHa.every(r => r.muStar >= 0));
+  assert.ok(sens.spearman.peakDischargeM3s.every(r => Number.isFinite(r.rho)));
+
+  // 4. Analytical solver verification checks (SCS-CN, Muskingum-Cunge, FHWA HDS-5, Water Balance)
+  const ver = runAnalyticalVerifications({ simFields, settlements: null });
+  assert.ok(ver.scsCnAnalytical.r2 > 0.999, `expected SCS-CN analytical R2 > 0.999, got ${ver.scsCnAnalytical.r2}`);
+  assert.ok(ver.fhwaHds5Orifice.maxRelErrPct < 0.5, `expected HDS-5 error < 0.5%, got ${ver.fhwaHds5Orifice.maxRelErrPct}`);
+  assert.ok(ver.muskingumChannel.minQ >= 0 && ver.muskingumChannel.lagMin > 0);
+  assert.ok(ver.waterBalanceClosure.maxAbsClosureErrorPct < 0.05);
 });
