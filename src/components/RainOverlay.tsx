@@ -7,6 +7,8 @@ interface RainOverlayProps {
   intensityMmHr: number;
   rainPattern?: RainPattern;
   uplandBbox?: BBox | null;
+  stormCore?: [number, number] | null;
+  isRecession?: boolean;
   mapControlRef?: RefObject<MapControlHandle | null>;
 }
 
@@ -83,13 +85,15 @@ export function RainOverlay({
   intensityMmHr,
   rainPattern = 'uniform',
   uplandBbox = null,
+  stormCore = null,
+  isRecession = false,
   mapControlRef
 }: RainOverlayProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
   useEffect(() => {
     const canvas = canvasRef.current;
-    if (!canvas || !active || intensityMmHr <= 0) return;
+    if (!canvas || !active || intensityMmHr <= 0 || isRecession) return;
     if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
 
     const ctx = canvas.getContext('2d');
@@ -101,6 +105,8 @@ export function RainOverlay({
     const baseVy = 12 + norm * 16;
     const baseLen = 11 + norm * 22;
     const isUpland = rainPattern === 'upland';
+    const isStormCore = rainPattern === 'storm_core' && Boolean(stormCore);
+    const isTargeted = isUpland || isStormCore;
 
     let width = 0;
     let height = 0;
@@ -109,8 +115,18 @@ export function RainOverlay({
     let fadeAlpha = 0;
     let lastTs = performance.now();
 
-    const getRegion = () =>
-      getUplandScreenRegion(width, height, uplandBbox, mapControlRef?.current?.projectLngLat);
+    const getRegion = (): ScreenUplandRegion => {
+      if (isStormCore && stormCore) {
+        const coreBox: BBox = {
+          west: stormCore[0] - 0.015,
+          east: stormCore[0] + 0.015,
+          south: stormCore[1] - 0.015,
+          north: stormCore[1] + 0.015
+        };
+        return getUplandScreenRegion(width, height, coreBox, mapControlRef?.current?.projectLngLat);
+      }
+      return getUplandScreenRegion(width, height, uplandBbox, mapControlRef?.current?.projectLngLat);
+    };
 
     const spawnDrop = (randomY: boolean, uplandTarget: boolean, region: ScreenUplandRegion): Drop => {
       const rRoll = Math.random();
@@ -147,7 +163,7 @@ export function RainOverlay({
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       const region = getRegion();
       drops = Array.from({ length: dropCount }, (_, idx) =>
-        spawnDrop(true, isUpland && idx < dropCount * 0.8, region)
+        spawnDrop(true, isTargeted && idx < dropCount * 0.82, region)
       );
     };
 
@@ -169,7 +185,7 @@ export function RainOverlay({
       const pitchForeshorten = 0.76 + 0.24 * Math.cos(pitchRad);
       const windVx = baseWindVx + Math.sin(bearingRad) * (0.8 + norm * 1.2);
 
-      const region = isUpland ? getRegion() : null;
+      const region = isTargeted ? getRegion() : null;
 
       ctx.save();
       ctx.globalAlpha = fadeAlpha;
@@ -180,17 +196,17 @@ export function RainOverlay({
         const lenY = d.len * pitchForeshorten;
         const dx = windVx * (d.len / baseLen);
 
-        // Subtle shadow backing on foreground drops only so streaks read crisply over bright roofs
+        // Calm daylight slate-ocean streaks with subtle highlight on foreground drops so rain reads crisply over Relief
         if (d.depth === 2) {
-          ctx.strokeStyle = 'rgba(15, 23, 42, 0.16)';
-          ctx.lineWidth = d.width + 0.4;
+          ctx.strokeStyle = `rgba(224, 242, 254, ${(d.alpha * 0.48).toFixed(2)})`;
+          ctx.lineWidth = d.width + 0.45;
           ctx.beginPath();
-          ctx.moveTo(d.x + 0.8, d.y + 0.4);
-          ctx.lineTo(d.x + dx + 0.8, d.y + lenY + 0.4);
+          ctx.moveTo(d.x + 0.7, d.y + 0.3);
+          ctx.lineTo(d.x + dx + 0.7, d.y + lenY + 0.3);
           ctx.stroke();
         }
 
-        ctx.strokeStyle = `rgba(224, 242, 254, ${d.alpha.toFixed(2)})`;
+        ctx.strokeStyle = `rgba(12, 74, 110, ${(d.alpha * 0.72).toFixed(2)})`;
         ctx.lineWidth = d.width;
         ctx.beginPath();
         ctx.moveTo(d.x, d.y);
@@ -219,15 +235,15 @@ export function RainOverlay({
       ro.disconnect();
       ctx.clearRect(0, 0, width, height);
     };
-  }, [active, intensityMmHr, rainPattern, uplandBbox, mapControlRef]);
+  }, [active, intensityMmHr, rainPattern, uplandBbox, stormCore, isRecession, mapControlRef]);
 
-  if (!active || intensityMmHr <= 0) return null;
+  if (!active || intensityMmHr <= 0 || isRecession) return null;
 
   return (
     <canvas
       ref={canvasRef}
       aria-hidden="true"
-      className="pointer-events-none absolute inset-0 z-11 h-full w-full"
+      className="pointer-events-none absolute inset-0 z-[3] h-full w-full"
     />
   );
 }

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Info, Layers, Minus, Plus, X } from 'lucide-react';
-import { I18N } from '../i18n/translations';
+import { useT } from '../context/RegionContext';
 import type {
   BasemapId,
   DrainageStatus,
@@ -78,6 +78,8 @@ interface TelemetryDockProps {
   onToggleLayer: (key: keyof LayerToggles, val: boolean) => void;
   onToggleSimVerifiedWaterways?: (val: boolean) => void;
   onToggleSimRbiRivers?: (val: boolean) => void;
+  onToggleSimOsmRoads?: (val: boolean) => void;
+  onToggleSimDemFlows?: (val: boolean) => void;
   onChangeFlowDensity: (density: number) => void;
   onZoomIn: () => void;
   onZoomOut: () => void;
@@ -103,6 +105,8 @@ export function TelemetryDock({
   onToggleLayer,
   onToggleSimVerifiedWaterways,
   onToggleSimRbiRivers,
+  onToggleSimOsmRoads,
+  onToggleSimDemFlows,
   onChangeFlowDensity,
   onZoomIn,
   onZoomOut,
@@ -112,7 +116,7 @@ export function TelemetryDock({
   const [mobileOpen, setMobileOpen] = useState(false);
   const [attribOpen, setAttribOpen] = useState(false);
   const attribRef = useRef<HTMLDivElement | null>(null);
-  const t = I18N[lang];
+  const t = useT(lang);
   const isEn = lang === 'en';
   const isDetail = viewMode === 'detail';
   const scale = computeMetricScale(mapCamera.metersPerPixel);
@@ -262,11 +266,18 @@ export function TelemetryDock({
       onChange: v => (onToggleSimRbiRivers ? onToggleSimRbiRivers(v) : onToggleLayer('agamRbiRivers', v))
     });
     mobileToggleItems.push({
-      id: 'set',
-      label: t.lblSettlements,
-      icon: 'settlements',
-      checked: layers.settlements,
-      onChange: v => onToggleLayer('settlements', v)
+      id: 'sim-osm',
+      label: t.lblOsmContext,
+      icon: 'osm',
+      checked: layers.osmContext,
+      onChange: v => (onToggleSimOsmRoads ? onToggleSimOsmRoads(v) : onToggleLayer('osmContext', v))
+    });
+    mobileToggleItems.push({
+      id: 'sim-flow',
+      label: isDetail ? t.lblFlowDetail : t.lblFlowSimple,
+      icon: 'flow',
+      checked: flowDensity > 0,
+      onChange: v => (onToggleSimDemFlows ? onToggleSimDemFlows(v) : onChangeFlowDensity(v ? 1 : 0))
     });
     mobileToggleItems.push({
       id: 'evac',
@@ -437,20 +448,20 @@ export function TelemetryDock({
               {tab === 'sim' && simProgress > 0.03 && (
                 <div className="mb-2 flex flex-col gap-1 border-b border-[#161c1a]/10 pb-2 text-[12px]">
                   <div className="flex items-center gap-2 text-[#161c1a]">
-                    <LegendIcon kind="flow" size={16} />
-                    <span>{isEn ? 'Modeled flow direction (DEM)' : 'Arah aliran simulasi (DEM)'}</span>
+                    <span className="h-2.5 w-2.5 shrink-0 rounded-[2px] bg-[#0369a1]/70" />
+                    <span>{isEn ? '> 1.0 m · Deep river channel' : '> 1,0 m · Alur sungai dalam'}</span>
                   </div>
                   <div className="flex items-center gap-2 text-[#161c1a]">
-                    <span className="h-2.5 w-2.5 shrink-0 rounded-[2px] bg-[#0369a1]" />
-                    <span>{isEn ? 'Deep basin (>1.5m HAND)' : 'Cekungan utama (>1,5 m HAND)'}</span>
+                    <span className="h-2.5 w-2.5 shrink-0 rounded-[2px] border border-[#0369a1]/55 bg-[#38bdf8]/40" />
+                    <span>{isEn ? '0.3–1.0 m · Moderate basin depth' : '0,3–1,0 m · Cekungan sedang'}</span>
                   </div>
                   <div className="flex items-center gap-2 text-[#161c1a]">
-                    <span className="h-2.5 w-2.5 shrink-0 rounded-[2px] bg-[#7dd3fc]" />
-                    <span>{isEn ? 'Shallow basin (HAND)' : 'Cekungan dangkal (HAND)'}</span>
+                    <span className="h-2.5 w-2.5 shrink-0 rounded-[2px] border border-dashed border-[#0284c7]/70 bg-[#7dd3fc]/30" />
+                    <span>{isEn ? '0.1–0.3 m · Shallow terrain flow' : '0,1–0,3 m · Aliran dangkal'}</span>
                   </div>
                   <div className="flex items-center gap-2 text-[#161c1a]">
                     <span className="h-2.5 w-2.5 shrink-0 rounded-[2px] bg-[#ea580c]" />
-                    <span>{isEn ? 'Saturated steep slope (model)' : 'Lereng curam jenuh air'}</span>
+                    <span>{isEn ? 'Steep slope FoS < 1.1 (model)' : 'Lereng curam FoS < 1,1 (model)'}</span>
                   </div>
                 </div>
               )}

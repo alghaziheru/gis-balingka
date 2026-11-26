@@ -113,5 +113,10 @@
     "bigDesaGdbName": "BATASWILAYAH_DESA_20260601.gdb",
     "bigRbiDasName": "MASANG KIRI"
   },
+  "hydrology": {
+    "soilProfile": "volcanic_andosol",
+    "climateBiasFactor": 1.073,
+    "climateSourceNote": "BMKG Padang Panjang (96165) & Sicincin (96167) monthly bias correction"
+  },
   "repositoryUrl": "https://github.com/alghaziheru/gis-balingka"
 }

@@ -231,6 +231,31 @@ export const GLOSSARY_ENTRIES: GlossaryEntry[] = [
     ]
   },
   {
+    id: 'hydrograph',
+    termId: 'Hidrograf & Debit Aliran (Q)',
+    termEn: 'Hydrograph & Discharge (Q)',
+    shortId: 'Grafik perubahan volume aliran sungai dari waktu ke waktu (m³/s)',
+    shortEn: 'Streamflow volume curve over time (m³/s)',
+    descId:
+      'Grafik yang menyandingkan curah hujan dari waktu ke waktu (batang biru atas) dengan perkiraan laju volume air di saluran utama Q dalam meter kubik per detik (garis biru). Kurva menunjukkan waktu naik menuju puncak, fase surut setelah hujan berhenti, serta rentang sensitivitas 7 skenario (Rendah–Tinggi, bukan persentil statistik) karena model belum terkalibrasi alat ukur sungai (AWLR).',
+    descEn:
+      'A chart pairing rainfall input over time (top blue bars) with estimated main-channel flow rate Q in cubic meters per second (blue curve). Shows rising lag to peak flow, post-storm recession drain, and a 7-scenario sensitivity envelope (Low–High, not calibrated statistical percentiles) because the model is not yet calibrated against a physical river gauge.',
+    links: [
+      {
+        kind: 'article',
+        labelId: 'Baca tentang Hidrograf (Wikipedia)',
+        labelEn: 'Hydrograph on Wikipedia',
+        href: 'https://en.wikipedia.org/wiki/Hydrograph'
+      },
+      {
+        kind: 'video',
+        labelId: 'Video cara membaca Hidrograf',
+        labelEn: 'How to read a hydrograph',
+        href: 'https://www.youtube.com/results?search_query=what+is+a+hydrograph+explained'
+      }
+    ]
+  },
+  {
     id: 'rain-intensity',
     termId: 'Intensitas Hujan (mm/jam)',
     termEn: 'Rainfall Intensity (mm/hr)',

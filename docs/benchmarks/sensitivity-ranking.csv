@@ -1,0 +1,37 @@
+scenario,output_metric,factor_id,factor_label,spearman_rho,spearman_share_pct,morris_mu_star,morris_mu_star_share_pct,morris_sigma
+upland_3h,peakDischargeM3s,antecedent5dMm,"5-Day Antecedent Rain (P5)",0.8296,70.3,133.233,52.4,18.518
+upland_3h,peakDischargeM3s,rainScale,"Rainfall Multiplier",0.5264,28.3,96.500,37.9,11.601
+upland_3h,peakDischargeM3s,cnOffset,"SCS Curve Number Offset",0.0968,1.0,19.583,7.7,9.535
+upland_3h,peakDischargeM3s,manningMult,"Manning Roughness Multiplier",0.0392,0.2,5.100,2.0,0.793
+upland_3h,peakDischargeM3s,cohesionMult,"Soil Cohesion Multiplier",-0.0090,0.0,0.017,0.0,0.058
+upland_3h,peakDischargeM3s,culvertBlockagePct,"Culvert Blockage Ratio",-0.0579,0.3,0.000,0.0,0.000
+upland_3h,floodAreaHa,antecedent5dMm,"5-Day Antecedent Rain (P5)",0.7320,55.1,7.050,33.7,4.384
+upland_3h,floodAreaHa,manningMult,"Manning Roughness Multiplier",0.4396,19.9,7.050,33.7,4.026
+upland_3h,floodAreaHa,rainScale,"Rainfall Multiplier",0.4701,22.7,5.000,23.9,3.759
+upland_3h,floodAreaHa,cnOffset,"SCS Curve Number Offset",0.1354,1.9,1.133,5.4,1.371
+upland_3h,floodAreaHa,culvertBlockagePct,"Culvert Blockage Ratio",0.0660,0.4,0.617,3.0,0.600
+upland_3h,floodAreaHa,cohesionMult,"Soil Cohesion Multiplier",-0.0016,0.0,0.050,0.2,0.134
+upland_3h,landslideAreaHa,cohesionMult,"Soil Cohesion Multiplier",-0.9325,86.8,21.400,53.2,21.650
+upland_3h,landslideAreaHa,rainScale,"Rainfall Multiplier",0.2658,7.1,10.983,27.3,11.960
+upland_3h,landslideAreaHa,antecedent5dMm,"5-Day Antecedent Rain (P5)",0.2267,5.1,6.883,17.1,9.490
+upland_3h,landslideAreaHa,cnOffset,"SCS Curve Number Offset",0.0553,0.3,0.950,2.4,1.502
+upland_3h,landslideAreaHa,manningMult,"Manning Roughness Multiplier",0.0463,0.2,0.000,0.0,0.000
+upland_3h,landslideAreaHa,culvertBlockagePct,"Culvert Blockage Ratio",-0.0677,0.5,0.000,0.0,0.000
+monsoon_48h,peakDischargeM3s,rainScale,"Rainfall Multiplier",0.8321,80.1,70.267,48.5,8.956
+monsoon_48h,peakDischargeM3s,culvertBlockagePct,"Culvert Blockage Ratio",0.3722,16.0,44.050,30.4,37.274
+monsoon_48h,peakDischargeM3s,antecedent5dMm,"5-Day Antecedent Rain (P5)",0.1761,3.6,19.250,13.3,4.553
+monsoon_48h,peakDischargeM3s,cnOffset,"SCS Curve Number Offset",0.0438,0.2,9.950,6.9,6.690
+monsoon_48h,peakDischargeM3s,manningMult,"Manning Roughness Multiplier",-0.0185,0.0,0.967,0.7,0.239
+monsoon_48h,peakDischargeM3s,cohesionMult,"Soil Cohesion Multiplier",-0.0080,0.0,0.417,0.3,1.104
+monsoon_48h,floodAreaHa,manningMult,"Manning Roughness Multiplier",0.5092,29.4,4.850,36.9,4.842
+monsoon_48h,floodAreaHa,rainScale,"Rainfall Multiplier",0.6562,48.8,3.950,30.1,2.247
+monsoon_48h,floodAreaHa,culvertBlockagePct,"Culvert Blockage Ratio",0.3804,16.4,2.883,22.0,4.759
+monsoon_48h,floodAreaHa,antecedent5dMm,"5-Day Antecedent Rain (P5)",0.1973,4.4,1.000,7.6,1.404
+monsoon_48h,floodAreaHa,cnOffset,"SCS Curve Number Offset",0.0807,0.7,0.400,3.0,0.844
+monsoon_48h,floodAreaHa,cohesionMult,"Soil Cohesion Multiplier",-0.0489,0.3,0.050,0.4,0.124
+monsoon_48h,landslideAreaHa,cohesionMult,"Soil Cohesion Multiplier",-0.8866,79.3,66.517,56.1,30.190
+monsoon_48h,landslideAreaHa,rainScale,"Rainfall Multiplier",0.4304,18.7,41.050,34.6,26.451
+monsoon_48h,landslideAreaHa,antecedent5dMm,"5-Day Antecedent Rain (P5)",0.1214,1.5,9.483,8.0,8.597
+monsoon_48h,landslideAreaHa,cnOffset,"SCS Curve Number Offset",0.0158,0.0,1.600,1.3,1.629
+monsoon_48h,landslideAreaHa,manningMult,"Manning Roughness Multiplier",0.0421,0.2,0.000,0.0,0.000
+monsoon_48h,landslideAreaHa,culvertBlockagePct,"Culvert Blockage Ratio",-0.0508,0.3,0.000,0.0,0.000

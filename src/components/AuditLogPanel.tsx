@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Clock, Crosshair, RotateCcw } from 'lucide-react';
-import { I18N } from '../i18n/translations';
+import { useT } from '../context/RegionContext';
 import type { AuditLogEntry, Language } from '../types/gis';
 
 interface AuditLogPanelProps {
@@ -24,6 +24,10 @@ const ACTION_BADGE: Record<string, string> = {
   create_jorong: 'bg-[#047857]/12 text-[#047857]',
   update_jorong: 'bg-[#0369a1]/12 text-[#0369a1]',
   delete_jorong: 'bg-[#b91c1c]/12 text-[#b91c1c]',
+  create_calibration_mark: 'bg-[#047857]/12 text-[#047857]',
+  update_calibration_mark: 'bg-[#0369a1]/12 text-[#0369a1]',
+  delete_calibration_mark: 'bg-[#b91c1c]/12 text-[#b91c1c]',
+  update_calibration_profile: 'bg-[#0f766e]/12 text-[#0f766e]',
   promote_dem: 'bg-[#0284c7]/14 text-[#0369a1]',
   suppress_dem: 'bg-[#b45309]/14 text-[#b45309]',
   restore_dem: 'bg-[#047857]/12 text-[#047857]',
@@ -46,6 +50,10 @@ const ACTION_LABEL: Record<string, { id: string; en: string }> = {
   create_jorong: { id: 'Tambah Jorong', en: 'Add Jorong' },
   update_jorong: { id: 'Ubah Jorong', en: 'Update Jorong' },
   delete_jorong: { id: 'Hapus Jorong', en: 'Delete Jorong' },
+  create_calibration_mark: { id: 'Tambah Benchmark', en: 'Add Benchmark' },
+  update_calibration_mark: { id: 'Ubah Benchmark', en: 'Update Benchmark' },
+  delete_calibration_mark: { id: 'Hapus Benchmark', en: 'Delete Benchmark' },
+  update_calibration_profile: { id: 'Kalibrasi Model', en: 'Model Calibration' },
   promote_dem: { id: 'Verifikasi DEM', en: 'Verify DEM' },
   suppress_dem: { id: 'Sembunyikan DEM', en: 'Hide DEM' },
   restore_dem: { id: 'Pulihkan DEM', en: 'Restore DEM' },
@@ -112,7 +120,12 @@ function canRevertLog(log: AuditLogEntry): boolean {
   return (
     log.action !== 'seed' &&
     log.action !== 'recompute_hydrology' &&
-    (log.entity_type === 'waterway' || log.entity_type === 'structure' || log.entity_type === 'dem_segment')
+    (log.entity_type === 'waterway' ||
+      log.entity_type === 'structure' ||
+      log.entity_type === 'dem_segment' ||
+      log.entity_type === 'jorong' ||
+      log.entity_type === 'calibration_mark' ||
+      log.entity_type === 'calibration_profile')
   );
 }
 
@@ -124,7 +137,7 @@ export function AuditLogPanel({
   onRevert,
   onFlyToLog
 }: AuditLogPanelProps) {
-  const t = I18N[lang];
+  const t = useT(lang);
   const isEn = lang === 'en';
   const [confirmId, setConfirmId] = useState<number | null>(null);
   const [busyId, setBusyId] = useState<number | null>(null);

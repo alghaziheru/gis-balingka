@@ -104,5 +104,10 @@
     "bigDesaGdbName": "BATASWILAYAH_DESA_20260601.gdb",
     "bigRbiDasName": ""
   },
+  "hydrology": {
+    "soilProfile": "cambisol_loam",
+    "climateBiasFactor": 1.0,
+    "climateSourceNote": "Unadjusted 41-yr Open-Meteo ERA5-Land daily reanalysis (no local BMKG bias factor configured)"
+  },
   "repositoryUrl": "https://github.com/alghaziheru/gis-balingka"
 }

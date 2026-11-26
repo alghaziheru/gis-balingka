@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { Crosshair, Lock, MapPinPlus, Pencil, Trash2, Unlock } from 'lucide-react';
-import { I18N } from '../i18n/translations';
+import { useT } from '../context/RegionContext';
 import type {
   DrainageStatus,
   Language,
@@ -17,6 +17,9 @@ export interface ActiveEditingStructure {
   source: StructureSource;
   sourceRef?: string | null;
   sizeNote: string;
+  openingWidthM?: number | null;
+  openingHeightM?: number | null;
+  defaultBlockagePct?: number | null;
   notes: string;
   coordinates: [number, number];
 }
@@ -60,12 +63,15 @@ export function StructureEditorPanel({
   onDeleteStructure,
   onFlyToStructure
 }: StructureEditorPanelProps) {
-  const t = I18N[lang];
+  const t = useT(lang);
   const isEn = lang === 'en';
   const [name, setName] = useState('');
   const [kind, setKind] = useState<StructureKind>('culvert');
   const [status, setStatus] = useState<Exclude<DrainageStatus, 'unverified'>>('normal');
   const [sizeNote, setSizeNote] = useState('');
+  const [openingWidthStr, setOpeningWidthStr] = useState('');
+  const [openingHeightStr, setOpeningHeightStr] = useState('');
+  const [defaultBlockageStr, setDefaultBlockageStr] = useState('');
   const [notes, setNotes] = useState('');
   const [reason, setReason] = useState('');
   const [busy, setBusy] = useState(false);
@@ -76,6 +82,11 @@ export function StructureEditorPanel({
     setKind(editingStructure.kind);
     setStatus(editingStructure.status);
     setSizeNote(editingStructure.sizeNote);
+    setOpeningWidthStr(editingStructure.openingWidthM != null ? String(editingStructure.openingWidthM) : '');
+    setOpeningHeightStr(editingStructure.openingHeightM != null ? String(editingStructure.openingHeightM) : '');
+    setDefaultBlockageStr(
+      editingStructure.defaultBlockagePct != null ? String(editingStructure.defaultBlockagePct) : ''
+    );
     setNotes(editingStructure.notes);
     setReason(
       editingStructure.source === 'crossing_promoted'
@@ -89,6 +100,9 @@ export function StructureEditorPanel({
     if (!editingStructure || !name.trim()) return;
     setBusy(true);
     try {
+      const wVal = openingWidthStr.trim() === '' ? null : Number(openingWidthStr);
+      const hVal = openingHeightStr.trim() === '' ? null : Number(openingHeightStr);
+      const bVal = defaultBlockageStr.trim() === '' ? null : Number(defaultBlockageStr);
       await onSaveStructure(
         {
           ...editingStructure,
@@ -96,6 +110,10 @@ export function StructureEditorPanel({
           kind,
           status,
           sizeNote: sizeNote.trim(),
+          openingWidthM: wVal !== null && Number.isFinite(wVal) && wVal > 0 ? wVal : null,
+          openingHeightM: hVal !== null && Number.isFinite(hVal) && hVal > 0 ? hVal : null,
+          defaultBlockagePct:
+            bVal !== null && Number.isFinite(bVal) ? Math.max(0, Math.min(100, Math.round(bVal))) : null,
           notes: notes.trim()
         },
         reason.trim()
@@ -281,6 +299,57 @@ export function StructureEditorPanel({
               />
             </div>
 
+            <div className="grid grid-cols-3 gap-1.5">
+              <div>
+                <label className="mb-1 block text-[11px] font-semibold text-[#434d49]" htmlFor="st-ow">
+                  {isEn ? 'Width (m)' : 'Lebar (m)'}
+                </label>
+                <input
+                  id="st-ow"
+                  type="number"
+                  step="0.1"
+                  min="0.1"
+                  max="60"
+                  value={openingWidthStr}
+                  onChange={e => setOpeningWidthStr(e.target.value)}
+                  placeholder="1.2"
+                  className="font-mono-num min-h-[36px] w-full rounded-lg border border-[#161c1a]/20 px-2 py-1 text-[12.5px] outline-none focus:border-[#0369a1]"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-[11px] font-semibold text-[#434d49]" htmlFor="st-oh">
+                  {isEn ? 'Height (m)' : 'Tinggi (m)'}
+                </label>
+                <input
+                  id="st-oh"
+                  type="number"
+                  step="0.1"
+                  min="0.1"
+                  max="20"
+                  value={openingHeightStr}
+                  onChange={e => setOpeningHeightStr(e.target.value)}
+                  placeholder="1.0"
+                  className="font-mono-num min-h-[36px] w-full rounded-lg border border-[#161c1a]/20 px-2 py-1 text-[12.5px] outline-none focus:border-[#0369a1]"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-[11px] font-semibold text-[#434d49]" htmlFor="st-blk">
+                  {isEn ? 'Blockage %' : 'Sumbat %'}
+                </label>
+                <input
+                  id="st-blk"
+                  type="number"
+                  step="5"
+                  min="0"
+                  max="100"
+                  value={defaultBlockageStr}
+                  onChange={e => setDefaultBlockageStr(e.target.value)}
+                  placeholder="0"
+                  className="font-mono-num min-h-[36px] w-full rounded-lg border border-[#161c1a]/20 px-2 py-1 text-[12.5px] outline-none focus:border-[#0369a1]"
+                />
+              </div>
+            </div>
+
             <div>
               <label className="mb-1 block text-[12px] font-semibold text-[#434d49]" htmlFor="st-notes">
                 {t.lblFNotes}
@@ -377,7 +446,11 @@ export function StructureEditorPanel({
                         : isEn
                         ? 'Culvert'
                         : 'Gorong-gorong'}
-                      {st.properties.size_note ? ` · ${st.properties.size_note}` : ''}
+                      {st.properties.opening_width_m != null && st.properties.opening_height_m != null
+                        ? ` · ${st.properties.opening_width_m}×${st.properties.opening_height_m}m`
+                        : st.properties.size_note
+                          ? ` · ${st.properties.size_note}`
+                          : ''}
                     </span>
                   </div>
                 </div>

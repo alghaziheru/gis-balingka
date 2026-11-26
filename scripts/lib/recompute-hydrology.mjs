@@ -14,6 +14,7 @@ import {
   renderSmoothHandFloodRasters,
   computeCascadeFields
 } from './hydrology.mjs';
+import { decodeScourMaskFromPng } from './reach-network.mjs';
 
 function decodeElevBase64(elevBase64, expectedLen) {
   const buf = Buffer.from(elevBase64, 'base64');
@@ -224,6 +225,8 @@ export function recomputeHydrologyFromLocalData({
   let soilErodibility = null;
   let officialLandslide = null;
   let agamSummary = null;
+  let agamContext = null;
+  let scourMask = null;
   for (const dir of [publicDataDir, distDataDir]) {
     if (!dir) continue;
     if (!lcClasses) {
@@ -251,6 +254,22 @@ export function recomputeHydrologyFromLocalData({
         } catch {}
       }
     }
+    if (!agamContext) {
+      const agamCtxPath = path.join(dir, 'agam-context.json');
+      if (fs.existsSync(agamCtxPath)) {
+        try {
+          agamContext = JSON.parse(fs.readFileSync(agamCtxPath, 'utf8'));
+        } catch {}
+      }
+    }
+    if (!scourMask) {
+      const scourPngPath = path.join(dir, 'raster-scour-change.png');
+      if (fs.existsSync(scourPngPath)) {
+        try {
+          scourMask = decodeScourMaskFromPng(fs.readFileSync(scourPngPath), width, height);
+        } catch {}
+      }
+    }
   }
   const simFields = computeCascadeFields({
     rawElev,
@@ -262,10 +281,15 @@ export function recomputeHydrologyFromLocalData({
     landCoverClasses: lcClasses,
     soilErodibility,
     officialLandslide,
+    agamContext,
+    scourMask,
     nagariMask,
     agamSummary,
+    verifiedWaterways: activeVerified,
+    verifiedStructures: activeStructures,
     bottlenecks,
-    gridMeta
+    gridMeta,
+    handStreamThreshold
   });
 
   const landslideSeeds = [];

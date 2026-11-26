@@ -1,5 +1,8 @@
 import type { MutableRefObject } from 'react';
 import { Marker, type Map as MapLibreMap, type StyleSpecification } from 'maplibre-gl';
+import type { RegionConfig } from '../../config/region';
+import { isPointInBoundary } from '../../lib/geometry';
+import { getLocalDemTileUrl } from '../../lib/localTerrainProtocol';
 import { getOverlayContrastPalette } from '../../lib/mapPalette';
 import type { ActiveTool, BasemapId, BBox, GeoFeature, TabId } from '../../types/gis';
 import {
@@ -195,7 +198,13 @@ export function registerCartographicIcons(map: MapLibreMap): void {
   });
 }
 
-export function createInitialMapStyle(bbox: BBox): StyleSpecification {
+export function createInitialMapStyle(
+  bbox: BBox,
+  dataBasePath = '/data',
+  regionId = 'nagari-balingka'
+): StyleSpecification {
+  const base = dataBasePath.replace(/\/+$/, '');
+  const localDemTileUrl = getLocalDemTileUrl(regionId);
   const hasCustomImagery = Boolean(import.meta.env.VITE_CUSTOM_IMAGERY_URL);
   const satTileUrl =
     import.meta.env.VITE_CUSTOM_IMAGERY_URL ||
@@ -227,28 +236,29 @@ export function createInitialMapStyle(bbox: BBox): StyleSpecification {
         maxzoom: 19,
         attribution: '© OpenStreetMap contributors (ODbL)'
       },
-      'img-elev': { type: 'image', url: '/data/raster-elev.png', coordinates: imgCoords },
-      'img-relief': { type: 'image', url: '/data/raster-relief.png', coordinates: imgCoords },
-      'img-slope': { type: 'image', url: '/data/raster-slope.png', coordinates: imgCoords },
-      'img-landcover': { type: 'image', url: '/data/raster-landcover.png', coordinates: imgCoords },
-      'img-scour-change': { type: 'image', url: '/data/raster-scour-change.png', coordinates: imgCoords },
+      'img-elev': { type: 'image', url: `${base}/raster-elev.png`, coordinates: imgCoords },
+      'img-relief': { type: 'image', url: `${base}/raster-relief.png`, coordinates: imgCoords },
+      'img-slope': { type: 'image', url: `${base}/raster-slope.png`, coordinates: imgCoords },
+      'img-landcover': { type: 'image', url: `${base}/raster-landcover.png`, coordinates: imgCoords },
+      'img-scour-change': { type: 'image', url: `${base}/raster-scour-change.png`, coordinates: imgCoords },
       'img-cascade-landslide': { type: 'image', url: TRANSPARENT_1PX_PNG, coordinates: imgCoords },
-      'img-hand-clogged-low': { type: 'image', url: '/data/raster-hand-clogged-low.png', coordinates: imgCoords },
-      'img-hand-clogged-med': { type: 'image', url: '/data/raster-hand-clogged-med.png', coordinates: imgCoords },
-      'img-hand-clogged-high': { type: 'image', url: '/data/raster-hand-clogged-high.png', coordinates: imgCoords },
-      'img-hand-cleared-low': { type: 'image', url: '/data/raster-hand-cleared-low.png', coordinates: imgCoords },
-      'img-hand-cleared-med': { type: 'image', url: '/data/raster-hand-cleared-med.png', coordinates: imgCoords },
-      'img-hand-cleared-high': { type: 'image', url: '/data/raster-hand-cleared-high.png', coordinates: imgCoords },
+      'img-cascade-agreement': { type: 'image', url: TRANSPARENT_1PX_PNG, coordinates: imgCoords },
+      'img-hand-clogged-low': { type: 'image', url: `${base}/raster-hand-clogged-low.png`, coordinates: imgCoords },
+      'img-hand-clogged-med': { type: 'image', url: `${base}/raster-hand-clogged-med.png`, coordinates: imgCoords },
+      'img-hand-clogged-high': { type: 'image', url: `${base}/raster-hand-clogged-high.png`, coordinates: imgCoords },
+      'img-hand-cleared-low': { type: 'image', url: `${base}/raster-hand-cleared-low.png`, coordinates: imgCoords },
+      'img-hand-cleared-med': { type: 'image', url: `${base}/raster-hand-cleared-med.png`, coordinates: imgCoords },
+      'img-hand-cleared-high': { type: 'image', url: `${base}/raster-hand-cleared-high.png`, coordinates: imgCoords },
       'dem-terrain': {
         type: 'raster-dem',
-        tiles: ['https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png'],
+        tiles: [localDemTileUrl],
         tileSize: 256,
         maxzoom: 15,
         encoding: 'terrarium'
       },
       'dem-hillshade': {
         type: 'raster-dem',
-        tiles: ['https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png'],
+        tiles: [localDemTileUrl],
         tileSize: 256,
         maxzoom: 15,
         encoding: 'terrarium'
@@ -346,7 +356,7 @@ export function addDataSourcesAndLayers(map: MapLibreMap, ds: LoadedDatasets, ba
     });
   }
 
-  // Dynamic physical cascade overlays (vector-sharp blue pools + steep-slope landslide risk)
+  // Dynamic physical cascade overlays (vector-sharp blue pools + steep-slope landslide risk + ensemble agreement)
   map.addLayer({
     id: 'cascade-landslide-overlay',
     type: 'raster',
@@ -355,13 +365,48 @@ export function addDataSourcesAndLayers(map: MapLibreMap, ds: LoadedDatasets, ba
     paint: { 'raster-opacity': 0.82, 'raster-fade-duration': 0 }
   });
 
-  map.addSource('src-sim-pools-shallow', { type: 'geojson', data: asGeoInput(EMPTY_FC) });
   map.addLayer({
-    id: 'sim-pools-shallow-fill',
+    id: 'cascade-agreement-overlay',
+    type: 'raster',
+    source: 'img-cascade-agreement',
+    layout: { visibility: 'none' },
+    paint: { 'raster-opacity': 0.85, 'raster-fade-duration': 0 }
+  });
+
+  // 3-tier calm cartographic depth contour bands (~13.8 m DEMNAS riverbank precision):
+  // Tier 1 (0.12-0.30m shallow terrain flow): subtle translucent tint + dashed outline
+  // Tier 2 (0.30-1.00m moderate basin depth): sky-blue + crisp hairline contour
+  // Tier 3 (>1.00m deep channel / bankfull overflow): clear ocean blue (crisp on Relief/Elevasi)
+  map.addSource('src-sim-pools-yard', { type: 'geojson', data: asGeoInput(EMPTY_FC) });
+  map.addLayer({
+    id: 'sim-pools-yard-fill',
     type: 'fill',
-    source: 'src-sim-pools-shallow',
+    source: 'src-sim-pools-yard',
+    layout: { visibility: 'none' },
+    paint: { 'fill-color': '#7dd3fc', 'fill-opacity': 0.22, 'fill-antialias': true }
+  });
+  map.addLayer({
+    id: 'sim-pools-yard-outline',
+    type: 'line',
+    source: 'src-sim-pools-yard',
+    layout: { visibility: 'none', 'line-cap': 'round', 'line-join': 'round' },
+    paint: { 'line-color': '#0284c7', 'line-width': 1.0, 'line-dasharray': [3, 2], 'line-opacity': 0.50 }
+  });
+
+  map.addSource('src-sim-pools-knee', { type: 'geojson', data: asGeoInput(EMPTY_FC) });
+  map.addLayer({
+    id: 'sim-pools-knee-fill',
+    type: 'fill',
+    source: 'src-sim-pools-knee',
     layout: { visibility: 'none' },
     paint: { 'fill-color': '#38bdf8', 'fill-opacity': 0.34, 'fill-antialias': true }
+  });
+  map.addLayer({
+    id: 'sim-pools-knee-outline',
+    type: 'line',
+    source: 'src-sim-pools-knee',
+    layout: { visibility: 'none', 'line-cap': 'round', 'line-join': 'round' },
+    paint: { 'line-color': '#0369a1', 'line-width': 1.05, 'line-opacity': 0.58 }
   });
 
   map.addSource('src-sim-pools-deep', { type: 'geojson', data: asGeoInput(EMPTY_FC) });
@@ -370,17 +415,94 @@ export function addDataSourcesAndLayers(map: MapLibreMap, ds: LoadedDatasets, ba
     type: 'fill',
     source: 'src-sim-pools-deep',
     layout: { visibility: 'none' },
-    paint: { 'fill-color': '#0284c7', 'fill-opacity': 0.34, 'fill-antialias': true }
+    paint: { 'fill-color': '#0369a1', 'fill-opacity': 0.50, 'fill-antialias': true }
   });
 
-  map.addSource('src-sim-affected-buildings', { type: 'geojson', data: asGeoInput(EMPTY_FC) });
+  map.addSource('src-sim-scour-reaches', { type: 'geojson', data: asGeoInput(EMPTY_FC) });
   map.addLayer({
-    id: 'sim-affected-buildings-line',
+    id: 'sim-scour-reaches-line',
     type: 'line',
-    source: 'src-sim-affected-buildings',
-    minzoom: 13.5,
+    source: 'src-sim-scour-reaches',
+    layout: { visibility: 'none', 'line-cap': 'round', 'line-join': 'round' },
+    paint: {
+      'line-color': ['match', ['get', 'severity'], 'severe', '#b91c1c', '#d97706'],
+      'line-width': ['match', ['get', 'severity'], 'severe', 5.2, 3.6],
+      'line-opacity': 0.92
+    }
+  });
+
+  map.addSource('src-sim-survey-reaches', { type: 'geojson', data: asGeoInput(EMPTY_FC) });
+  map.addLayer({
+    id: 'sim-survey-reaches-line',
+    type: 'line',
+    source: 'src-sim-survey-reaches',
+    layout: { visibility: 'none', 'line-cap': 'round', 'line-join': 'round' },
+    paint: {
+      'line-color': [
+        'match',
+        ['get', 'dataConfidence'],
+        'high',
+        '#047857',
+        'medium',
+        '#0369a1',
+        '#b45309'
+      ],
+      'line-width': ['interpolate', ['linear'], ['coalesce', ['get', 'priorityScore'], 40], 15, 2.4, 85, 5.0],
+      'line-opacity': 0.9
+    }
+  });
+
+  map.addSource('src-storm-core', { type: 'geojson', data: asGeoInput(EMPTY_FC) });
+  map.addLayer({
+    id: 'storm-core-fill',
+    type: 'fill',
+    source: 'src-storm-core',
+    filter: ['==', ['get', 'kind'], 'ring'],
     layout: { visibility: 'none' },
-    paint: { 'line-color': '#f59e0b', 'line-width': 1.25, 'line-opacity': 0.78 }
+    paint: { 'fill-color': '#0369a1', 'fill-opacity': 0.08 }
+  });
+  map.addLayer({
+    id: 'storm-core-ring',
+    type: 'line',
+    source: 'src-storm-core',
+    filter: ['==', ['get', 'kind'], 'ring'],
+    layout: { visibility: 'none', 'line-cap': 'round', 'line-join': 'round' },
+    paint: { 'line-color': '#0369a1', 'line-width': 2.2, 'line-dasharray': [3, 2], 'line-opacity': 0.85 }
+  });
+  map.addLayer({
+    id: 'storm-core-dot',
+    type: 'circle',
+    source: 'src-storm-core',
+    filter: ['==', ['get', 'kind'], 'center'],
+    layout: { visibility: 'none' },
+    paint: {
+      'circle-radius': 6,
+      'circle-color': '#0369a1',
+      'circle-stroke-color': '#ffffff',
+      'circle-stroke-width': 2
+    }
+  });
+
+  map.addSource('src-calibration-marks', { type: 'geojson', data: asGeoInput(EMPTY_FC) });
+  map.addLayer({
+    id: 'calibration-marks-circle',
+    type: 'circle',
+    source: 'src-calibration-marks',
+    layout: { visibility: 'none' },
+    paint: {
+      'circle-radius': 6.5,
+      'circle-color': [
+        'match',
+        ['get', 'kind'],
+        'hwm',
+        '#0369a1',
+        'scour',
+        '#d97706',
+        '#b91c1c'
+      ],
+      'circle-stroke-color': '#ffffff',
+      'circle-stroke-width': 2.2
+    }
   });
 
   map.addSource('src-settlements', { type: 'geojson', data: asGeoInput(ds.settlements) });
@@ -841,7 +963,7 @@ export function addDataSourcesAndLayers(map: MapLibreMap, ds: LoadedDatasets, ba
     }
   });
 
-  // Studio Mask hiding everything outside the official Nagari Balingka territory
+  // Studio Mask hiding everything outside the active official territory
   map.addSource('src-mask', { type: 'geojson', data: asGeoInput(ds.mask) });
   map.addLayer({
     id: 'studio-mask-fill',
@@ -850,6 +972,7 @@ export function addDataSourcesAndLayers(map: MapLibreMap, ds: LoadedDatasets, ba
     paint: { 'fill-color': '#e5ebe8', 'fill-opacity': 1 }
   });
 
+  // Outer territory border + internal official Nagari borders
   map.addSource('src-nagari-boundary', { type: 'geojson', data: asGeoInput(ds.nagariBoundary) });
   map.addLayer({
     id: 'nagari-boundary-casing',
@@ -864,6 +987,22 @@ export function addDataSourcesAndLayers(map: MapLibreMap, ds: LoadedDatasets, ba
     source: 'src-nagari-boundary',
     layout: { 'line-cap': 'round', 'line-join': 'round' },
     paint: { 'line-color': '#14532d', 'line-width': 2.5, 'line-dasharray': [5, 2.5], 'line-opacity': 0.96 }
+  });
+
+  map.addSource('src-sub-boundaries', { type: 'geojson', data: asGeoInput(ds.subBoundaries) });
+  map.addLayer({
+    id: 'sub-boundaries-casing',
+    type: 'line',
+    source: 'src-sub-boundaries',
+    layout: { 'line-cap': 'round', 'line-join': 'round' },
+    paint: { 'line-color': '#ffffff', 'line-width': 3.0, 'line-opacity': 0.7 }
+  });
+  map.addLayer({
+    id: 'sub-boundaries-line',
+    type: 'line',
+    source: 'src-sub-boundaries',
+    layout: { 'line-cap': 'round', 'line-join': 'round' },
+    paint: { 'line-color': '#0f766e', 'line-width': 1.7, 'line-dasharray': [3.5, 2.5], 'line-opacity': 0.9 }
   });
 
   map.addSource('src-jorong-boundaries', { type: 'geojson', data: asGeoInput(EMPTY_FC) });
@@ -1082,11 +1221,11 @@ export function addStaticPlaceAndContourMarkers(
   map: MapLibreMap,
   ds: LoadedDatasets,
   opts: {
+    region?: RegionConfig;
     activeToolRef: MutableRefObject<ActiveTool>;
     onSelectJorongPillRef: MutableRefObject<((preset: string) => void) | undefined>;
   }
 ): { marker: Marker; el: HTMLElement }[] {
-  // Balingka-only OSM Jorong / Village labels
   const placedLabels: [number, number][] = [];
   const priorityPlaces = ds.osmContext.features
     .filter((f: GeoFeature) => f.properties?.kind === 'place' && f.geometry.type === 'Point')
@@ -1096,11 +1235,16 @@ export function addStaticPlaceAndContourMarkers(
       return ap - bp;
     });
 
+  const presets = opts.region?.cameraPresets || [];
+  const shortNameNorm = opts.region?.shortName?.trim().toLowerCase() || '';
   const bbox = ds.bbox;
+  const hasBoundaryPoly = Boolean(ds.nagariBoundary?.features?.length);
   for (const f of priorityPlaces) {
     if (f.geometry.type !== 'Point') continue;
     const coords = f.geometry.coordinates;
-    if (
+    if (hasBoundaryPoly) {
+      if (!isPointInBoundary(coords, ds.nagariBoundary)) continue;
+    } else if (
       coords[0] < bbox.west + 0.0025 ||
       coords[0] > bbox.east - 0.002 ||
       coords[1] < bbox.south + 0.002 ||
@@ -1120,20 +1264,13 @@ export function addStaticPlaceAndContourMarkers(
       ev.stopPropagation();
       if (opts.activeToolRef.current) return;
       const norm = placeName.trim().toLowerCase();
-      const matchedPreset =
-        norm === 'balingka'
-          ? 'center'
-          : norm === 'subarang'
-          ? 'subarang'
-          : norm === 'koto hilalang'
-          ? 'hilalang'
-          : norm === 'pahambatan'
-          ? 'pahambatan'
-          : null;
-      if (matchedPreset) {
-        opts.onSelectJorongPillRef.current?.(matchedPreset);
+      const matched =
+        presets.find(p => p.label.trim().toLowerCase() === norm) ||
+        (shortNameNorm && norm === shortNameNorm ? presets.find(p => p.id === 'center') : undefined);
+      if (matched) {
+        opts.onSelectJorongPillRef.current?.(matched.id);
       }
-      map.flyTo({ center: coords, zoom: 15.6, duration: 750 });
+      map.flyTo({ center: coords, zoom: matched?.zoom ?? 15.5, duration: 750 });
     });
     new Marker({ element: el, anchor: 'center' }).setLngLat(coords).addTo(map);
   }

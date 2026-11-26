@@ -1,20 +1,23 @@
 import { useEffect, useState } from 'react';
 import { BookOpen, BookText, Code2, Database, ExternalLink, PlayCircle, Search, ShieldAlert, X } from 'lucide-react';
+import {
+  buildModelParameterAudit,
+  CLIMATE_BASELINE,
+  type ClimateBaselineData,
+  type ParameterAuditBadge
+} from '../data/climateBaseline';
 import { GLOSSARY_ENTRIES } from '../data/glossary';
-import { REGION } from '../config/region';
-import { I18N } from '../i18n/translations';
+import { useActiveRegion, useT } from '../context/RegionContext';
 import type { DatasetMetadata, Language } from '../types/gis';
 
 export type InfoModalTab = 'guide' | 'method' | 'glossary' | 'api';
-
-const GITHUB_REPO_URL = REGION.repositoryUrl;
-const GITHUB_DATA_SOURCES_URL = `${GITHUB_REPO_URL}/blob/main/DATA_SOURCES.md`;
 
 interface InfoDataModalProps {
   open: boolean;
   initialTab?: InfoModalTab;
   lang: Language;
   metadata: DatasetMetadata | null;
+  climateBaseline?: ClimateBaselineData;
   verifiedCount: number;
   onClose: () => void;
 }
@@ -29,9 +32,14 @@ function InfoDataModalContent({
   initialTab = 'guide',
   lang,
   metadata,
+  climateBaseline,
   verifiedCount,
   onClose
 }: InfoDataModalProps) {
+  const region = useActiveRegion();
+  const activeBaseline = climateBaseline ?? CLIMATE_BASELINE;
+  const activeSoilProfile = region.hydrology?.soilProfile ?? 'volcanic_andosol';
+  const auditRows = buildModelParameterAudit(activeBaseline, activeSoilProfile, region);
   const [activeTab, setActiveTab] = useState<InfoModalTab>(initialTab);
   const [glossaryQuery, setGlossaryQuery] = useState('');
 
@@ -48,8 +56,10 @@ function InfoDataModalContent({
     return () => window.removeEventListener('keydown', onKey);
   }, [open, onClose]);
 
-  const t = I18N[lang];
+  const t = useT(lang);
   const isEn = lang === 'en';
+  const GITHUB_REPO_URL = region.repositoryUrl;
+  const GITHUB_DATA_SOURCES_URL = `${GITHUB_REPO_URL}/blob/main/DATA_SOURCES.md`;
 
   const tabs: { id: InfoModalTab; label: string; Icon: typeof BookOpen }[] = [
     { id: 'guide', label: t.infoTabGuide, Icon: BookOpen },
@@ -74,36 +84,34 @@ function InfoDataModalContent({
     return haystack.includes(normalizedQuery);
   });
 
-  const hasRegionalOverlays = REGION.regionalOverlays.enabled;
-  const hasSentinelChange = REGION.regionalOverlays.sentinelChangeAvailable;
-  const subRegionList = REGION.cameraPresets
+  const hasRegionalOverlays = region.regionalOverlays.enabled;
+  const hasSentinelChange = region.regionalOverlays.sentinelChangeAvailable;
+  const subRegionList = region.cameraPresets
     .filter(p => p.id !== 'center')
     .map(p => p.label)
     .slice(0, 4)
     .join(', ');
   const demLabel = metadata?.demSource || 'BIG DEMNAS (~8.3m) / Copernicus DEM GLO-30';
-  const boundaryCodeSuffix = REGION.officialBoundaryCode ? ` (${REGION.officialBoundaryCode})` : '';
+  const boundaryCodeSuffix = region.officialBoundaryCode ? ` (${region.officialBoundaryCode})` : '';
 
   const softwareRows = [
     { name: 'React 19, TypeScript, Vite & Tailwind CSS', role: isEn ? 'Open-source web UI & build tools' : 'Antarmuka web & alat pengembangan terbuka', license: 'MIT' },
     { name: 'MapLibre GL JS & Lucide Icons', role: isEn ? 'Interactive 2D/3D map engine & icons' : 'Mesin peta 2D/3D interaktif & ikon', license: 'BSD-3 / ISC' },
     { name: 'Node.js SQLite & Pure-Node Hydrology', role: isEn ? 'DEM processing, HAND model & audit storage' : 'Pengolahan elevasi, model HAND & riwayat data', license: 'MIT' },
     {
-      name: hasRegionalOverlays
-        ? `BIG DEMNAS (~8.3m) & RBI 50K ${REGION.regency}`
-        : demLabel,
+      name: demLabel,
       role: isEn
         ? 'Elevation grid, terrain slope, contours, rivers & public facilities'
         : 'Elevasi tanah, kemiringan lereng, kontur, jaringan sungai & fasilitas umum',
       license: demLabel.includes('BIG') ? 'Public Gov Data (BIG)' : 'Open Data'
     },
-    ...(REGION.officialBoundaryCode
+    ...(region.officialBoundaryCode
       ? [
           {
             name: 'BIG Batas Wilayah Desa/Nagari',
             role: isEn
-              ? `Official ${REGION.name} boundary polygon${boundaryCodeSuffix}`
-              : `Poligon resmi batas ${REGION.name}${boundaryCodeSuffix}`,
+              ? `Official ${region.name} boundary polygon${boundaryCodeSuffix}`
+              : `Poligon resmi batas ${region.name}${boundaryCodeSuffix}`,
             license: 'Public Gov Data (BIG)'
           }
         ]
@@ -129,11 +137,18 @@ function InfoDataModalContent({
             license: 'CC-BY-4.0'
           },
           {
-            name: `${REGION.regionalOverlays.providerName} Open GIS (ArcGIS Web Maps)`,
+            name: `${region.regionalOverlays.providerName} Open GIS (ArcGIS Web Maps)`,
             role: isEn
               ? 'Ground-movement map, soil, geology, BMKG rainfall & protected forest'
               : 'Peta gerakan tanah, jenis tanah, geologi, curah hujan BMKG & kawasan hutan',
             license: 'Public Gov Data'
+          },
+          {
+            name: 'BMKG Data Online (96165 & 96167) & Open-Meteo ERA5-Land',
+            role: isEn
+              ? 'Padang Panjang & Sicincin monthly baseline (2024–2026) + 41-yr bias-corrected daily rainfall (1985–2025)'
+              : 'Basis bulanan Padang Panjang & Sicincin (2024–2026) + hujan harian ERA5-Land 41 tahun terkoreksi bias (1985–2025)',
+            license: 'BMKG / CC-BY-4.0'
           }
         ]
       : []),
@@ -154,12 +169,12 @@ function InfoDataModalContent({
         <div className="flex items-center justify-between border-b border-[#161c1a]/12 bg-[#fafaf8] px-5 py-4">
           <div>
             <h2 id="info-modal-title" className="m-0 text-[16px] font-extrabold text-[#161c1a]">
-              {isEn ? `About ${REGION.appTitle.en} & Open Data` : `Tentang ${REGION.appTitle.id} & Data Terbuka`}
+              {isEn ? `About ${region.appTitle.en} & Open Data` : `Tentang ${region.appTitle.id} & Data Terbuka`}
             </h2>
             <p className="mt-0.5 mb-0 text-[13px] text-[#434d49]">
               {isEn
                 ? 'Public information for residents, researchers, government, and developers'
-                : `Informasi publik untuk warga, peneliti, pemerintah ${REGION.adminLevelLabel.id.toLowerCase()}/daerah, dan pengembang`}
+                : `Informasi publik untuk warga, peneliti, pemerintah ${region.adminLevelLabel.id.toLowerCase()}/daerah, dan pengembang`}
             </p>
           </div>
           <button
@@ -199,8 +214,8 @@ function InfoDataModalContent({
             <div className="flex flex-col gap-4">
               <p className="m-0 text-[#434d49]">
                 {isEn
-                  ? `This open spatial data viewer displays geographic datasets from BIG${hasRegionalOverlays ? `, ${REGION.regionalOverlays.providerName}` : ''}, ESA/Copernicus, and OpenStreetMap alongside field-verified river and culvert records in ${REGION.name} — without making disaster declarations or predictions.`
-                  : `Portal data terbuka ini menampilkan kumpulan data geospasial resmi dan terbuka (BIG${hasRegionalOverlays ? `, ${REGION.regionalOverlays.providerName}` : ''}, ESA/Copernicus, OpenStreetMap) serta catatan kondisi sungai dan gorong-gorong lapangan di ${REGION.name} — tanpa membuat kesimpulan atau pernyataan status bencana.`}
+                  ? `This open spatial data viewer displays geographic datasets from BIG${hasRegionalOverlays ? `, ${region.regionalOverlays.providerName}` : ''}, ESA/Copernicus, and OpenStreetMap alongside field-verified river and culvert records in ${region.name} — without making disaster declarations or predictions.`
+                  : `Portal data terbuka ini menampilkan kumpulan data geospasial resmi dan terbuka (BIG${hasRegionalOverlays ? `, ${region.regionalOverlays.providerName}` : ''}, ESA/Copernicus, OpenStreetMap) serta catatan kondisi sungai dan gorong-gorong lapangan di ${region.name} — tanpa membuat kesimpulan atau pernyataan status bencana.`}
               </p>
 
               <div className="rounded-xl border border-[#161c1a]/12 bg-[#fafaf8] p-4">
@@ -211,8 +226,8 @@ function InfoDataModalContent({
                   <li>
                     <strong className="text-[#161c1a]">{isEn ? 'Map tab:' : 'Tab Peta:'}</strong>{' '}
                     {isEn
-                      ? `Jump to a ${REGION.subRegionLabel.en}${subRegionList ? ` (${subRegionList})` : ''} and toggle verified rivers${hasRegionalOverlays ? `, vegetation-change layers, ${REGION.regionalOverlays.providerName} reference maps,` : ','} or DEM slope-flow lines.`
-                      : `Pilih ${REGION.subRegionLabel.id}${subRegionList ? ` (${subRegionList})` : ''} dan tampilkan data sungai terverifikasi${hasRegionalOverlays ? `, perubahan tutupan vegetasi, peta referensi ${REGION.regionalOverlays.providerName},` : ','} atau arah kemiringan elevasi DEM.`}
+                      ? `Jump to a ${region.subRegionLabel.en}${subRegionList ? ` (${subRegionList})` : ''} and toggle verified rivers${hasRegionalOverlays ? `, vegetation-change layers, ${region.regionalOverlays.providerName} reference maps,` : ','} or DEM slope-flow lines.`
+                      : `Pilih ${region.subRegionLabel.id}${subRegionList ? ` (${subRegionList})` : ''} dan tampilkan data sungai terverifikasi${hasRegionalOverlays ? `, perubahan tutupan vegetasi, peta referensi ${region.regionalOverlays.providerName},` : ','} atau arah kemiringan elevasi DEM.`}
                   </li>
                   <li>
                     <strong className="text-[#161c1a]">{isEn ? 'Simulation tab:' : 'Tab Simulasi:'}</strong>{' '}
@@ -243,8 +258,8 @@ function InfoDataModalContent({
                   </strong>
                   <span>
                     {isEn
-                      ? `This application strictly displays open spatial data, topographic computations (HAND / D8 / SCS-CN), and field infrastructure records. It does NOT issue disaster warnings, declare landslide/flood hazards, or designate official evacuation sites. Official hazard assessments, forecasts, and emergency directives belong exclusively to BNPB, ${REGION.authorities.bpbdLabel}, BMKG, PVMBG, and ${REGION.authorities.localAuthorityShort}.`
-                      : `Aplikasi ini hanya berfungsi sebagai media tampilan data spasial terbuka, komputasi topografi (HAND / D8 / SCS-CN), dan inventaris saluran lapangan. Aplikasi ini TIDAK menetapkan status bahaya, potensi longsor/banjir, maupun titik evakuasi resmi. Seluruh pernyataan potensi bahaya, peringatan dini cuaca, dan arahan evakuasi hanya bersumber dari BNPB, ${REGION.authorities.bpbdLabel}, BMKG, PVMBG, peneliti berwenang, serta ${REGION.authorities.localAuthorityShort}.`}
+                      ? `This application strictly displays open spatial data, topographic computations (HAND / D8 / SCS-CN), and field infrastructure records. It does NOT issue disaster warnings, declare landslide/flood hazards, or designate official evacuation sites. Official hazard assessments, forecasts, and emergency directives belong exclusively to BNPB, ${region.authorities.bpbdLabel}, BMKG, PVMBG, and ${region.authorities.localAuthorityShort}.`
+                      : `Aplikasi ini hanya berfungsi sebagai media tampilan data spasial terbuka, komputasi topografi (HAND / D8 / SCS-CN), dan inventaris saluran lapangan. Aplikasi ini TIDAK menetapkan status bahaya, potensi longsor/banjir, maupun titik evakuasi resmi. Seluruh pernyataan potensi bahaya, peringatan dini cuaca, dan arahan evakuasi hanya bersumber dari BNPB, ${region.authorities.bpbdLabel}, BMKG, PVMBG, peneliti berwenang, serta ${region.authorities.localAuthorityShort}.`}
                   </span>
                 </div>
               </div>
@@ -308,18 +323,238 @@ function InfoDataModalContent({
                 </p>
                 <p className="m-0 text-[13px] text-[#434d49]">
                   <strong className="text-[#161c1a]">
-                    {isEn ? '2. D8 Flow & HAND Model:' : '2. Penelusuran Aliran D8 & Indeks HAND:'}
+                    {isEn
+                      ? '2. 1D Muskingum-Cunge Routing & DEMNAS Rating Curves:'
+                      : '2. Penelusuran 1D Muskingum-Cunge & Kurva Kapasitas DEMNAS:'}
                   </strong>{' '}
                   {isEn
-                    ? 'Priority-Flood depression filling and D8 routing compute topographic flow paths and HAND (Height Above Nearest Drainage) elevation-relative indices.'
-                    : 'Pengisian cekungan Priority-Flood dan penelusuran arah aliran D8 menghitung arah kemiringan topografi serta indeks HAND (ketinggian relatif terhadap alur terdekat).'}
+                    ? 'Priority-Flood D8 routing builds a reach network with full-resolution HAND Synthetic Rating Curves (overridden by field-measured cross-sections), directional upstream culvert backwater, causally coupled SMA soil-wetness → Infinite-Slope stability (FoS) with ~20° downslope shadow and debris bulking, exact water-balance closure, and a 7-scenario deterministic sensitivity envelope (Low/Central/High, not Monte Carlo probabilities).'
+                    : 'Penelusuran Priority-Flood D8 membentuk jaringan segmen sungai dengan Synthetic Rating Curves HAND beresolusi penuh (mengikuti ukuran penampang lapangan bila tersedia), efek balik air (backwater) arah hulu di gorong-gorong, kopel kausal kebasahan tanah SMA → kestabilan lereng Infinite-Slope (FoS) dengan bayangan lintasan ~20° dan aliran sedimen, neraca massa air tertutup, serta rentang sensitivitas deterministik 7 skenario (Rendah/Tengah/Tinggi, bukan probabilitas statistik).'}
                 </p>
                 <p className="m-0 text-[13px] text-[#434d49]">
-                  <strong className="text-[#161c1a]">3. {isEn ? 'Known Accuracy Limits:' : 'Batas Akurasi:'}</strong>{' '}
+                  <strong className="text-[#161c1a]">
+                    {isEn ? '3. Independent Validation & Accuracy Limits:' : '3. Validasi Independen & Batas Akurasi:'}
+                  </strong>{' '}
                   {isEn
-                    ? 'Computed DEMNAS 8m D8 lines (dashed) can differ from narrow roadside drains and culverts in the field. Use Detailed mode → Waterways to verify or correct them.'
-                    : 'Garis komputasi dari DEMNAS 8 m (garis putus-putus) dapat berbeda dari parit atau gorong-gorong sempit di lapangan. Gunakan mode Lengkap → Jalur Air untuk verifikasi data lapangan.'}
+                    ? 'Model outputs are benchmarked independently against Sentinel-2 river-corridor NDVI scour, held-out Pemkab Agam polygons, and field High-Water Marks without leaking reference polygons into the physics formulas. Use Detailed mode → Editor to enter measured channel/culvert dimensions and raise Input Completeness.'
+                    : 'Keluaran model diuji secara independen terhadap perubahan vegetasi koridor sungai Sentinel-2, poligon terbuka Pemkab Agam (dipisah dari rumus fisika), serta tanda tinggi air lapangan. Gunakan mode Lengkap → Editor untuk memasukkan ukuran saluran/gorong-gorong nyata dan melengkapi Input Model.'}
                 </p>
+              </div>
+
+              <div
+                data-testid="method-scientific-refs"
+                className="flex flex-col gap-2.5 rounded-xl border border-[#161c1a]/12 bg-[#fafaf8] p-4"
+              >
+                <h3 className="m-0 text-[14px] font-bold text-[#161c1a]">
+                  {isEn ? 'Formulas & Scientific References' : 'Rumus & Referensi Ilmiah'}
+                </h3>
+                <p className="m-0 text-[12.5px] text-[#434d49]">
+                  {isEn
+                    ? 'Every calculation in this simulator uses standard published open-literature equations rather than proprietary forecasting algorithms:'
+                    : 'Seluruh perhitungan simulasi menggunakan persamaan baku dari literatur hidrologi & geomorfologi terbuka:'}
+                </p>
+                <ul className="m-0 flex list-disc flex-col gap-1.5 pl-5 text-[12.5px] text-[#434d49]">
+                  <li>
+                    <strong className="text-[#161c1a]">Priority-Flood DEM Filling:</strong> Barnes, Lehman &amp; Mulla (2014),{' '}
+                    <em>Computers &amp; Geosciences</em> 62 — {isEn ? 'acyclic depression conditioning.' : 'pengisian cekungan mikro DEM agar aliran selalu mengalir ke hilir.'}
+                  </li>
+                  <li>
+                    <strong className="text-[#161c1a]">D8 Flow Routing:</strong> O&apos;Callaghan &amp; Mark (1984),{' '}
+                    <em>CVGIP</em> 28(3) — {isEn ? 'steepest-descent direction & catchment accumulation.' : 'penentuan arah aliran tercuram ke 8 sel tetangga dan luas DAS.'}
+                  </li>
+                  <li>
+                    <strong className="text-[#161c1a]">HAND &amp; Synthetic Rating Curves (HAND-SRC):</strong> Nobre et al. (2011),{' '}
+                    <em>J. Hydrology</em> 404; Zheng et al. (2018), <em>JAWRA</em> 54(4) —{' '}
+                    {isEn ? 'relative height above nearest drainage and stage–discharge curves.' : 'tinggi medan terhadap alur terdekat serta kurva hubungan tinggi air–debit.'}
+                  </li>
+                  <li>
+                    <strong className="text-[#161c1a]">SCS Curve Number (SCS-CN):</strong> USDA NRCS (1986 / 2004),{' '}
+                    <em>TR-55 &amp; NEH Part 630</em> —{' '}
+                    {isEn ? 'surface runoff volume from ESA WorldCover classes & 5-day antecedent moisture.' : 'volume limpasan dari tutupan lahan ESA WorldCover dan kebasahan tanah awal.'}
+                  </li>
+                  <li>
+                    <strong className="text-[#161c1a]">Continuous SCS-CN Soil-Moisture Accounting &amp; Bankfull Containment:</strong> Michel, Vazken &amp; Perrin (2005),{' '}
+                    <em>Water Resour. Res.</em> 41 —{' '}
+                    {isEn
+                      ? 'progressive Andosol soil-storage saturation over multi-day storms and incised bankfull channel depth containment under normal showers.'
+                      : 'penjenuhan bertahap simpanan tanah vulkanik Andosol saat hujan menerus multi-hari serta daya tampung alur sungai normal sebelum meluap.'}
+                  </li>
+                  <li>
+                    <strong className="text-[#161c1a]">1D Muskingum-Cunge &amp; Manning Formula:</strong> Cunge (1969),{' '}
+                    <em>J. Hydraulic Research</em> 7(2); Manning (1891) —{' '}
+                    {isEn ? 'reach-by-reach hydrograph routing Q (m³/s) and bankfull channel capacity.' : 'penelusuran hidrograf debit Q (m³/s) per segmen sungai dan kapasitas penampang saluran.'}
+                  </li>
+                  <li>
+                    <strong className="text-[#161c1a]">Culvert Hydraulics (HDS-5):</strong> US FHWA (2012),{' '}
+                    <em>Hydraulic Design of Highway Culverts</em> —{' '}
+                    {isEn ? 'orifice inlet control and upstream backwater head at road crossings.' : 'kapasitas mulut gorong-gorong dan kenaikan air arah hulu akibat hambatan.'}
+                  </li>
+                  <li>
+                    <strong className="text-[#161c1a]">Infinite-Slope Stability (FoS):</strong> Skempton &amp; DeLory (1957); Montgomery &amp; Dietrich (1994),{' '}
+                    <em>Water Resour. Res.</em> 30(4) —{' '}
+                    {isEn ? 'coupled terrain slope, soil cohesion, root strength, and pore saturation.' : 'rasio tahanan geser tanah & akar vegetasi terhadap kemiringan lereng jenuh air.'}
+                  </li>
+                  <li>
+                    <strong className="text-[#161c1a]">Debris Bulking &amp; Stream Power (ω):</strong> Takahashi (1991); Bagnold (1966),{' '}
+                    <em>USGS Prof. Paper 422-I</em> —{' '}
+                    {isEn ? 'sediment bulking 1/(1 − Cv) and specific stream power ω = ρgQS/W.' : 'pengali volume sedimen 1/(1 − Cv) dan energi erosi tebing ω = ρgQS/W.'}
+                  </li>
+                </ul>
+
+                <div className="mt-1 rounded-lg border border-[#161c1a]/12 bg-white p-3 text-[12px] text-[#434d49]">
+                  <strong className="mb-1.5 block text-[12.5px] text-[#161c1a]">
+                    {isEn
+                      ? 'Conceptual Priors & Known Model Limitations (What This Model Does NOT Simulate)'
+                      : 'Parameterisasi Konseptual & Batas Model (Yang TIDAK Disimulasikan)'}
+                  </strong>
+                  <ul className="m-0 flex list-disc flex-col gap-1 pl-4.5">
+                    <li>
+                      <strong className="text-[#161c1a]">
+                        {isEn ? 'Uncalibrated conceptual priors:' : 'Konstanta konseptual belum terkalibrasi:'}
+                      </strong>{' '}
+                      {isEn
+                        ? 'Volcanic Andosol retention multipliers, dual-reservoir interflow lags, and incised bankfull depths are literature-inspired conceptual priors — not site-fitted against live gauges.'
+                        : 'Faktor simpanan tanah Andosol, jeda aliran bawah permukaan, dan kedalaman tampung alur normal merupakan perkiraan konseptual sebelum ada pengukuran AWLR lapangan.'}
+                    </li>
+                    <li>
+                      <strong className="text-[#161c1a]">
+                        {isEn ? '1D HAND vs. 2D channel avulsion:' : 'Model 1D HAND (tanpa pindah alur 2D / avulsion):'}
+                      </strong>{' '}
+                      {isEn
+                        ? 'HAND projects 1D water stage onto nearby valley pixels; it cannot model 2D momentum or debris flows jumping riverbanks down roads.'
+                        : 'HAND memproyeksikan tinggi muka air 1D ke lembah sekitar; tidak mensimulasikan aliran bebas 2D maupun luapan galodo yang berpindah jalur mengikuti badan jalan.'}
+                    </li>
+                    <li>
+                      <strong className="text-[#161c1a]">
+                        {isEn ? 'Slope initiation & geometric shadow vs. debris rheology:' : 'Inisiasi lereng & bayangan geometris (bukan reologi lumpur):'}
+                      </strong>{' '}
+                      {isEn
+                        ? 'Infinite-Slope FoS locates steep initiation zones and traces an indicative ~20° downslope shadow; it does not simulate non-Newtonian boulder transport or exact runout volume.'
+                        : 'Infinite-Slope FoS memetakan lereng awal yang jenuh dan bayangan lintasan ~20°, bukan dinamika material batu/lumpur non-Newtonian maupun jarak endapan pasti.'}
+                    </li>
+                    <li>
+                      <strong className="text-[#161c1a]">
+                        {isEn ? 'Snapshot backwater & IDF envelope:' : 'Efek sumbatan snapshot & batas hujan IDF:'}
+                      </strong>{' '}
+                      {isEn
+                        ? 'Culvert backwater and debris surge are snapshot approximations rather than dynamic dam-break reservoir storage; slider intensity is capped by an upper-bound West Sumatra IDF curve.'
+                        : 'Kenaikan muka air hulu gorong-gorong dan lonjakan sumbatan bersifat perkiraan sesaat (bukan perambatan jebolnya bendungan alami secara dinamis); slider hujan dibatasi kurva wajar IDF.'}
+                    </li>
+                  </ul>
+                </div>
+
+                <div
+                  data-testid="method-parameter-audit"
+                  className="mt-1 flex flex-col gap-3 rounded-xl border border-[#161c1a]/14 bg-white p-3.5 text-[12px] text-[#434d49]"
+                >
+                  <div>
+                    <h4 className="m-0 text-[13px] font-bold text-[#161c1a]">
+                      {isEn
+                        ? 'Climate Calibration & Audit of Every Simulation Number'
+                        : 'Kalibrasi Iklim & Sumber Semua Angka Simulasi'}
+                    </h4>
+                    <p className="mt-1 mb-0 text-[12px] text-[#434d49]">
+                      {activeBaseline.bmkgStations.length > 0
+                        ? isEn
+                          ? `Rainfall scenarios combine ${activeBaseline.era5Series.yearsCount} years of Open-Meteo ERA5-Land daily rainfall (${activeBaseline.era5Series.period}, n=${activeBaseline.era5Series.daysCount.toLocaleString()} days) bias-corrected (×${activeBaseline.era5Series.biasFactor}) against official BMKG Data Online monthly files, because free BMKG downloads provide 2-year monthly summaries rather than ≥20-year daily gauges.`
+                          : `Skenario curah hujan menggabungkan seri harian ERA5-Land Open-Meteo ${activeBaseline.era5Series.yearsCount} tahun (${activeBaseline.era5Series.period}, n=${activeBaseline.era5Series.daysCount.toLocaleString()} hari) yang dikoreksi bias (×${activeBaseline.era5Series.biasFactor}) terhadap berkas bulanan resmi BMKG Data Online (akun terbuka hanya menyediakan rekap bulanan 2 tahun, belum seri harian ≥20 tahun).`
+                        : isEn
+                          ? `Rainfall scenarios use ${activeBaseline.era5Series.yearsCount || 41} years of Open-Meteo ERA5-Land daily rainfall (${activeBaseline.era5Series.period}) extracted at ${region.name}'s coordinates with bias factor ×${activeBaseline.era5Series.biasFactor} (optional local BMKG station bias factor can be set in regions.config.json).`
+                          : `Skenario curah hujan menggunakan seri harian ERA5-Land Open-Meteo ${activeBaseline.era5Series.yearsCount || 41} tahun (${activeBaseline.era5Series.period}) pada koordinat pusat ${region.name} dengan faktor bias ×${activeBaseline.era5Series.biasFactor} (faktor koreksi stasiun BMKG lokal dapat ditambahkan di regions.config.json).`}
+                    </p>
+                  </div>
+
+                  {activeBaseline.bmkgStations.length > 0 && (
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                      {activeBaseline.bmkgStations.map(st => (
+                        <div key={st.wmoId} className="rounded-lg border border-[#161c1a]/12 bg-[#fafaf8] p-2.5">
+                          <div className="text-[12px] font-bold text-[#161c1a]">
+                            {st.name} (WMO {st.wmoId})
+                          </div>
+                          <div className="text-[11px] text-[#636f6a]">
+                            {st.elevationM} mdpl · {st.distanceKm} km {st.direction} · {st.period} ({st.monthsValid}{' '}
+                            {isEn ? 'mo' : 'bln'})
+                          </div>
+                          <div className="font-mono-num mt-1 text-[11.5px] font-semibold text-[#0369a1]">
+                            {isEn
+                              ? `Mean ${st.meanMonthlyMm} mm/mo (~${st.estAnnualMm} mm/yr) · Peak ${st.peakMonthlyMm} mm (${st.peakMonth}) · Bias ×${st.era5OverlapRatio}`
+                              : `Rata-rata ${st.meanMonthlyMm} mm/bln (~${st.estAnnualMm} mm/thn) · Puncak ${st.peakMonthlyMm} mm (${st.peakMonth}) · Bias ×${st.era5OverlapRatio}`}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  <div className="rounded-lg border border-[#161c1a]/12 bg-[#f2f3ef]/70 px-3 py-2 text-[11.5px] text-[#434d49]">
+                    <strong className="text-[#161c1a]">
+                      {isEn
+                        ? `SNI 2415:2016 Frequency Summary (${region.name} ×${activeBaseline.era5Series.biasFactor}): `
+                        : `Ringkasan Kala Ulang SNI 2415:2016 (${region.name} ×${activeBaseline.era5Series.biasFactor}): `}
+                    </strong>
+                    <span className="font-mono-num">
+                      1-hari (R24): T10={activeBaseline.returnPeriodsMm.r24.t10Gumbel} mm · T100={activeBaseline.returnPeriodsMm.r24.t100Gumbel} mm (LP3 {activeBaseline.returnPeriodsMm.r24.t100Lp3}) ·{' '}
+                      2-hari (R48): T100={activeBaseline.returnPeriodsMm.r48.t100Gumbel} mm ·{' '}
+                      3-hari (R72): T100={activeBaseline.returnPeriodsMm.r72.t100Gumbel} mm
+                    </span>
+                  </div>
+
+                  <div className="overflow-x-auto rounded-lg border border-[#161c1a]/12">
+                    <table className="w-full border-collapse text-left text-[11.5px]">
+                      <thead>
+                        <tr className="border-b border-[#161c1a]/12 bg-[#fafaf8] text-[11px] font-bold text-[#161c1a]">
+                          <th className="px-2.5 py-2">{isEn ? 'Parameter' : 'Parameter'}</th>
+                          <th className="px-2.5 py-2">{isEn ? 'Value in Model' : 'Nilai di Model'}</th>
+                          <th className="px-2.5 py-2">{isEn ? 'Status & Source' : 'Status & Sumber'}</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-[#161c1a]/10">
+                        {auditRows.map(row => {
+                          const badgeMap: Record<ParameterAuditBadge, { cls: string; labelId: string; labelEn: string }> = {
+                            observed: {
+                              cls: 'bg-[#047857]/12 text-[#047857]',
+                              labelId: 'Observasi Lokal',
+                              labelEn: 'Observed Local'
+                            },
+                            literature: {
+                              cls: 'bg-[#0369a1]/12 text-[#0369a1]',
+                              labelId: 'Literatur Baku',
+                              labelEn: 'Published Literature'
+                            },
+                            conceptual: {
+                              cls: 'bg-[#b45309]/14 text-[#92400e]',
+                              labelId: 'Prior Konseptual',
+                              labelEn: 'Conceptual Prior'
+                            }
+                          };
+                          const b = badgeMap[row.badge];
+                          return (
+                            <tr key={row.id} className="align-top">
+                              <td className="px-2.5 py-2 font-semibold text-[#161c1a]">
+                                {isEn ? row.paramEn : row.paramId}
+                              </td>
+                              <td className="font-mono-num px-2.5 py-2 text-[#161c1a]">{row.valueText}</td>
+                              <td className="px-2.5 py-2 text-[#434d49]">
+                                <span className={`mb-1 inline-block rounded px-1.5 py-0.5 text-[10px] font-bold ${b.cls}`}>
+                                  {isEn ? b.labelEn : b.labelId}
+                                </span>
+                                <div>{isEn ? row.sourceEn : row.sourceId}</div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                <div className="mt-1 flex items-start gap-2 rounded-lg border border-[#b45309]/25 bg-[#b45309]/8 px-3 py-2 text-[12px] text-[#78350f]">
+                  <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-[#b45309]" />
+                  <span>
+                    {isEn
+                      ? `Transparency notice: This app is developed as an open civic spatial tool, not by a government meteorology/hydrology agency. Because ${region.name} has no live stream gauges (AWLR) or full cross-section surveys yet, hydrograph and depth outputs are uncalibrated literature estimates and NOT official hazard forecasts.`
+                      : `Catatan transparansi: Aplikasi ini dikembangkan sebagai alat eksplorasi data spasial terbuka. Karena ${region.name} belum memiliki pos duga muka air sungai (AWLR) atau survei penampang menyeluruh, grafik hidrograf dan perkiraan kedalaman merupakan hasil rumus literatur yang belum terkalibrasi lapangan — bukan ramalan cuaca/kebencanaan resmi.`}
+                  </span>
+                </div>
               </div>
             </div>
           )}

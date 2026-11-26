@@ -4,6 +4,7 @@ import http from 'node:http';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { createStore, DEFAULT_DB_PATH, DEFAULT_SEED_PATH } from './db.mjs';
+import { loadRegionsManifest, resolveRegionPaths } from './regions.mjs';
 import { writeVerifiedSeedFiles } from './seed-io.mjs';
 import { recomputeHydrologyFromLocalData } from '../scripts/lib/recompute-hydrology.mjs';
 
@@ -152,23 +153,92 @@ function tryServeStatic(req, res, distDir, pathname) {
   }
 
   const ext = path.extname(targetFile).toLowerCase();
+  const relFromDist = path.relative(path.resolve(distDir), targetFile).replace(/\\/g, '/');
+  let cacheControl = 'public, max-age=3600';
+  if (ext === '.html') {
+    cacheControl = 'no-cache, must-revalidate';
+  } else if (relFromDist.startsWith('assets/')) {
+    cacheControl = 'public, max-age=31536000, immutable';
+  } else if (relFromDist.startsWith('data/')) {
+    cacheControl = 'public, max-age=300, must-revalidate';
+  }
   res.writeHead(200, {
     ...SECURITY_HEADERS,
-    'Content-Type': MIME_TYPES[ext] || 'application/octet-stream'
+    'Content-Type': MIME_TYPES[ext] || 'application/octet-stream',
+    'Cache-Control': cacheControl
   });
+  if ((req.method || 'GET').toUpperCase() === 'HEAD') {
+    res.end();
+    return true;
+  }
   fs.createReadStream(targetFile).pipe(res);
   return true;
 }
 
 export function createAppServer({
-  dbPath = DEFAULT_DB_PATH,
-  seedGeoJsonPath = DEFAULT_SEED_PATH,
+  dbPath,
+  seedGeoJsonPath,
   distDir = DEFAULT_DIST_DIR,
-  publicDataDir = DEFAULT_PUBLIC_DATA_DIR,
+  publicDataDir,
+  dataDir = path.join(ROOT, 'data'),
+  publicDir = path.join(ROOT, 'public'),
+  regionsManifest = null,
   adminPassphrase = '',
   rateLimits = {}
 } = {}) {
-  const store = createStore(dbPath, seedGeoJsonPath);
+  const isSingleTestOverride = Boolean((dbPath || seedGeoJsonPath || publicDataDir) && !regionsManifest);
+  const manifest = regionsManifest || (isSingleTestOverride ? null : loadRegionsManifest(ROOT));
+  const defaultRegionId = manifest?.defaultRegionId || 'nagari-balingka';
+  const regionConfigs = manifest?.regions || [];
+  const regionById = new Map(regionConfigs.map(r => [r.id, r]));
+
+  const stores = new Map();
+  let singleStore = null;
+  if (isSingleTestOverride) {
+    singleStore = createStore(dbPath || DEFAULT_DB_PATH, seedGeoJsonPath || DEFAULT_SEED_PATH);
+  }
+
+  function getRegionContext(regionIdParam) {
+    if (isSingleTestOverride) {
+      return {
+        regionId: defaultRegionId,
+        store: singleStore,
+        publicDataDir: publicDataDir || DEFAULT_PUBLIC_DATA_DIR,
+        distDataDir: distDir ? path.join(distDir, 'data') : null
+      };
+    }
+    const targetId = String(regionIdParam || defaultRegionId).trim() || defaultRegionId;
+    const regionCfg = regionById.get(targetId);
+    if (!regionCfg) {
+      const err = new Error(`Unknown region '${targetId}'.`);
+      err.statusCode = 400;
+      throw err;
+    }
+    let ctx = stores.get(targetId);
+    if (!ctx) {
+      const paths = resolveRegionPaths(regionCfg, {
+        rootDir: ROOT,
+        defaultRegionId,
+        publicDir,
+        distDir,
+        dataDir
+      });
+      const store = createStore(paths.dbPath, paths.seedGeoJsonPath, regionCfg);
+      ctx = {
+        regionId: targetId,
+        regionCfg,
+        store,
+        publicDataDir: paths.publicDataDir,
+        distDataDir: paths.distDataDir
+      };
+      stores.set(targetId, ctx);
+    }
+    return ctx;
+  }
+
+  // Eagerly initialize default region store so health check and first load are warm
+  const defaultCtx = getRegionContext(defaultRegionId);
+  const store = defaultCtx.store;
   const configuredPassphrase = String(adminPassphrase || '').trim();
   const requiresPassphrase = configuredPassphrase.length > 0;
   const checkVerifyLimit = createRateLimiter({
@@ -205,6 +275,21 @@ export function createAppServer({
         return sendJson(res, 200, { ok: true, sqlite: true, requiresPassphrase });
       }
 
+      if (method === 'GET' && pathname === '/api/regions') {
+        const list = isSingleTestOverride
+          ? [{ id: defaultRegionId, name: 'Default Region', dataBasePath: '/data' }]
+          : regionConfigs.map(r => ({
+              id: r.id,
+              name: r.name,
+              shortName: r.shortName,
+              district: r.district,
+              regency: r.regency,
+              areaKm2: r.areaKm2,
+              dataBasePath: r.dataBasePath || (r.id === defaultRegionId ? '/data' : `/data/regions/${r.id}`)
+            }));
+        return sendJson(res, 200, { defaultRegionId, regions: list });
+      }
+
       if (method === 'GET' && pathname === '/api/editor/status') {
         return sendJson(res, 200, {
           requiresPassphrase,
@@ -231,28 +316,40 @@ export function createAppServer({
         return sendJson(res, 200, { ok: true, unlocked: true });
       }
 
+      const regionParam = url.searchParams.get('region');
+      const ctx = getRegionContext(regionParam);
+      const activeStore = ctx.store;
+
       if (method === 'GET' && pathname === '/api/waterways') {
-        return sendJson(res, 200, store.getState());
+        return sendJson(res, 200, activeStore.getState());
       }
 
       if (method === 'GET' && pathname === '/api/structures') {
-        return sendJson(res, 200, { structures: store.getState().structures });
+        return sendJson(res, 200, { structures: activeStore.getState().structures });
       }
 
       if (method === 'GET' && pathname === '/api/jorong-boundaries') {
-        return sendJson(res, 200, { jorongBoundaries: store.getState().jorongBoundaries });
+        return sendJson(res, 200, { jorongBoundaries: activeStore.getState().jorongBoundaries });
+      }
+
+      if (method === 'GET' && pathname === '/api/calibration') {
+        const st = activeStore.getState();
+        return sendJson(res, 200, {
+          calibrationMarks: st.calibrationMarks,
+          calibrationProfile: st.calibrationProfile
+        });
       }
 
       if (method === 'GET' && pathname === '/api/audit') {
         const limit = Number(url.searchParams.get('limit') || 150);
-        return sendJson(res, 200, { logs: store.listAuditLogs(limit) });
+        return sendJson(res, 200, { logs: activeStore.listAuditLogs(limit) });
       }
 
       if (method === 'GET' && pathname === '/api/suggestions') {
         if (!isEditorAuthorized(req)) {
           return sendJson(res, 401, { error: 'Mode Editor terkunci. Masukkan Admin Passphrase terlebih dahulu.' });
         }
-        return sendJson(res, 200, { suggestions: store.listSuggestions() });
+        return sendJson(res, 200, { suggestions: activeStore.listSuggestions() });
       }
 
       if (method === 'POST' && pathname === '/api/suggestions') {
@@ -266,14 +363,15 @@ export function createAppServer({
           );
         }
         const body = await readJsonBody(req, 32 * 1024);
-        const created = store.createSuggestion(body);
+        const created = activeStore.createSuggestion(body);
         return sendJson(res, 201, { suggestion: created });
       }
 
       if (method === 'GET' && pathname === '/api/export/bundle') {
-        const bundle = store.exportBundle();
+        const bundle = activeStore.exportBundle();
+        const safeSlug = ctx.regionId.replace(/[^a-z0-9_-]/gi, '') || 'region';
         return sendJson(res, 200, bundle, {
-          'Content-Disposition': 'attachment; filename="balingka-waterways-audit-bundle.json"'
+          'Content-Disposition': `attachment; filename="${safeSlug}-waterways-audit-bundle.json"`
         });
       }
 
@@ -288,6 +386,10 @@ export function createAppServer({
         (method === 'POST' && pathname === '/api/jorong-boundaries') ||
         (method === 'PUT' && pathname.startsWith('/api/jorong-boundaries/')) ||
         (method === 'DELETE' && pathname.startsWith('/api/jorong-boundaries/')) ||
+        (method === 'POST' && pathname === '/api/calibration-marks') ||
+        (method === 'PUT' && pathname.startsWith('/api/calibration-marks/')) ||
+        (method === 'DELETE' && pathname.startsWith('/api/calibration-marks/')) ||
+        (method === 'PUT' && pathname === '/api/calibration-profile') ||
         (method === 'POST' && pathname === '/api/dem-segments/suppress') ||
         (method === 'DELETE' && pathname.startsWith('/api/dem-segments/')) ||
         (method === 'POST' && /^\/api\/audit\/\d+\/revert$/.test(pathname)) ||
@@ -300,75 +402,99 @@ export function createAppServer({
 
       if (method === 'POST' && pathname === '/api/waterways') {
         const body = await readJsonBody(req, 512 * 1024);
-        const result = store.createWaterway(body);
+        const result = activeStore.createWaterway(body);
         return sendJson(res, 201, result);
       }
 
       const wwMatch = pathname.match(/^\/api\/waterways\/([^/]+)$/);
       if (wwMatch && method === 'PUT') {
         const body = await readJsonBody(req, 512 * 1024);
-        const result = store.updateWaterway(wwMatch[1], body);
+        const result = activeStore.updateWaterway(wwMatch[1], body);
         return sendJson(res, 200, result);
       }
       if (wwMatch && method === 'DELETE') {
         const body = await readJsonBody(req, 16 * 1024).catch(() => ({}));
-        const result = store.deleteWaterway(wwMatch[1], body);
+        const result = activeStore.deleteWaterway(wwMatch[1], body);
         return sendJson(res, 200, result);
       }
 
       if (method === 'POST' && pathname === '/api/structures') {
         const body = await readJsonBody(req, 64 * 1024);
-        const result = store.createStructure(body);
+        const result = activeStore.createStructure(body);
         return sendJson(res, 201, result);
       }
 
       const stMatch = pathname.match(/^\/api\/structures\/([^/]+)$/);
       if (stMatch && method === 'PUT') {
         const body = await readJsonBody(req, 64 * 1024);
-        const result = store.updateStructure(stMatch[1], body);
+        const result = activeStore.updateStructure(stMatch[1], body);
         return sendJson(res, 200, result);
       }
       if (stMatch && method === 'DELETE') {
         const body = await readJsonBody(req, 16 * 1024).catch(() => ({}));
-        const result = store.deleteStructure(stMatch[1], body);
+        const result = activeStore.deleteStructure(stMatch[1], body);
         return sendJson(res, 200, result);
       }
 
       if (method === 'POST' && pathname === '/api/jorong-boundaries') {
         const body = await readJsonBody(req, 256 * 1024);
-        const result = store.createJorongBoundary(body);
+        const result = activeStore.createJorongBoundary(body);
         return sendJson(res, 201, result);
       }
 
       const jbMatch = pathname.match(/^\/api\/jorong-boundaries\/([^/]+)$/);
       if (jbMatch && method === 'PUT') {
         const body = await readJsonBody(req, 256 * 1024);
-        const result = store.updateJorongBoundary(jbMatch[1], body);
+        const result = activeStore.updateJorongBoundary(jbMatch[1], body);
         return sendJson(res, 200, result);
       }
       if (jbMatch && method === 'DELETE') {
         const body = await readJsonBody(req, 16 * 1024).catch(() => ({}));
-        const result = store.deleteJorongBoundary(jbMatch[1], body);
+        const result = activeStore.deleteJorongBoundary(jbMatch[1], body);
+        return sendJson(res, 200, result);
+      }
+
+      if (method === 'POST' && pathname === '/api/calibration-marks') {
+        const body = await readJsonBody(req, 64 * 1024);
+        const result = activeStore.createCalibrationMark(body);
+        return sendJson(res, 201, result);
+      }
+
+      const calMatch = pathname.match(/^\/api\/calibration-marks\/([^/]+)$/);
+      if (calMatch && method === 'PUT') {
+        const body = await readJsonBody(req, 64 * 1024);
+        const result = activeStore.updateCalibrationMark(calMatch[1], body);
+        return sendJson(res, 200, result);
+      }
+      if (calMatch && method === 'DELETE') {
+        const body = await readJsonBody(req, 16 * 1024).catch(() => ({}));
+        const result = activeStore.deleteCalibrationMark(calMatch[1], body);
+        return sendJson(res, 200, result);
+      }
+
+      if (method === 'PUT' && pathname === '/api/calibration-profile') {
+        const body = await readJsonBody(req, 32 * 1024);
+        const result = activeStore.saveCalibrationProfile(body);
         return sendJson(res, 200, result);
       }
 
       if (method === 'POST' && pathname === '/api/dem-segments/suppress') {
         const body = await readJsonBody(req, 32 * 1024);
-        const result = store.suppressDemSegment(body);
+        const result = activeStore.suppressDemSegment(body);
         return sendJson(res, 200, result);
       }
 
       const demMatch = pathname.match(/^\/api\/dem-segments\/([^/]+)\/suppress$/);
       if (demMatch && method === 'DELETE') {
         const body = await readJsonBody(req, 16 * 1024).catch(() => ({}));
-        const result = store.restoreDemSegment(demMatch[1], body);
+        const result = activeStore.restoreDemSegment(demMatch[1], body);
         return sendJson(res, 200, result);
       }
 
       const revertMatch = pathname.match(/^\/api\/audit\/(\d+)\/revert$/);
       if (revertMatch && method === 'POST') {
         const body = await readJsonBody(req, 16 * 1024).catch(() => ({}));
-        const result = store.revertAuditLog(revertMatch[1], body);
+        const result = activeStore.revertAuditLog(revertMatch[1], body);
         return sendJson(res, 200, result);
       }
 
@@ -376,26 +502,23 @@ export function createAppServer({
         const body = await readJsonBody(req, 16 * 1024).catch(() => ({}));
         const actor = String(body?.actor || 'Editor').trim() || 'Editor';
         const carveDepthM = Number(body?.carveDepthM) || 3.5;
-        const currentState = store.getState();
+        const currentState = activeStore.getState();
         const summary = recomputeHydrologyFromLocalData({
-          publicDataDir,
-          distDataDir: distDir ? path.join(distDir, 'data') : null,
+          publicDataDir: ctx.publicDataDir,
+          distDataDir: ctx.distDataDir,
           verifiedFeatures: currentState.waterways.features,
           verifiedStructures: currentState.structures.features,
           suppressedDemIds: new Set(currentState.suppressedDem.map(s => s.seg_id)),
           carveDepthM
         });
-        const marked = store.markHydroRecomputed({
+        const marked = activeStore.markHydroRecomputed({
           actor,
           burnedCellCount: summary.burnedCellCount,
           verifiedWaterwayCount: summary.verifiedWaterwayCount,
           recomputedAt: summary.recomputedAt,
           summary
         });
-        writeVerifiedSeedFiles(marked.state, [
-          publicDataDir,
-          distDir ? path.join(distDir, 'data') : null
-        ]);
+        writeVerifiedSeedFiles(marked.state, [ctx.publicDataDir, ctx.distDataDir]);
         return sendJson(res, 200, {
           ok: true,
           summary,
@@ -407,7 +530,7 @@ export function createAppServer({
       const sugMatch = pathname.match(/^\/api\/suggestions\/(\d+)$/);
       if (sugMatch && method === 'PATCH') {
         const body = await readJsonBody(req, 16 * 1024);
-        const suggestion = store.updateSuggestionStatus(sugMatch[1], body);
+        const suggestion = activeStore.updateSuggestionStatus(sugMatch[1], body);
         return sendJson(res, 200, { suggestion });
       }
 
@@ -419,12 +542,19 @@ export function createAppServer({
   });
 
   server.on('close', () => {
-    try {
-      store.close();
-    } catch {}
+    for (const ctx of stores.values()) {
+      try {
+        ctx.store.close();
+      } catch {}
+    }
+    if (singleStore) {
+      try {
+        singleStore.close();
+      } catch {}
+    }
   });
 
-  return { server, store };
+  return { server, store, getStore: id => getRegionContext(id).store };
 }
 
 const isMain = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
@@ -432,12 +562,12 @@ if (isMain) {
   loadDotEnv();
   const port = Number(process.env.PORT || 8787);
   const host = process.env.HOST || '0.0.0.0';
-  const dbPath = process.env.BALINGKA_DB_PATH ? path.resolve(process.env.BALINGKA_DB_PATH) : DEFAULT_DB_PATH;
+  const dbPath = process.env.BALINGKA_DB_PATH ? path.resolve(process.env.BALINGKA_DB_PATH) : undefined;
   const adminPassphrase = process.env.ADMIN_PASSPHRASE || '';
   const { server } = createAppServer({ dbPath, adminPassphrase });
   server.listen(port, host, () => {
     console.log(
-      `Nagari Balingka SQLite API listening on http://${host}:${port} (db=${dbPath}, passphrase=${adminPassphrase ? 'enabled' : 'open-local'})`
+      `Nagari Balingka & Multi-Region SQLite API listening on http://${host}:${port} (passphrase=${adminPassphrase ? 'enabled' : 'open-local'})`
     );
   });
 }

@@ -1,4 +1,9 @@
 import zlib from 'node:zlib';
+import {
+  buildReachNetworkAndSrc,
+  computeTwiAndCurvature,
+  rasterizeAgamGeotechGrids
+} from './reach-network.mjs';
 
 /**
  * Pure open-source hydrological terrain analysis & smooth raster rendering algorithms
@@ -703,7 +708,7 @@ function lerpColorRamp(stops, val) {
  * Renders smooth CutSheetRX-style Terrain PNGs (Relief, Color Elevation + Shading, Smooth Slope)
  * by gently smoothing the raw DEM, upsampling to outSize x outSize, and computing per-pixel hillshade.
  */
-export function renderSmoothTerrainRasters(rawElev, slopeGrid, gridMeta, outSize = 1024) {
+export function renderSmoothTerrainRasters(rawElev, slopeGrid, gridMeta, outSize = 1024, insideMask = null) {
   const { width, height, cellSizeX, cellSizeY } = gridMeta;
   const smoothElev = smoothGrid(rawElev, width, height, 2);
   const smoothSlope = smoothGrid(slopeGrid, width, height, 2);
@@ -757,7 +762,12 @@ export function renderSmoothTerrainRasters(rawElev, slopeGrid, gridMeta, outSize
   for (let y = 0; y < outSize; y++) {
     const y0 = Math.max(0, y - 1), y1 = Math.min(outSize - 1, y + 1);
     const yf = (y / (outSize - 1)) * (height - 1);
+    const mr = Math.min(height - 1, Math.floor((y / outSize) * height));
     for (let x = 0; x < outSize; x++) {
+      if (insideMask) {
+        const mc = Math.min(width - 1, Math.floor((x / outSize) * width));
+        if (insideMask[mr * width + mc] === 0) continue;
+      }
       const x0 = Math.max(0, x - 1), x1 = Math.min(outSize - 1, x + 1);
       const xf = (x / (outSize - 1)) * (width - 1);
 
@@ -1243,7 +1253,7 @@ export function snapFlowPathsToWaterways(
  * Renders discrete ESA WorldCover 10m land-cover classes into a crisp translucent
  * RGBA PNG overlay suitable for daylight satellite/topographic basemaps.
  */
-export function renderLandCoverRaster(lcGrid, lcW, lcH, outSize = 1024) {
+export function renderLandCoverRaster(lcGrid, lcW, lcH, outSize = 1024, insideMask = null, maskW = 0, maskH = 0) {
   const palette = {
     10: [21, 128, 61, 145],   // Tree cover / Forest
     20: [101, 163, 13, 125],  // Shrubland
@@ -1258,7 +1268,12 @@ export function renderLandCoverRaster(lcGrid, lcW, lcH, outSize = 1024) {
   const rgba = new Uint8Array(outSize * outSize * 4);
   for (let y = 0; y < outSize; y++) {
     const sr = Math.min(lcH - 1, Math.floor((y / outSize) * lcH));
+    const mr = insideMask && maskH > 0 ? Math.min(maskH - 1, Math.floor((y / outSize) * maskH)) : 0;
     for (let x = 0; x < outSize; x++) {
+      if (insideMask && maskW > 0) {
+        const mc = Math.min(maskW - 1, Math.floor((x / outSize) * maskW));
+        if (insideMask[mr * maskW + mc] === 0) continue;
+      }
       const sc = Math.min(lcW - 1, Math.floor((x / outSize) * lcW));
       const code = lcGrid[sr * lcW + sc];
       const col = palette[code];
@@ -1432,9 +1447,9 @@ export function rasterizeAgamGrids(agamContext, gridMeta, insideMask = null) {
 }
 
 /**
- * Computes compact, deterministic raster fields for real-time physical galodo
- * cascade simulation (SCS-CN, D8 travel time, upland catchment ratio, root cohesion,
- * and road-crossing bottleneck proximity).
+ * Computes compact, deterministic raster fields & full-res HAND Synthetic Rating Curve (SRC)
+ * reach network for real-time mass-conserving hydraulic, slope-stability (FoS),
+ * coupled debris-bulking, and P10-P50-P90 ensemble simulation.
  */
 export function computeCascadeFields({
   rawElev,
@@ -1446,11 +1461,16 @@ export function computeCascadeFields({
   landCoverClasses = null,
   soilErodibility = null,
   officialLandslide = null,
+  agamContext = null,
+  scourMask = null,
   nagariMask = null,
   agamSummary = null,
+  verifiedWaterways = [],
+  verifiedStructures = [],
   bottlenecks = [],
   gridMeta,
-  maxSimDim = 260
+  handStreamThreshold = null,
+  maxSimDim = 320
 }) {
   const { width, height, bbox, cellSizeX, cellSizeY } = gridMeta;
   const n = width * height;
@@ -1464,6 +1484,7 @@ export function computeCascadeFields({
   }
   const elevSpan = Math.max(1, maxElev - minElev);
 
+  const elevM = new Uint16Array(n);
   const handDm = new Uint16Array(n);
   const slopePct = new Uint8Array(n);
   const accNorm = new Uint8Array(n);
@@ -1477,6 +1498,7 @@ export function computeCascadeFields({
     const southFactor = r / Math.max(1, height - 1); // 1.0 at southern Singgalang slopes
     for (let c = 0; c < width; c++) {
       const i = r * width + c;
+      elevM[i] = Math.max(0, Math.min(65535, Math.round(rawElev[i])));
       handDm[i] = Math.min(65535, Math.round(Math.max(0, hand[i]) * 10));
       const sl = Math.max(0, slope[i]);
       slopePct[i] = Math.min(200, Math.round(sl));
@@ -1527,6 +1549,31 @@ export function computeCascadeFields({
       }
     }
   }
+
+  // Full-resolution geomorphic & geotechnical fields (TWI, curvature, BBSDLP soil depth, PSG lithology)
+  const { twi, curvature } = computeTwiAndCurvature(rawElev, acc, slope, gridMeta);
+  const { soilDepthCm, geologyFactor } = rasterizeAgamGeotechGrids(agamContext, slope, curvature, gridMeta);
+
+  // Full-resolution topological reach network + HAND-derived Synthetic Rating Curves (SRC)
+  const effectiveStreamThresh =
+    handStreamThreshold != null ? handStreamThreshold : Math.max(4, Math.round(75 * areaScale));
+  const { network, cellReach, cellLongFrac } = buildReachNetworkAndSrc({
+    rawElev,
+    dir,
+    acc,
+    slope,
+    hand,
+    cnBase,
+    isForest,
+    twi,
+    uplandWeight,
+    nagariMask,
+    verifiedWaterways,
+    verifiedStructures,
+    bottlenecks,
+    gridMeta,
+    streamThresholdCells: effectiveStreamThresh
+  });
 
   // Topological sort from highest filled elevation to lowest for upstream->downstream accumulation
   const order = new Int32Array(n);
@@ -1599,6 +1646,30 @@ export function computeCascadeFields({
     return out;
   };
 
+  // Preserve scour positives with max-pooling during downsample so thin 10m scour channels don't vanish
+  const resampleScourMax = arr => {
+    if (!arr) return null;
+    if (!needSimDownsample) return arr;
+    const out = new Uint8Array(simW * simH);
+    for (let r = 0; r < simH; r++) {
+      const r0 = Math.floor((r / simH) * height);
+      const r1 = Math.max(r0 + 1, Math.ceil(((r + 1) / simH) * height));
+      for (let c = 0; c < simW; c++) {
+        const c0 = Math.floor((c / simW) * width);
+        const c1 = Math.max(c0 + 1, Math.ceil(((c + 1) / simW) * width));
+        let mx = 0;
+        for (let sr = r0; sr < Math.min(height, r1); sr++) {
+          for (let sc = c0; sc < Math.min(width, c1); sc++) {
+            const v = arr[sr * width + sc];
+            if (v > mx) mx = v;
+          }
+        }
+        out[r * simW + c] = mx;
+      }
+    }
+    return out;
+  };
+
   const bottleneckPts = (bottlenecks || [])
     .map(b => b?.coords || b?.geometry?.coordinates)
     .filter(c => Array.isArray(c) && c.length >= 2);
@@ -1620,6 +1691,7 @@ export function computeCascadeFields({
     }
   }
 
+  const outElevM = resampleArr(elevM, Uint16Array);
   const outHandDm = resampleArr(handDm, Uint16Array);
   const outSlopePct = resampleArr(slopePct, Uint8Array);
   const outAccNorm = resampleArr(accNorm, Uint8Array);
@@ -1629,21 +1701,53 @@ export function computeCascadeFields({
   const outIsForest = resampleArr(isForest, Uint8Array);
   const outUplandWeight = resampleArr(uplandWeight, Uint8Array);
   const outUplandAccRatio = resampleArr(uplandAccRatio, Uint8Array);
+  const outTwi = resampleArr(twi, Uint8Array);
+  const outCurvature = resampleArr(curvature, Uint8Array);
+  const outSoilDepthCm = resampleArr(soilDepthCm, Uint8Array);
+  const outGeologyFactor = resampleArr(geologyFactor, Uint8Array);
+  const outReachId = resampleArr(cellReach, Uint16Array);
+  const outLongFrac = resampleArr(cellLongFrac, Uint8Array);
   const outSoil = resampleArr(soilErodibility, Uint8Array);
   const outLandslide = resampleArr(officialLandslide, Uint8Array);
+  const outScourMask = resampleScourMax(scourMask);
   const outNagariMask = resampleArr(nagariMask, Uint8Array);
+
+  // Full-resolution (~13.8m DEMNAS) compact HAND grid in decimeters (0..250 = 0..25.0m, 255 = dry/steep/outside)
+  // so simulation water boundaries hug real riverbanks without ~33m spillover onto raised neighboring houses
+  let hiResHandDm = null;
+  if (needSimDownsample) {
+    hiResHandDm = new Uint8Array(n);
+    for (let i = 0; i < n; i++) {
+      if ((nagariMask && nagariMask[i] === 0) || slope[i] > 28) {
+        hiResHandDm[i] = 255;
+      } else {
+        const dm = Math.round(hand[i] * 10);
+        hiResHandDm[i] = dm >= 250 ? 255 : Math.max(0, dm);
+      }
+    }
+  }
 
   const toB64 = arr => Buffer.from(arr.buffer, arr.byteOffset, arr.byteLength).toString('base64');
 
   return {
+    version: 2,
     width: simW,
     height: simH,
     bbox,
     cellSizeX: Number(simCellX.toFixed(2)),
     cellSizeY: Number(simCellY.toFixed(2)),
+    sourceDemResM: Number(((cellSizeX + cellSizeY) * 0.5).toFixed(1)),
+    ...(hiResHandDm
+      ? {
+          hiResWidth: width,
+          hiResHeight: height,
+          hiResHandDmBase64: toB64(hiResHandDm)
+        }
+      : {}),
     minElev: Math.round(minElev),
     maxElev: Math.round(maxElev),
     p90TravelMin: Number(Math.max(12, p90TravelMin).toFixed(1)),
+    elevMBase64: toB64(outElevM),
     handDmBase64: toB64(outHandDm),
     slopePctBase64: toB64(outSlopePct),
     accNormBase64: toB64(outAccNorm),
@@ -1653,9 +1757,17 @@ export function computeCascadeFields({
     isForestBase64: toB64(outIsForest),
     uplandWeightBase64: toB64(outUplandWeight),
     uplandAccRatioBase64: toB64(outUplandAccRatio),
+    twiBase64: toB64(outTwi),
+    curvatureBase64: toB64(outCurvature),
+    soilDepthCmBase64: toB64(outSoilDepthCm),
+    geologyFactorBase64: toB64(outGeologyFactor),
+    reachIdBase64: toB64(outReachId),
+    reachLongFracBase64: toB64(outLongFrac),
     bottleneckProxBase64: toB64(bottleneckProx),
+    network,
     ...(outSoil ? { soilErodibilityBase64: toB64(outSoil) } : {}),
     ...(outLandslide ? { officialLandslideBase64: toB64(outLandslide) } : {}),
+    ...(outScourMask ? { scourMaskBase64: toB64(outScourMask) } : {}),
     ...(outNagariMask ? { nagariMaskBase64: toB64(outNagariMask) } : {}),
     ...(agamSummary ? { agamSummary } : {})
   };

@@ -1,0 +1,100 @@
+{
+  "regionId": "nagari-balingka",
+  "regionName": "Nagari Balingka",
+  "bmkgStations": [
+    {
+      "wmoId": "96165",
+      "name": "Stasiun Geofisika Padang Panjang",
+      "elevationM": 735,
+      "distanceKm": 15.0,
+      "direction": "SE",
+      "period": "2025-02 – 2026-09",
+      "monthsValid": 20,
+      "meanMonthlyMm": 320.2,
+      "estAnnualMm": 3842,
+      "peakMonthlyMm": 1027.8,
+      "peakMonth": "2025-11",
+      "meanRhPct": 90.0,
+      "meanTempC": 22.4,
+      "era5OverlapRatio": 1.133
+    },
+    {
+      "wmoId": "96167",
+      "name": "Stasiun Klimatologi Sumatera Barat (Sicincin)",
+      "elevationM": 128,
+      "distanceKm": 22.3,
+      "direction": "S",
+      "period": "2024-11 – 2026-09",
+      "monthsValid": 23,
+      "meanMonthlyMm": 347.0,
+      "estAnnualMm": 4164,
+      "peakMonthlyMm": 1184.6,
+      "peakMonth": "2025-11",
+      "meanRhPct": 85.7,
+      "meanTempC": 25.9,
+      "era5OverlapRatio": 1.012
+    }
+  ],
+  "era5Series": {
+    "targetCoord": [-0.345, 100.319],
+    "gridCoord": [-0.3163, 100.3359],
+    "gridElevM": 1238,
+    "period": "1985-01-01 – 2025-12-31",
+    "yearsCount": 41,
+    "daysCount": 14975,
+    "biasFactor": 1.073,
+    "rawMeanAnnualMm": 3919,
+    "correctedMeanAnnualMm": 4203
+  },
+  "returnPeriodsMm": {
+    "r24": {
+      "max41yr": 222,
+      "t2": 109,
+      "t10Gumbel": 175,
+      "t10Lp3": 170,
+      "t50Gumbel": 234,
+      "t50Lp3": 218,
+      "t100Gumbel": 259,
+      "t100Lp3": 238
+    },
+    "r48": {
+      "max41yr": 306,
+      "t2": 153,
+      "t10Gumbel": 235,
+      "t10Lp3": 227,
+      "t50Gumbel": 306,
+      "t50Lp3": 283,
+      "t100Gumbel": 337,
+      "t100Lp3": 306
+    },
+    "r72": {
+      "max41yr": 337,
+      "t2": 183,
+      "t10Gumbel": 270,
+      "t10Lp3": 262,
+      "t50Gumbel": 348,
+      "t50Lp3": 320,
+      "t100Gumbel": 380,
+      "t100Lp3": 342
+    }
+  },
+  "idfCapsMmHr": {
+    "30": 140,
+    "60": 90,
+    "120": 60,
+    "180": 45,
+    "360": 30,
+    "720": 18,
+    "1440": 12,
+    "2160": 9,
+    "2880": 8,
+    "4320": 6
+  },
+  "bmkgHourlyScale": [
+    { "maxExclusive": 5, "id": "Ringan", "en": "Light" },
+    { "maxExclusive": 10, "id": "Sedang", "en": "Moderate" },
+    { "maxExclusive": 20, "id": "Lebat", "en": "Heavy" },
+    { "maxExclusive": 50.001, "id": "Sangat Lebat", "en": "Very Heavy" },
+    { "maxExclusive": null, "id": "Ekstrem", "en": "Extreme" }
+  ]
+}

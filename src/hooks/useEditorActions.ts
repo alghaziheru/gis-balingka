@@ -1,14 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from 'react';
+import type { ActiveEditingCalibrationMark } from '../components/CalibrationEditorPanel';
 import type { EditorSubTab } from '../components/EditorTab';
 import type { ActiveEditingJorong } from '../components/JorongEditorPanel';
 import type { LoadedDatasets } from '../components/MapView';
 import type { ActiveEditingStructure } from '../components/StructureEditorPanel';
 import type { ActiveEditingWaterway } from '../components/WaterwayEditorPanel';
-import { I18N } from '../i18n/translations';
+import { getRegionDataBasePath, REGION, type RegionConfig } from '../config/region';
+import { getTranslations } from '../i18n/translations';
 import {
+  createCalibrationMark,
   createJorongBoundary,
   createStructure,
   createWaterway,
+  deleteCalibrationMark,
   deleteJorongBoundary,
   deleteStructure,
   deleteWaterway,
@@ -21,9 +25,11 @@ import {
   recomputeHydrology,
   restoreDemSegment,
   revertAuditLog,
+  saveCalibrationProfile,
   saveEditorName,
   saveStoredPassphrase,
   suppressDemSegment,
+  updateCalibrationMark,
   updateJorongBoundary,
   updateStructure,
   updateWaterway,
@@ -34,6 +40,8 @@ import { orientCoordinatesDownhill } from '../lib/geometry';
 import type {
   ActiveTool,
   AuditLogEntry,
+  CalibrationMarkFeature,
+  CalibrationProfile,
   HydroStatus,
   JorongBoundaryFeature,
   Language,
@@ -47,6 +55,7 @@ import type {
 } from '../types/gis';
 
 export function useEditorActions(opts: {
+  region: RegionConfig;
   datasets: LoadedDatasets | null;
   demClient: DemClient | null;
   lang: Language;
@@ -59,19 +68,25 @@ export function useEditorActions(opts: {
   flyTo: (center: [number, number], flyOpts?: { zoom?: number; pitch?: number; bearing?: number }) => void;
   reloadHydrologyData: (nextVer: number) => Promise<void>;
 }) {
+  const region = opts.region || REGION;
+  const regionId = region.id;
+  const dataBasePath = getRegionDataBasePath(region);
   const [editorSubTab, setEditorSubTab] = useState<EditorSubTab>('waterways');
   const [apiAvailable, setApiAvailable] = useState(false);
   const [requiresPassphrase, setRequiresPassphrase] = useState(false);
   const [editorUnlocked, setEditorUnlocked] = useState(false);
   const [unlockModalOpen, setUnlockModalOpen] = useState(false);
-  const [actorName, setActorName] = useState(() => loadEditorName());
+  const [actorName, setActorName] = useState(() => loadEditorName(region.authorities.defaultEditorName));
   const [verifiedWaterways, setVerifiedWaterways] = useState<VerifiedWaterwayFeature[]>([]);
   const [verifiedStructures, setVerifiedStructures] = useState<VerifiedStructureFeature[]>([]);
   const [jorongBoundaries, setJorongBoundaries] = useState<JorongBoundaryFeature[]>([]);
+  const [calibrationMarks, setCalibrationMarks] = useState<CalibrationMarkFeature[]>([]);
+  const [calibrationProfile, setCalibrationProfile] = useState<CalibrationProfile | null>(null);
   const [suppressedDem, setSuppressedDem] = useState<SuppressedDemSegment[]>([]);
   const [editingWaterway, setEditingWaterway] = useState<ActiveEditingWaterway | null>(null);
   const [editingStructure, setEditingStructure] = useState<ActiveEditingStructure | null>(null);
   const [editingJorong, setEditingJorong] = useState<ActiveEditingJorong | null>(null);
+  const [editingCalibrationMark, setEditingCalibrationMark] = useState<ActiveEditingCalibrationMark | null>(null);
   const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
   const [dataVersion, setDataVersion] = useState(0);
   const [hydroStatus, setHydroStatus] = useState<HydroStatus>({
@@ -81,12 +96,30 @@ export function useEditorActions(opts: {
     verifiedWaterwayCount: 0
   });
   const [recomputingHydro, setRecomputingHydro] = useState(false);
-  const hydratedRef = useRef(false);
+  const [editorHydrated, setEditorHydrated] = useState(false);
+  const hydratedKeyRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    setVerifiedWaterways([]);
+    setVerifiedStructures([]);
+    setJorongBoundaries([]);
+    setSuppressedDem([]);
+    setEditingWaterway(null);
+    setEditingStructure(null);
+    setEditingJorong(null);
+    setAuditLogs([]);
+    setDataVersion(0);
+    setEditorHydrated(false);
+    hydratedKeyRef.current = null;
+    setActorName(loadEditorName(region.authorities.defaultEditorName));
+  }, [regionId, region.authorities.defaultEditorName]);
 
   const osmContext = opts.datasets?.osmContext;
   useEffect(() => {
-    if (!osmContext || hydratedRef.current) return;
-    hydratedRef.current = true;
+    if (!osmContext) return;
+    const key = `${regionId}:${osmContext.features.length}`;
+    if (hydratedKeyRef.current === key) return;
+    hydratedKeyRef.current = key;
     let cancelled = false;
     async function hydrateEditor() {
       try {
@@ -105,51 +138,65 @@ export function useEditorActions(opts: {
               else if (!cancelled) saveStoredPassphrase('');
             }
           }
-          const [wwState, logs] = await Promise.all([fetchWaterwaysState(), fetchAuditLogs()]);
+          const [wwState, logs] = await Promise.all([
+            fetchWaterwaysState(regionId),
+            fetchAuditLogs(150, regionId)
+          ]);
           if (!cancelled) {
             setVerifiedWaterways(wwState.waterways);
             setVerifiedStructures(wwState.structures);
             setJorongBoundaries(wwState.jorongBoundaries);
+            setCalibrationMarks(wwState.calibrationMarks);
+            setCalibrationProfile(wwState.calibrationProfile);
             setSuppressedDem(wwState.suppressedDem);
             setHydroStatus(wwState.hydroStatus);
             setAuditLogs(logs);
           }
         } else {
           setApiAvailable(false);
-          const staticSeed = await fetchStaticVerifiedSeed(osmContext!);
+          const staticSeed = await fetchStaticVerifiedSeed(osmContext!, dataBasePath);
           if (!cancelled) {
             setVerifiedWaterways(staticSeed.waterways);
             setVerifiedStructures(staticSeed.structures);
+            setCalibrationMarks(staticSeed.calibrationMarks);
+            setCalibrationProfile(staticSeed.calibrationProfile);
             setSuppressedDem(staticSeed.suppressedDem);
           }
         }
       } catch {
         // Ignore hydration errors; static datasets remain viewable
+      } finally {
+        if (!cancelled) setEditorHydrated(true);
       }
     }
     hydrateEditor();
     return () => {
       cancelled = true;
     };
-  }, [osmContext]);
+  }, [osmContext, regionId, dataBasePath]);
 
   const refreshSqliteState = useCallback(async () => {
-    const [wwState, logs] = await Promise.all([fetchWaterwaysState(), fetchAuditLogs()]);
+    const [wwState, logs] = await Promise.all([
+      fetchWaterwaysState(regionId),
+      fetchAuditLogs(150, regionId)
+    ]);
     setVerifiedWaterways(wwState.waterways);
     setVerifiedStructures(wwState.structures);
     setJorongBoundaries(wwState.jorongBoundaries);
+    setCalibrationMarks(wwState.calibrationMarks);
+    setCalibrationProfile(wwState.calibrationProfile);
     setSuppressedDem(wwState.suppressedDem);
     setHydroStatus(wwState.hydroStatus);
     setAuditLogs(logs);
-  }, []);
+  }, [regionId]);
 
   const handleRecomputeHydrology = useCallback(async () => {
     setRecomputingHydro(true);
     try {
-      const res = await recomputeHydrology({ actor: actorName, carveDepthM: 3.5 });
+      const res = await recomputeHydrology({ actor: actorName, carveDepthM: 3.5 }, regionId);
       const nextVer = Date.now();
       await opts.reloadHydrologyData(nextVer);
-      const logs = await fetchAuditLogs();
+      const logs = await fetchAuditLogs(150, regionId);
       setVerifiedWaterways(res.state.waterways.features);
       setVerifiedStructures(res.state.structures?.features || []);
       setSuppressedDem(res.state.suppressedDem);
@@ -166,7 +213,7 @@ export function useEditorActions(opts: {
     } finally {
       setRecomputingHydro(false);
     }
-  }, [actorName, opts]);
+  }, [actorName, opts, regionId]);
 
   const suppressedDemIds = useMemo(() => suppressedDem.map(s => s.seg_id), [suppressedDem]);
   const verifiedIssueCount = useMemo(
@@ -202,7 +249,8 @@ export function useEditorActions(opts: {
     if (editingWaterway) setEditingWaterway(null);
     if (editingStructure) setEditingStructure(null);
     if (editingJorong) setEditingJorong(null);
-  }, [editingWaterway, editingStructure, editingJorong]);
+    if (editingCalibrationMark) setEditingCalibrationMark(null);
+  }, [editingWaterway, editingStructure, editingJorong, editingCalibrationMark]);
 
   const selectWaterwayFromMap = useCallback(
     (feat: VerifiedWaterwayFeature) => {
@@ -239,6 +287,9 @@ export function useEditorActions(opts: {
         source: feat.properties.source,
         sourceRef: feat.properties.source_ref,
         sizeNote: feat.properties.size_note,
+        openingWidthM: feat.properties.opening_width_m ?? null,
+        openingHeightM: feat.properties.opening_height_m ?? null,
+        defaultBlockagePct: feat.properties.default_blockage_pct ?? null,
         notes: feat.properties.notes,
         coordinates: [feat.geometry.coordinates[0], feat.geometry.coordinates[1]]
       });
@@ -334,11 +385,14 @@ export function useEditorActions(opts: {
   const suppressDemSegmentFromMap = useCallback(
     async (segId: string) => {
       try {
-        await suppressDemSegment({
-          seg_id: segId,
-          reason: 'Ditandai keliru langsung dari peta',
-          actor: actorName
-        });
+        await suppressDemSegment(
+          {
+            seg_id: segId,
+            reason: 'Ditandai keliru langsung dari peta',
+            actor: actorName
+          },
+          regionId
+        );
         await refreshSqliteState();
         opts.notify(
           opts.lang === 'en' ? `Hidden DEM segment ${segId}` : `Segmen ${segId} disembunyikan & dicatat`
@@ -347,12 +401,12 @@ export function useEditorActions(opts: {
         opts.notify(err instanceof Error ? err.message : 'Failed to suppress');
       }
     },
-    [actorName, opts, refreshSqliteState]
+    [actorName, opts, refreshSqliteState, regionId]
   );
 
   const finishDrawing = useCallback(
     (drawVertices: [number, number][]) => {
-      const t = I18N[opts.lang];
+      const t = getTranslations(region)[opts.lang];
       if (opts.activeTool === 'drawJorong') {
         if (drawVertices.length < 3) {
           opts.notify(
@@ -475,33 +529,40 @@ export function useEditorActions(opts: {
     onSaveWaterway: async (draft: ActiveEditingWaterway, reason: string) => {
       try {
         if (draft.id) {
-          await updateWaterway(draft.id, {
-            name: draft.name,
-            kind: draft.kind,
-            status: draft.status,
-            notes: draft.notes,
-            width_pre_m: draft.widthPreM ?? null,
-            width_post_m: draft.widthPostM ?? null,
-            depth_m: draft.depthM ?? null,
-            coordinates: draft.coordinates,
-            actor: actorName,
-            reason
-          });
+          await updateWaterway(
+            draft.id,
+            {
+              name: draft.name,
+              kind: draft.kind,
+              status: draft.status,
+              notes: draft.notes,
+              width_pre_m: draft.widthPreM ?? null,
+              width_post_m: draft.widthPostM ?? null,
+              depth_m: draft.depthM ?? null,
+              coordinates: draft.coordinates,
+              actor: actorName,
+              reason
+            },
+            regionId
+          );
         } else {
-          await createWaterway({
-            name: draft.name,
-            kind: draft.kind,
-            status: draft.status,
-            source: draft.source,
-            source_ref: draft.sourceRef || null,
-            notes: draft.notes,
-            width_pre_m: draft.widthPreM ?? null,
-            width_post_m: draft.widthPostM ?? null,
-            depth_m: draft.depthM ?? null,
-            coordinates: draft.coordinates,
-            actor: actorName,
-            reason
-          });
+          await createWaterway(
+            {
+              name: draft.name,
+              kind: draft.kind,
+              status: draft.status,
+              source: draft.source,
+              source_ref: draft.sourceRef || null,
+              notes: draft.notes,
+              width_pre_m: draft.widthPreM ?? null,
+              width_post_m: draft.widthPostM ?? null,
+              depth_m: draft.depthM ?? null,
+              coordinates: draft.coordinates,
+              actor: actorName,
+              reason
+            },
+            regionId
+          );
         }
         setEditingWaterway(null);
         await refreshSqliteState();
@@ -514,7 +575,7 @@ export function useEditorActions(opts: {
     },
     onDeleteWaterway: async (id: string, reason: string) => {
       try {
-        await deleteWaterway(id, { actor: actorName, reason });
+        await deleteWaterway(id, { actor: actorName, reason }, regionId);
         setEditingWaterway(null);
         await refreshSqliteState();
         opts.notify(opts.lang === 'en' ? 'Waterway removed & logged.' : 'Jalur dihapus & dicatat di Riwayat.');
@@ -524,7 +585,7 @@ export function useEditorActions(opts: {
     },
     onRestoreDem: async (segId: string) => {
       try {
-        await restoreDemSegment(segId, { actor: actorName, reason: 'Pulihkan segmen DEM' });
+        await restoreDemSegment(segId, { actor: actorName, reason: 'Pulihkan segmen DEM' }, regionId);
         await refreshSqliteState();
         opts.notify(opts.lang === 'en' ? `Restored ${segId}` : `Segmen ${segId} dipulihkan`);
       } catch (err) {
@@ -549,6 +610,9 @@ export function useEditorActions(opts: {
         source: feat.properties.source,
         sourceRef: feat.properties.source_ref,
         sizeNote: feat.properties.size_note,
+        openingWidthM: feat.properties.opening_width_m ?? null,
+        openingHeightM: feat.properties.opening_height_m ?? null,
+        defaultBlockagePct: feat.properties.default_blockage_pct ?? null,
         notes: feat.properties.notes,
         coordinates: [feat.geometry.coordinates[0], feat.geometry.coordinates[1]]
       });
@@ -561,29 +625,42 @@ export function useEditorActions(opts: {
     onSaveStructure: async (draft: ActiveEditingStructure, reason: string) => {
       try {
         if (draft.id) {
-          await updateStructure(draft.id, {
-            name: draft.name,
-            kind: draft.kind,
-            status: draft.status,
-            size_note: draft.sizeNote,
-            notes: draft.notes,
-            coordinates: draft.coordinates,
-            actor: actorName,
-            reason
-          });
+          await updateStructure(
+            draft.id,
+            {
+              name: draft.name,
+              kind: draft.kind,
+              status: draft.status,
+              size_note: draft.sizeNote,
+              opening_width_m: draft.openingWidthM ?? null,
+              opening_height_m: draft.openingHeightM ?? null,
+              default_blockage_pct: draft.defaultBlockagePct ?? null,
+              notes: draft.notes,
+              coordinates: draft.coordinates,
+              actor: actorName,
+              reason
+            },
+            regionId
+          );
         } else {
-          await createStructure({
-            name: draft.name,
-            kind: draft.kind,
-            status: draft.status,
-            source: draft.source,
-            source_ref: draft.sourceRef || null,
-            size_note: draft.sizeNote,
-            notes: draft.notes,
-            coordinates: draft.coordinates,
-            actor: actorName,
-            reason
-          });
+          await createStructure(
+            {
+              name: draft.name,
+              kind: draft.kind,
+              status: draft.status,
+              source: draft.source,
+              source_ref: draft.sourceRef || null,
+              size_note: draft.sizeNote,
+              opening_width_m: draft.openingWidthM ?? null,
+              opening_height_m: draft.openingHeightM ?? null,
+              default_blockage_pct: draft.defaultBlockagePct ?? null,
+              notes: draft.notes,
+              coordinates: draft.coordinates,
+              actor: actorName,
+              reason
+            },
+            regionId
+          );
         }
         setEditingStructure(null);
         await refreshSqliteState();
@@ -598,7 +675,7 @@ export function useEditorActions(opts: {
     },
     onDeleteStructure: async (id: string, reason: string) => {
       try {
-        await deleteStructure(id, { actor: actorName, reason });
+        await deleteStructure(id, { actor: actorName, reason }, regionId);
         setEditingStructure(null);
         await refreshSqliteState();
         opts.notify(opts.lang === 'en' ? 'Structure removed & logged.' : 'Titik dihapus & dicatat di Riwayat.');
@@ -647,23 +724,30 @@ export function useEditorActions(opts: {
     onSaveJorong: async (draft: ActiveEditingJorong, reason: string) => {
       try {
         if (draft.id) {
-          await updateJorongBoundary(draft.id, {
-            name: draft.name,
-            status: draft.status,
-            source_note: draft.sourceNote,
-            coordinates: draft.coordinates,
-            actor: actorName,
-            reason
-          });
+          await updateJorongBoundary(
+            draft.id,
+            {
+              name: draft.name,
+              status: draft.status,
+              source_note: draft.sourceNote,
+              coordinates: draft.coordinates,
+              actor: actorName,
+              reason
+            },
+            regionId
+          );
         } else {
-          await createJorongBoundary({
-            name: draft.name,
-            status: draft.status,
-            source_note: draft.sourceNote,
-            coordinates: draft.coordinates,
-            actor: actorName,
-            reason
-          });
+          await createJorongBoundary(
+            {
+              name: draft.name,
+              status: draft.status,
+              source_note: draft.sourceNote,
+              coordinates: draft.coordinates,
+              actor: actorName,
+              reason
+            },
+            regionId
+          );
         }
         setEditingJorong(null);
         await refreshSqliteState();
@@ -676,7 +760,7 @@ export function useEditorActions(opts: {
     },
     onDeleteJorong: async (id: string, reason: string) => {
       try {
-        await deleteJorongBoundary(id, { actor: actorName, reason });
+        await deleteJorongBoundary(id, { actor: actorName, reason }, regionId);
         setEditingJorong(null);
         await refreshSqliteState();
         opts.notify(opts.lang === 'en' ? 'Jorong boundary removed.' : 'Batas Jorong dihapus.');
@@ -689,12 +773,114 @@ export function useEditorActions(opts: {
       const mid = ring[Math.floor(ring.length / 2)];
       if (mid) opts.flyTo(mid, { zoom: 14.8 });
     },
+    onStartPlaceCalibrationMark: () => {
+      setEditingCalibrationMark(null);
+      opts.setActiveTool(prev => (prev === 'placeCalibrationMark' ? null : 'placeCalibrationMark'));
+    },
+    onStartEditCalibrationMark: (feat: CalibrationMarkFeature) => {
+      setEditingCalibrationMark({
+        id: feat.properties.id,
+        name: feat.properties.name,
+        kind: feat.properties.kind,
+        observedDepthM: feat.properties.observed_depth_m ?? null,
+        rainMmHr: feat.properties.rain_mm_hr,
+        durationMin: feat.properties.duration_min,
+        antecedent5dMm: feat.properties.antecedent_5d_mm,
+        notes: feat.properties.notes,
+        coordinates: [feat.geometry.coordinates[0], feat.geometry.coordinates[1]]
+      });
+      opts.flyTo(feat.geometry.coordinates, { zoom: 16.0 });
+    },
+    onCancelCalibrationMarkEdit: () => {
+      setEditingCalibrationMark(null);
+      if (opts.activeTool === 'placeCalibrationMark') opts.setActiveTool(null);
+    },
+    onSaveCalibrationMark: async (draft: ActiveEditingCalibrationMark, reason: string) => {
+      try {
+        if (draft.id) {
+          await updateCalibrationMark(
+            draft.id,
+            {
+              name: draft.name,
+              kind: draft.kind,
+              observed_depth_m: draft.observedDepthM,
+              rain_mm_hr: draft.rainMmHr,
+              duration_min: draft.durationMin,
+              antecedent_5d_mm: draft.antecedent5dMm,
+              notes: draft.notes,
+              coordinates: draft.coordinates,
+              actor: actorName,
+              reason
+            },
+            regionId
+          );
+        } else {
+          await createCalibrationMark(
+            {
+              name: draft.name,
+              kind: draft.kind,
+              observed_depth_m: draft.observedDepthM,
+              rain_mm_hr: draft.rainMmHr,
+              duration_min: draft.durationMin,
+              antecedent_5d_mm: draft.antecedent5dMm,
+              notes: draft.notes,
+              coordinates: draft.coordinates,
+              actor: actorName,
+              reason
+            },
+            regionId
+          );
+        }
+        setEditingCalibrationMark(null);
+        await refreshSqliteState();
+        opts.notify(
+          opts.lang === 'en' ? 'Benchmark mark saved & logged.' : 'Titik benchmark tersimpan & dicatat.'
+        );
+      } catch (err) {
+        opts.notify(err instanceof Error ? err.message : 'Save failed');
+      }
+    },
+    onDeleteCalibrationMark: async (id: string, reason: string) => {
+      try {
+        await deleteCalibrationMark(id, { actor: actorName, reason }, regionId);
+        setEditingCalibrationMark(null);
+        await refreshSqliteState();
+        opts.notify(opts.lang === 'en' ? 'Benchmark mark removed.' : 'Titik benchmark dihapus.');
+      } catch (err) {
+        opts.notify(err instanceof Error ? err.message : 'Delete failed');
+      }
+    },
+    onFlyToCalibrationMark: (feat: CalibrationMarkFeature) => {
+      opts.flyTo(feat.geometry.coordinates, { zoom: 16.0 });
+    },
+    onSaveCalibrationProfile: async (profile: CalibrationProfile, reason: string) => {
+      try {
+        await saveCalibrationProfile(
+          {
+            ...profile,
+            actor: actorName,
+            reason
+          },
+          regionId
+        );
+        await refreshSqliteState();
+        opts.notify(
+          opts.lang === 'en' ? 'Calibration profile saved & applied.' : 'Profil kalibrasi tersimpan & diterapkan.'
+        );
+      } catch (err) {
+        opts.notify(err instanceof Error ? err.message : 'Save failed');
+      }
+    },
     onRevertAuditLog: async (logId: number) => {
       try {
-        await revertAuditLog(logId, {
-          actor: actorName,
-          reason: opts.lang === 'en' ? `Revert log #${logId}` : `Pulihkan perubahan #${logId}`
-        });
+        await revertAuditLog(
+          logId,
+          {
+            actor: actorName,
+            reason: opts.lang === 'en' ? `Revert log #${logId}` : `Pulihkan perubahan #${logId}`
+          },
+          regionId
+        );
         setEditingWaterway(null);
         setEditingStructure(null);
         setEditingJorong(null);
@@ -739,6 +925,8 @@ export function useEditorActions(opts: {
     verifiedWaterways,
     verifiedStructures,
     jorongBoundaries,
+    calibrationMarks,
+    calibrationProfile,
     suppressedDem,
     suppressedDemIds,
     verifiedIssueCount,
@@ -747,10 +935,13 @@ export function useEditorActions(opts: {
     editingStructure,
     setEditingStructure,
     editingJorong,
+    editingCalibrationMark,
+    setEditingCalibrationMark,
     mapEditingWaterway,
     mapEditingStructure,
     auditLogs,
     dataVersion,
+    editorHydrated,
     hydroStatus,
     recomputingHydro,
     resetEditorForSimpleMode,

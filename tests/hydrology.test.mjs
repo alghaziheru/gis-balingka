@@ -28,17 +28,42 @@ import {
 } from '../scripts/lib/tiles.mjs';
 import { runResetRegion } from '../scripts/reset-region.mjs';
 import { CascadeEngine, extractBuildingCentroids } from '../src/lib/cascadeEngine.ts';
-import { estimateChannelThresholds } from '../src/lib/channelHydraulics.ts';
+import { estimateChannelThresholds, resolveWaterwayCatchmentFromNetwork } from '../src/lib/channelHydraulics.ts';
+import { buildHyetograph, getMaxRealisticRainMmHr } from '../src/lib/reachRouter.ts';
+import {
+  buildFieldSurveyPriorityCsv,
+  buildHydrographCsv,
+  buildScenarioExportJson
+} from '../src/lib/scenarioExport.ts';
+import {
+  computeCrossingCapacityM3s,
+  decodeScourMaskFromPng,
+  parseStructureOpening
+} from '../scripts/lib/reach-network.mjs';
 import { buildFlowField, sampleFlowVelocity } from '../src/lib/flowField.ts';
 import { buildFlowCorridors, sampleCorridorAtDistance } from '../src/lib/flowRibbons.ts';
 import {
-  extractAffectedBuildings,
   extractFloodPoolPolygons,
   marchingSquaresPolygons
 } from '../src/lib/poolContours.ts';
 import { computeRunoffMergeNetwork } from '../src/lib/geometry.ts';
 import { getOverlayContrastPalette, isDarkBasemap } from '../src/lib/mapPalette.ts';
 import { lookupAgamAtPoint } from '../src/lib/agamLookup.ts';
+import { CLIMATE_BASELINE, MODEL_PARAMETER_AUDIT, buildModelParameterAudit } from '../src/data/climateBaseline.ts';
+import { isCellInSpatialSplit } from '../src/lib/validationMetrics.ts';
+import {
+  computeAnnualMaxima,
+  computeGumbelQuantiles,
+  computeLp3Quantiles,
+  deriveMononobeIdfEnvelope,
+  buildClimateBaselineFromDailySeries
+} from '../scripts/lib/climate-fetcher.mjs';
+import {
+  generateLatinHypercube,
+  computeSpearmanRankCorrelation,
+  runSensitivityAnalysis
+} from '../scripts/lib/sensitivity.mjs';
+import { runAnalyticalVerifications } from '../scripts/lib/verification-benchmarks.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT_DIR = path.resolve(__dirname, '..');
@@ -1002,13 +1027,205 @@ test('buildFlowCorridors orients downhill with multi-point sampling, includes BI
   assert.ok(first.totalLengthM > 35);
   assert.ok(first.strandCount >= 3 && first.strandCount <= 7);
 
+  // When nagariBoundary is provided, outside segments are clipped/dropped cleanly
+  const clippedBox = {
+    type: 'FeatureCollection',
+    features: [
+      {
+        type: 'Feature',
+        properties: { name: 'Uji Batas Nagari' },
+        geometry: {
+          type: 'Polygon',
+          coordinates: [
+            [
+              [100.305, -0.352],
+              [100.320, -0.352],
+              [100.320, -0.340],
+              [100.305, -0.340],
+              [100.305, -0.352]
+            ]
+          ]
+        }
+      }
+    ]
+  };
+  const crossBorderFlows = {
+    type: 'FeatureCollection',
+    features: [
+      {
+        type: 'Feature',
+        properties: { id: 'inside-only', tier: 1, length_m: 600 },
+        geometry: {
+          type: 'LineString',
+          coordinates: [
+            [100.310, -0.342],
+            [100.315, -0.348]
+          ]
+        }
+      },
+      {
+        type: 'Feature',
+        properties: { id: 'cross-boundary', tier: 1, length_m: 1500 },
+        geometry: {
+          type: 'LineString',
+          coordinates: [
+            [100.316, -0.345],
+            [100.328, -0.345] // exits eastern boundary x=100.320
+          ]
+        }
+      },
+      {
+        type: 'Feature',
+        properties: { id: 'outside-only', tier: 1, length_m: 800 },
+        geometry: {
+          type: 'LineString',
+          coordinates: [
+            [100.325, -0.342],
+            [100.332, -0.348]
+          ]
+        }
+      }
+    ]
+  };
+  const boundedCorridors = buildFlowCorridors([], crossBorderFlows, [], getElev, null, {
+    nagariBoundary: clippedBox
+  });
+  assert.equal(boundedCorridors.some(c => c.id.includes('outside-only')), false, 'outside corridor must be dropped');
+  assert.equal(boundedCorridors.some(c => c.id.includes('inside-only')), true, 'inside corridor must be retained');
+  const clipped = boundedCorridors.find(c => c.id.includes('cross-boundary'));
+  assert.ok(clipped, 'crossing corridor should retain its inside-boundary portion');
+  for (const pt of clipped.coords) {
+    assert.ok(pt[0] <= 100.3201, `clipped vertex lng ${pt[0]} must stay inside Nagari boundary`);
+  }
+
   const s0 = sampleCorridorAtDistance(first, 0);
   const sMid = sampleCorridorAtDistance(first, first.totalLengthM * 0.5);
   assert.ok(Number.isFinite(s0.lng) && Number.isFinite(s0.lat) && Number.isFinite(s0.nx) && Number.isFinite(s0.ny));
   assert.ok(Number.isFinite(sMid.lng) && Number.isFinite(sMid.lat));
 });
 
-test('CascadeEngine runoffMmGrid, sampleAtLngLat, and extractAffectedBuildings reflect all soil/forest/corridor parameters', () => {
+test('buildFlowCorridors splits merged V-shaped valleys, trims tail bank overshoots, and enforces downhill DEMNAS corridors', t => {
+  // 1. Synthetic V-shaped valley (two converging tributaries stored as one LineString)
+  const vShapeCoords = [
+    [100.3100, -0.3400],
+    [100.3105, -0.3400],
+    [100.3110, -0.3400],
+    [100.3115, -0.3400],
+    [100.3120, -0.3400],
+    [100.3125, -0.3400],
+    [100.3130, -0.3400],
+    [100.3135, -0.3400],
+    [100.3140, -0.3400]
+  ];
+  const vElevs = [1200, 1150, 1100, 1060, 1040, 1080, 1130, 1180, 1210];
+  const synthVElev = (lng, _lat) => {
+    const idx = Math.max(0, Math.min(vElevs.length - 1, Math.round((lng - 100.3100) / 0.0005)));
+    return vElevs[idx];
+  };
+  const vFc = {
+    type: 'FeatureCollection',
+    features: [{ type: 'Feature', properties: { id: 'v-valley', tier: 1, length_m: 445 }, geometry: { type: 'LineString', coordinates: vShapeCoords } }]
+  };
+  const vCorridors = buildFlowCorridors([], vFc, [], synthVElev);
+  assert.equal(vCorridors.length, 2, `Expected V-shaped polyline to split into 2 branches, got ${vCorridors.length}`);
+  for (const branch of vCorridors) {
+    const startE = synthVElev(branch.coords[0][0], branch.coords[0][1]);
+    const endE = synthVElev(branch.coords[branch.coords.length - 1][0], branch.coords[branch.coords.length - 1][1]);
+    assert.ok(startE >= 1190, `Branch start should be uphill (>=1190 m), got ${startE}`);
+    assert.ok(endE <= 1050, `Branch end should meet valley floor (<=1050 m), got ${endE}`);
+    let runningMin = Infinity;
+    for (const pt of branch.coords) {
+      const e = synthVElev(pt[0], pt[1]);
+      if (e < runningMin) runningMin = e;
+      assert.ok(e - runningMin <= 5, `Branch should not climb >5 m after minimum (climbed ${e - runningMin} m)`);
+    }
+  }
+
+  // 2. Synthetic tail-end bank overshoot (+22 m on final vertex)
+  const tailCoords = [
+    [100.3100, -0.3420],
+    [100.3105, -0.3420],
+    [100.3110, -0.3420],
+    [100.3115, -0.3420],
+    [100.3120, -0.3420],
+    [100.3125, -0.3420]
+  ];
+  const tailElevs = [1260, 1220, 1180, 1140, 1110, 1132];
+  const synthTailElev = (lng, _lat) => {
+    const idx = Math.max(0, Math.min(tailElevs.length - 1, Math.round((lng - 100.3100) / 0.0005)));
+    return tailElevs[idx];
+  };
+  const tailFc = {
+    type: 'FeatureCollection',
+    features: [{ type: 'Feature', properties: { id: 'tail-overshoot', tier: 1, length_m: 280 }, geometry: { type: 'LineString', coordinates: tailCoords } }]
+  };
+  const tailCorridors = buildFlowCorridors([], tailFc, [], synthTailElev);
+  assert.equal(tailCorridors.length, 1);
+  const trimmedEnd = tailCorridors[0].coords[tailCorridors[0].coords.length - 1];
+  assert.ok(synthTailElev(trimmedEnd[0], trimmedEnd[1]) <= 1115, `Expected overshooting tail vertex to be trimmed to <=1115 m, got ${synthTailElev(trimmedEnd[0], trimmedEnd[1])}`);
+
+  // 3. Real Nagari Balingka DEMNAS + BIG RBI 50K audit (rbi22-744, rbi22-508, rbi22-116, and all corridors)
+  const demPath = path.join(DATA_DIR, 'dem-grid.json');
+  const rbiPath = path.join(DATA_DIR, 'agam-rbi-rivers.geojson');
+  const boundaryPath = path.join(DATA_DIR, 'nagari-boundary.geojson');
+  if (!IS_BALINGKA || !fs.existsSync(demPath) || !fs.existsSync(rbiPath) || !fs.existsSync(boundaryPath)) {
+    return;
+  }
+
+  const dem = JSON.parse(fs.readFileSync(demPath, 'utf8'));
+  const agamRbi = JSON.parse(fs.readFileSync(rbiPath, 'utf8'));
+  const nagariBoundary = JSON.parse(fs.readFileSync(boundaryPath, 'utf8'));
+  const flowPaths = JSON.parse(fs.readFileSync(path.join(DATA_DIR, 'flow-paths.geojson'), 'utf8'));
+  const verifiedWaterways = JSON.parse(fs.readFileSync(path.join(DATA_DIR, 'verified-waterways.geojson'), 'utf8'));
+  const wwList = verifiedWaterways.features || verifiedWaterways;
+
+  const rawBuf = Buffer.from(dem.elevBase64, 'base64');
+  const elevArr = new Int16Array(rawBuf.buffer, rawBuf.byteOffset, rawBuf.byteLength / 2);
+  const { west, east, south, north } = dem.bbox;
+  const { width, height } = dem;
+  const getDemElev = (lng, lat) => {
+    const fx = ((lng - west) / (east - west)) * (width - 1);
+    const fy = ((north - lat) / (north - south)) * (height - 1);
+    const x0 = Math.max(0, Math.min(width - 2, Math.floor(fx)));
+    const y0 = Math.max(0, Math.min(height - 2, Math.floor(fy)));
+    const tx = Math.max(0, Math.min(1, fx - x0));
+    const ty = Math.max(0, Math.min(1, fy - y0));
+    const v00 = elevArr[y0 * width + x0];
+    const v10 = elevArr[y0 * width + x0 + 1];
+    const v01 = elevArr[(y0 + 1) * width + x0];
+    const v11 = elevArr[(y0 + 1) * width + x0 + 1];
+    return (v00 * (1 - tx) + v10 * tx) * (1 - ty) + (v01 * (1 - tx) + v11 * tx) * ty;
+  };
+
+  const realCorridors = buildFlowCorridors(wwList, flowPaths, [], getDemElev, agamRbi, {
+    includeVerified: true,
+    includeRbi: true,
+    nagariBoundary
+  });
+
+  const rbi744Branches = realCorridors.filter(c => c.id.startsWith('rbi-rbi22-744'));
+  assert.equal(rbi744Branches.length, 2, `Expected rbi22-744 to split into 2 downhill branches, got ${rbi744Branches.length}`);
+  for (const b of rbi744Branches) {
+    const startE = getDemElev(b.coords[0][0], b.coords[0][1]);
+    const endE = getDemElev(b.coords[b.coords.length - 1][0], b.coords[b.coords.length - 1][1]);
+    assert.ok(startE > 1105, `Expected rbi22-744 branch start >1105 m, got ${startE.toFixed(1)}`);
+    assert.ok(endE <= 1070, `Expected rbi22-744 branch end near valley junction <=1070 m, got ${endE.toFixed(1)}`);
+  }
+
+  for (const c of realCorridors) {
+    let runningMin = Infinity;
+    let maxClimb = 0;
+    for (const pt of c.coords) {
+      const e = getDemElev(pt[0], pt[1]);
+      if (e < runningMin) runningMin = e;
+      const climb = e - runningMin;
+      if (climb > maxClimb) maxClimb = climb;
+    }
+    assert.ok(maxClimb <= 10, `Corridor ${c.id} has uphill climb ${maxClimb.toFixed(1)} m (>10 m)`);
+  }
+});
+
+test('CascadeEngine runoffMmGrid and sampleAtLngLat reflect all soil/forest/corridor parameters', () => {
   const simFields = JSON.parse(fs.readFileSync(path.join(DATA_DIR, 'sim-fields.json'), 'utf8'));
   const settlements = JSON.parse(fs.readFileSync(path.join(DATA_DIR, 'settlements.geojson'), 'utf8'));
   const verifiedWaterways = JSON.parse(fs.readFileSync(path.join(DATA_DIR, 'verified-waterways.geojson'), 'utf8'));
@@ -1081,7 +1298,777 @@ test('CascadeEngine runoffMmGrid, sampleAtLngLat, and extractAffectedBuildings r
   );
 
   const pools = extractFloodPoolPolygons(engine, wwList);
-  const affected = extractAffectedBuildings(settlements, pools.filteredDepth, engine.fields);
-  assert.ok(affected.features.length > 0, 'Expected corridor-affected building outlines in extreme rain');
-  assert.ok(affected.features.length < settlements.features.length, 'Affected buildings must be a strict subset');
+  assert.ok(pools.yard.features.length > 0, 'Expected corridor-connected yard depth contours in extreme rain');
+  assert.ok(pools.deep.features.length > 0, 'Expected corridor-connected deep contours in extreme rain');
+});
+
+test('v2 hyetograph mass conservation, recession tail, scour PNG decode, and culvert orifice capacity', () => {
+  for (const shape of ['uniform', 'convective_front', 'alternating_block', 'double_burst']) {
+    const hy = buildHyetograph(80, 180, shape, 28);
+    assert.ok(hy.totalWindowMin > 180, 'recession window must extend past storm duration');
+    assert.ok(hy.steps.some(s => s.isRecession && s.rainMmHr === 0), 'recession steps must have zero rain');
+    const finalCum = hy.steps[hy.steps.length - 1].cumRainMm;
+    const expectedVol = 80 * (180 / 60); // 240 mm exact
+    assert.ok(
+      Math.abs(finalCum - expectedVol) < 0.25,
+      `${shape} must conserve total storm rainfall (${finalCum} vs ${expectedVol})`
+    );
+  }
+
+  // Round-trip PNG scour mask decode
+  const dNdvi = new Float32Array([
+    -0.42, -0.24, 0.05, 0.0,
+    -0.25, -0.45, 0.01, -0.1,
+    0.0, 0.0, -0.4, -0.25,
+    0.1, 0.0, 0.0, -0.41
+  ]);
+  const png = renderScourChangeRaster(dNdvi, 4, 4, 4);
+  const decoded = decodeScourMaskFromPng(png, 4, 4);
+  assert.equal(decoded[0], 2, 'severe crimson pixel must decode to 2');
+  assert.equal(decoded[1], 1, 'moderate amber pixel must decode to 1');
+  assert.equal(decoded[2], 0, 'unchanged pixel must decode to 0');
+
+  // Culvert opening parsing & orifice capacity scaling
+  const parsedBox = parseStructureOpening({ size_note: 'Box 1.5m x 1.2m' });
+  assert.equal(parsedBox.widthM, 1.5);
+  assert.equal(parsedBox.heightM, 1.2);
+  assert.equal(parsedBox.measured, true);
+  const parsedPipe = parseStructureOpening({ size_note: 'Pipa Ø 80cm' });
+  assert.ok(Math.abs(parsedPipe.widthM - 0.8) < 0.01);
+  assert.equal(parsedPipe.isCircular, true);
+
+  const capBox = computeCrossingCapacityM3s({
+    kind: 'culvert',
+    opening: parsedBox,
+    upstreamAreaKm2: 2.0
+  });
+  const capPipe = computeCrossingCapacityM3s({
+    kind: 'culvert',
+    opening: parsedPipe,
+    upstreamAreaKm2: 2.0
+  });
+  assert.ok(capBox > 4 && capBox < 15, `expected realistic box culvert capacity, got ${capBox}`);
+  assert.ok(capPipe < capBox * 0.45, `80cm pipe capacity (${capPipe}) must be far below 1.5x1.2m box (${capBox})`);
+});
+
+test('v2 CascadeEngine enforces leakage-free FoS, coupled bulking, directional backwater, P10-P90 ensemble, and calibration', t => {
+  const simFieldsPath = path.join(DATA_DIR, 'sim-fields.json');
+  const settlementsPath = path.join(DATA_DIR, 'settlements.geojson');
+  if (!fs.existsSync(simFieldsPath) || !fs.existsSync(settlementsPath)) {
+    t.skip('sim-fields.json / settlements.geojson not present yet');
+    return;
+  }
+  const simFields = JSON.parse(fs.readFileSync(simFieldsPath, 'utf8'));
+  const settlements = JSON.parse(fs.readFileSync(settlementsPath, 'utf8'));
+  assert.ok(simFields.network && simFields.network.reachCount > 50, 'expected topological DEMNAS reach network');
+
+  // Verify network-derived catchment lookup for Batang Ngalai replaces hardcoded 3.8 km²
+  const verifiedWw = JSON.parse(fs.readFileSync(path.join(DATA_DIR, 'verified-waterways.geojson'), 'utf8'));
+  const ngalai = (verifiedWw.features || []).find(f => /ngalai/i.test(f.properties?.name || ''));
+  if (ngalai) {
+    const resolved = resolveWaterwayCatchmentFromNetwork(ngalai.properties.id, simFields.network, 'river');
+    assert.equal(resolved.fromDemNetwork, true);
+    assert.ok(resolved.catchmentKm2 > 10, `expected Batang Ngalai DEMNAS catchment >10 km², got ${resolved.catchmentKm2}`);
+  }
+
+  // 1. ZERO LEAKAGE PROOF: mutating officialLandslideBase64 must produce IDENTICAL FoS & flood outputs!
+  const n = simFields.width * simFields.height;
+  const zeroOfficial = {
+    ...simFields,
+    officialLandslideBase64: Buffer.from(new Uint8Array(n)).toString('base64')
+  };
+  const allHighOfficial = {
+    ...simFields,
+    officialLandslideBase64: Buffer.from(new Uint8Array(n).fill(3)).toString('base64')
+  };
+  const baseParams = {
+    rainMmHr: 100,
+    durationMin: 180,
+    progress: 0.78,
+    soilMoisture: 'saturated',
+    antecedent5dMm: 150,
+    rainPattern: 'upland',
+    drainCondition: 'clogged',
+    forestScenario: 'actual',
+    hyetograph: 'alternating_block',
+    debrisCoupling: 'coupled'
+  };
+  const engZero = new CascadeEngine(zeroOfficial, [], 37);
+  const engHigh = new CascadeEngine(allHighOfficial, [], 37);
+  const resZero = engZero.evaluate(baseParams, { skipValidation: true });
+  const resHigh = engHigh.evaluate(baseParams, { skipValidation: true });
+  assert.equal(resZero.landslideAreaHa, resHigh.landslideAreaHa, 'officialLandslide must never leak into FoS');
+  assert.equal(resZero.floodAreaHa, resHigh.floodAreaHa, 'officialLandslide must never leak into flood routing');
+
+  // 2. Coupled debris bulking & surge sensitivity + hyetograph peak sensitivity + continuous P5 monotonicity
+  const engine = new CascadeEngine(simFields, extractBuildingCentroids(settlements), 37);
+  const resClear = engine.evaluate({ ...baseParams, debrisCoupling: 'clear' }, { skipValidation: true });
+  const resCoupled = engine.evaluate({ ...baseParams, debrisCoupling: 'coupled' }, { skipValidation: true });
+  const resSurge = engine.evaluate({ ...baseParams, drainCondition: 'surge', debrisCoupling: 'surge' }, { skipValidation: true });
+  assert.ok(resCoupled.meanSedimentCv > resClear.meanSedimentCv, 'coupled mode must carry nonzero mobilized sediment Cv');
+  assert.ok(resCoupled.peakDischargeM3s >= resClear.peakDischargeM3s, 'sediment bulking must not lower discharge');
+  assert.ok(resSurge.peakDischargeM3s > resCoupled.peakDischargeM3s, 'debris-jam surge must raise peak Q');
+
+  const resUniform = engine.evaluate({ ...baseParams, hyetograph: 'uniform', progress: 0.65 }, { skipValidation: true });
+  const resConvective = engine.evaluate(
+    { ...baseParams, hyetograph: 'convective_front', progress: 0.35 },
+    { skipValidation: true }
+  );
+  assert.ok(
+    resConvective.peakDischargeM3s > resUniform.peakDischargeM3s,
+    `convective storm peak Q (${resConvective.peakDischargeM3s}) must exceed uniform (${resUniform.peakDischargeM3s})`
+  );
+
+  const resDryP5 = engine.evaluate({ ...baseParams, antecedent5dMm: 10 }, { skipValidation: true });
+  const resWetP5 = engine.evaluate({ ...baseParams, antecedent5dMm: 200 }, { skipValidation: true });
+  assert.ok(resWetP5.effectiveRunoffMm > resDryP5.effectiveRunoffMm, 'higher P5 must yield more SCS-CN runoff');
+
+  // 3. Directional upstream-only backwater verification on nominal routed reach state
+  const routed = engine.getLastRoutedNominal();
+  assert.ok(routed, 'expected routed nominal reach state');
+  const bwReach = routed.backwaterHead.findIndex(h => h > 0.1);
+  if (bwReach >= 0) {
+    const startL = routed.backwaterStartLong[bwReach];
+    if (startL > 0.15 && startL < 0.85) {
+      // Check evaluateReachStageForCell indirectly via reach state values
+      assert.ok(routed.backwaterHead[bwReach] > 0.1);
+      assert.ok(routed.backwaterLenFrac[bwReach] > 0.05);
+    }
+  }
+
+  // 4. 7-member ensemble invariants, agreementRgba, reach diagnostics, validation, and bounded calibration
+  const fullEval = engine.evaluate(baseParams);
+  assert.ok(fullEval.ensemble.floodAreaHa.p10 <= fullEval.ensemble.floodAreaHa.p50);
+  assert.ok(fullEval.ensemble.floodAreaHa.p50 <= fullEval.ensemble.floodAreaHa.p90);
+  assert.ok(fullEval.ensemble.landslideAreaHa.p10 <= fullEval.ensemble.landslideAreaHa.p50);
+  assert.ok(fullEval.ensemble.landslideAreaHa.p50 <= fullEval.ensemble.landslideAreaHa.p90);
+  assert.ok(fullEval.ensemble.peakDischargeM3s.p10 <= fullEval.ensemble.peakDischargeM3s.p50);
+  assert.ok(fullEval.ensemble.peakDischargeM3s.p50 <= fullEval.ensemble.peakDischargeM3s.p90);
+  assert.ok(fullEval.hydrograph.length >= 20, 'hydrograph should span storm + recession');
+  assert.ok(fullEval.hydrograph.some(pt => pt.isRecession), 'hydrograph must include recession tail');
+  assert.ok(fullEval.dataConfidenceScore >= 30 && fullEval.dataConfidenceScore <= 98);
+  assert.ok(fullEval.validation.landslideAuc !== null && fullEval.validation.landslideAuc > 0.5);
+
+  const { agreementRgba } = engine.renderRgba(64);
+  assert.equal(agreementRgba.length, 64 * 64 * 4);
+  assert.ok(agreementRgba.some(v => v > 0), 'agreementRgba should render non-empty ensemble overlay');
+
+  const diag = engine.buildReachDiagnosticsGeoJSON();
+  assert.ok(diag.surveyPriorityReaches.features.length > 0, 'survey priority reaches should populate');
+
+  const baseConf = engine.computeDataConfidence().score;
+  engine.setCalibrationMarks([
+    {
+      type: 'Feature',
+      properties: {
+        id: 'cm-test-1',
+        name: 'Tanda Muka Air Uji',
+        kind: 'hwm',
+        observed_depth_m: 1.1,
+        rain_mm_hr: 100,
+        duration_min: 180,
+        antecedent_5d_mm: 140,
+        notes: 'Uji validasi',
+        updated_by: 'tester',
+        updated_at: '2026-01-01T00:00:00Z'
+      },
+      geometry: { type: 'Point', coordinates: [100.319, -0.345] }
+    }
+  ]);
+  assert.ok(engine.computeDataConfidence().score >= baseConf, 'field calibration marks should raise or preserve confidence');
+
+  const cal = engine.runLocalCalibration();
+  assert.ok(cal.evaluatedCount >= 9);
+  assert.ok(cal.profile.manningMult >= 0.7 && cal.profile.manningMult <= 1.4);
+  assert.ok(cal.profile.cnOffset >= -6 && cal.profile.cnOffset <= 6);
+  assert.ok(cal.profile.cohesionMult >= 0.75 && cal.profile.cohesionMult <= 1.3);
+});
+
+test('13.8m hiResHand sharpens 3-tier terrain water contours and matches sampleAtLngLat parity', t => {
+  const simFieldsPath = path.join(DATA_DIR, 'sim-fields.json');
+  const settlementsPath = path.join(DATA_DIR, 'settlements.geojson');
+  if (!fs.existsSync(simFieldsPath) || !fs.existsSync(settlementsPath)) {
+    t.skip('sim-fields.json / settlements.geojson not present yet');
+    return;
+  }
+  const simFields = JSON.parse(fs.readFileSync(simFieldsPath, 'utf8'));
+  const settlements = JSON.parse(fs.readFileSync(settlementsPath, 'utf8'));
+  assert.ok(simFields.hiResHandDmBase64, 'expected full-resolution ~13.8m hiResHandDmBase64 in sim-fields.json');
+  assert.ok(simFields.hiResWidth > simFields.width && simFields.hiResHeight > simFields.height);
+
+  const engine = new CascadeEngine(simFields, extractBuildingCentroids(settlements), 37);
+  const kpis = engine.evaluate({
+    rainMmHr: 80,
+    durationMin: 180,
+    progress: 0.78,
+    soilMoisture: 'saturated',
+    rainPattern: 'upland',
+    drainCondition: 'clogged',
+    forestScenario: 'actual'
+  });
+  assert.ok(kpis.peakDischargeM3s > 5, 'expected positive peak reach discharge');
+  assert.ok(kpis.representativeStageM > 0.3, 'expected positive representative valley river stage');
+
+  const hiRes = engine.computeHiResDepthGrid();
+  assert.ok(hiRes && hiRes.width === simFields.hiResWidth && hiRes.height === simFields.hiResHeight);
+
+  const pools = extractFloodPoolPolygons(engine, []);
+  assert.equal(pools.gridWidth, simFields.hiResWidth);
+  assert.ok(pools.yard.features.length > 0, 'expected shallow terrain flow contour tier');
+  assert.ok(pools.knee.features.length > 0, 'expected moderate basin depth contour tier');
+  assert.ok(pools.deep.features.length > 0, 'expected deep channel contour tier');
+
+  // Verify sampleAtLngLat aligns strictly with computed hi-res depth grid at grid cell centers
+  const bbox = simFields.bbox;
+  const hw = simFields.hiResWidth;
+  const hh = simFields.hiResHeight;
+  let checkedIdx = -1;
+  for (let i = 0; i < pools.filteredDepth.length; i++) {
+    if (pools.filteredDepth[i] >= 0.4) {
+      checkedIdx = i;
+      break;
+    }
+  }
+  assert.ok(checkedIdx >= 0, 'expected at least one hi-res cell >= 0.4 m');
+  const hRow = Math.floor(checkedIdx / hw);
+  const hCol = checkedIdx - hRow * hw;
+  const cellLng = bbox.west + ((hCol + 0.5) / hw) * (bbox.east - bbox.west);
+  const cellLat = bbox.north - ((hRow + 0.5) / hh) * (bbox.north - bbox.south);
+  const samp = engine.sampleAtLngLat(cellLng, cellLat);
+  assert.ok(samp.insideNagari);
+  assert.ok(
+    Math.abs(samp.depthM - pools.filteredDepth[checkedIdx]) < 0.02,
+    `sampleAtLngLat depth (${samp.depthM}) should match hi-res grid depth (${pools.filteredDepth[checkedIdx]})`
+  );
+});
+
+test('bankfull channel containment keeps ordinary 2h rain in-channel while 48h continuous rain saturates slopes and overflows valleys', t => {
+  const simPath = path.join(DATA_DIR, 'sim-fields.json');
+  if (!fs.existsSync(simPath)) {
+    t.skip('sim-fields.json not present yet');
+    return;
+  }
+  const simFields = JSON.parse(fs.readFileSync(simPath, 'utf8'));
+  const engine = new CascadeEngine(simFields);
+
+  const normalKpis = engine.evaluate({
+    rainMmHr: 15,
+    durationMin: 120,
+    progress: 0.78,
+    soilMoisture: 'moist',
+    antecedent5dMm: 45,
+    rainPattern: 'uniform',
+    drainCondition: 'cleared',
+    forestScenario: 'actual'
+  });
+  assert.ok(normalKpis.floodAreaHa <= 0.1, `ordinary 15mm/h 2h rain should stay inside riverbanks (got ${normalKpis.floodAreaHa} ha)`);
+  assert.ok(normalKpis.landslideAreaHa <= 0.5, `ordinary 15mm/h 2h rain should not destabilize slopes (got ${normalKpis.landslideAreaHa} ha)`);
+  assert.ok(normalKpis.representativeStageM > 0.05, `in-channel flow should remain positive (got ${normalKpis.representativeStageM} m)`);
+
+  const multiDayKpis = engine.evaluate({
+    rainMmHr: 7,
+    durationMin: 2880,
+    progress: 0.78,
+    soilMoisture: 'moist',
+    antecedent5dMm: 75,
+    rainPattern: 'upland',
+    drainCondition: 'surge',
+    forestScenario: 'actual'
+  });
+  assert.equal(multiDayKpis.totalWindowMin, 3240, '48h event should use bounded 6h drainage recession window');
+  assert.ok(multiDayKpis.floodAreaHa >= 1.5, `48h 100-yr monsoon (336 mm) should overflow valley corridors (got ${multiDayKpis.floodAreaHa} ha)`);
+  assert.ok(multiDayKpis.landslideAreaHa >= 8.0, `48h 100-yr monsoon (336 mm) should saturate steep slopes (got ${multiDayKpis.landslideAreaHa} ha)`);
+  assert.ok(multiDayKpis.peakDischargeM3s > normalKpis.peakDischargeM3s * 2);
+});
+
+test('IDF envelope, uncalibrated readiness cap, sub-hourly multi-day steps, dual-reservoir lag, runout shadow, and exports', t => {
+  assert.equal(getMaxRealisticRainMmHr(120), 60);
+  assert.equal(getMaxRealisticRainMmHr(360), 30);
+  assert.equal(getMaxRealisticRainMmHr(1440), 12);
+  assert.equal(getMaxRealisticRainMmHr(2880), 8);
+  assert.equal(getMaxRealisticRainMmHr(4320), 6);
+
+  assert.equal(CLIMATE_BASELINE.era5Series.yearsCount, 41);
+  assert.ok(Math.abs(CLIMATE_BASELINE.era5Series.biasFactor - 1.073) < 0.01);
+  const badges = new Set(MODEL_PARAMETER_AUDIT.map(r => r.badge));
+  assert.ok(badges.has('observed') && badges.has('literature') && badges.has('conceptual'));
+  assert.ok(MODEL_PARAMETER_AUDIT.every(r => r.paramId && r.paramEn && r.sourceId && r.sourceEn && r.valueText));
+
+  const simPath = path.join(DATA_DIR, 'sim-fields.json');
+  if (!fs.existsSync(simPath)) {
+    t.skip('sim-fields.json not present yet');
+    return;
+  }
+  const simFields = JSON.parse(fs.readFileSync(simPath, 'utf8'));
+  const engine = new CascadeEngine(simFields);
+
+  const conf = engine.computeDataConfidence();
+  assert.ok(conf.score <= 44, `uncalibrated network readiness must stay <= 44, got ${conf.score}`);
+  assert.equal(conf.level, 'low');
+  assert.equal(conf.coverage.isCalibrated, false);
+
+  const normalParams = {
+    rainMmHr: 15,
+    durationMin: 120,
+    progress: 0.78,
+    soilMoisture: 'moist',
+    antecedent5dMm: 45,
+    rainPattern: 'uniform',
+    drainCondition: 'cleared',
+    forestScenario: 'actual'
+  };
+  const normalKpis = engine.evaluate(normalParams);
+  assert.ok(
+    normalKpis.peakDischargeM3s < 35,
+    `dual-reservoir volcanic interflow should attenuate ordinary 15mm/h 2h peakQ < 35 m3/s (got ${normalKpis.peakDischargeM3s})`
+  );
+
+  const multiParams = {
+    rainMmHr: 7,
+    durationMin: 2880,
+    progress: 0.78,
+    soilMoisture: 'moist',
+    antecedent5dMm: 75,
+    rainPattern: 'upland',
+    drainCondition: 'surge',
+    forestScenario: 'actual'
+  };
+  const multiKpis = engine.evaluate(multiParams);
+  assert.ok(
+    multiKpis.hydrograph.length >= 90,
+    `48h simulation should resolve sub-hourly steps (>=90), got ${multiKpis.hydrograph.length}`
+  );
+  const dt0 = multiKpis.hydrograph[1].timeMin - multiKpis.hydrograph[0].timeMin;
+  assert.ok(dt0 <= 30, `48h timestep should be <= 30 min, got ${dt0} min`);
+  assert.ok(
+    (multiKpis.runoutAreaHa ?? 0) >= 1.5,
+    `saturated steep slopes should generate indicative ~20 deg runout shadow area (got ${multiKpis.runoutAreaHa})`
+  );
+  assert.ok(
+    multiKpis.ensemble.peakDischargeM3s.p90 - multiKpis.ensemble.peakDischargeM3s.p10 >= 30,
+    'sensitivity envelope with +/-25% rain perturbation should reflect meaningful discharge spread'
+  );
+
+  const csv = buildHydrographCsv(multiKpis);
+  assert.ok(csv.startsWith('time_min,time_hr,phase,rain_mm_hr,'));
+  const jsonStr = buildScenarioExportJson(multiParams, multiKpis, simFields.network, engine.getLastRoutedNominal());
+  const parsed = JSON.parse(jsonStr);
+  assert.ok(Array.isArray(parsed.reaches) && parsed.reaches.length > 50);
+  const surveyCsv = buildFieldSurveyPriorityCsv(simFields.network);
+  assert.ok(surveyCsv.includes('observed_width_m,observed_height_or_depth_m'));
+  assert.ok(surveyCsv.split('\n').length >= 10);
+});
+
+test('Phase 1 methodological hygiene: strict causality, water-balance closure, unified SMA-FoS, and holdout calibration', t => {
+  // 1. Spatial block split partitions cells disjointly and exhaustively
+  const w = 40;
+  const h = 40;
+  let calCount = 0;
+  let holdCount = 0;
+  for (let i = 0; i < w * h; i++) {
+    const inCal = isCellInSpatialSplit(i, w, 'calibration');
+    const inHold = isCellInSpatialSplit(i, w, 'holdout');
+    assert.notEqual(inCal, inHold, 'calibration and holdout blocks must be strictly disjoint');
+    assert.equal(isCellInSpatialSplit(i, w, 'all'), true);
+    if (inCal) calCount++;
+    if (inHold) holdCount++;
+  }
+  assert.equal(calCount + holdCount, w * h);
+  assert.ok(calCount > 400 && holdCount > 400);
+
+  const simPath = path.join(DATA_DIR, 'sim-fields.json');
+  if (!fs.existsSync(simPath)) {
+    t.skip('sim-fields.json not present yet');
+    return;
+  }
+  const simFields = JSON.parse(fs.readFileSync(simPath, 'utf8'));
+  const settlements = fs.existsSync(path.join(DATA_DIR, 'settlements.geojson'))
+    ? JSON.parse(fs.readFileSync(path.join(DATA_DIR, 'settlements.geojson'), 'utf8'))
+    : { type: 'FeatureCollection', features: [] };
+  const engine = new CascadeEngine(simFields, extractBuildingCentroids(settlements), 37);
+
+  // 2. Strict temporal causality: full hydrograph[t] and peakDischargeM3s must not change when scrubbing progress
+  for (const scenario of [
+    {
+      rainMmHr: 40,
+      durationMin: 180,
+      soilMoisture: 'saturated',
+      antecedent5dMm: 140,
+      rainPattern: 'upland',
+      drainCondition: 'clogged',
+      forestScenario: 'actual',
+      hyetograph: 'alternating_block',
+      debrisCoupling: 'coupled'
+    },
+    {
+      rainMmHr: 7,
+      durationMin: 2880,
+      soilMoisture: 'moist',
+      antecedent5dMm: 75,
+      rainPattern: 'upland',
+      drainCondition: 'surge',
+      forestScenario: 'actual',
+      hyetograph: 'alternating_block',
+      debrisCoupling: 'surge'
+    }
+  ]) {
+    const early = engine.evaluate({ ...scenario, progress: 0.45 }, { skipValidation: true });
+    const late = engine.evaluate({ ...scenario, progress: 0.9 }, { skipValidation: true });
+    assert.equal(
+      early.peakDischargeM3s,
+      late.peakDischargeM3s,
+      `peakDischargeM3s must be causal and invariant to playback progress (${early.peakDischargeM3s} vs ${late.peakDischargeM3s})`
+    );
+    assert.equal(early.hydrograph.length, late.hydrograph.length);
+    for (let k = 0; k < early.hydrograph.length; k++) {
+      assert.equal(
+        early.hydrograph[k].qP50,
+        late.hydrograph[k].qP50,
+        `hydrograph[${k}].qP50 leaked future progress`
+      );
+      assert.equal(
+        early.hydrograph[k].qBulkP50,
+        late.hydrograph[k].qBulkP50,
+        `hydrograph[${k}].qBulkP50 leaked future progress`
+      );
+      assert.equal(
+        early.hydrograph[k].qP10,
+        late.hydrograph[k].qP10,
+        `hydrograph[${k}].qP10 leaked future progress`
+      );
+      assert.equal(
+        early.hydrograph[k].qP90,
+        late.hydrograph[k].qP90,
+        `hydrograph[${k}].qP90 leaked future progress`
+      );
+    }
+  }
+
+  // 3. Exact SMA water-balance closure (< 0.05% error) across dry, saturated, and 48h storms
+  for (const wbParams of [
+    {
+      rainMmHr: 15,
+      durationMin: 120,
+      progress: 0.9,
+      soilMoisture: 'dry',
+      antecedent5dMm: 10,
+      rainPattern: 'uniform',
+      drainCondition: 'cleared',
+      forestScenario: 'actual'
+    },
+    {
+      rainMmHr: 40,
+      durationMin: 180,
+      progress: 0.85,
+      soilMoisture: 'saturated',
+      antecedent5dMm: 180,
+      rainPattern: 'upland',
+      drainCondition: 'clogged',
+      forestScenario: 'actual'
+    },
+    {
+      rainMmHr: 7,
+      durationMin: 2880,
+      progress: 0.85,
+      soilMoisture: 'moist',
+      antecedent5dMm: 75,
+      rainPattern: 'upland',
+      drainCondition: 'surge',
+      forestScenario: 'actual'
+    }
+  ]) {
+    const res = engine.evaluate(wbParams, { skipValidation: true });
+    assert.ok(res.waterBalance, 'expected waterBalance summary on CascadeKpis');
+    assert.ok(res.waterBalance.rainInputMm > 0);
+    assert.ok(res.waterBalance.totalRunoffMm > 0);
+    assert.ok(
+      Math.abs(res.waterBalance.closureErrorPct) < 0.05,
+      `water-balance closure error too large: ${res.waterBalance.closureErrorPct}%`
+    );
+  }
+
+  // 4. Unified SMA -> slope stability coupling responds to early convective wetness
+  const earlyConvective = engine.evaluate(
+    {
+      rainMmHr: 45,
+      durationMin: 180,
+      progress: 0.3,
+      soilMoisture: 'moist',
+      antecedent5dMm: 95,
+      rainPattern: 'upland',
+      drainCondition: 'clogged',
+      forestScenario: 'actual',
+      hyetograph: 'convective_front'
+    },
+    { skipValidation: true }
+  );
+  const earlyCenterPeak = engine.evaluate(
+    {
+      rainMmHr: 45,
+      durationMin: 180,
+      progress: 0.3,
+      soilMoisture: 'moist',
+      antecedent5dMm: 95,
+      rainPattern: 'upland',
+      drainCondition: 'clogged',
+      forestScenario: 'actual',
+      hyetograph: 'alternating_block'
+    },
+    { skipValidation: true }
+  );
+  assert.ok(
+    earlyConvective.landslideAreaHa >= earlyCenterPeak.landslideAreaHa,
+    `early convective burst (${earlyConvective.landslideAreaHa} ha) should wet slopes >= center-peak (${earlyCenterPeak.landslideAreaHa} ha) at progress=0.30`
+  );
+
+  // 5. IDF-admissible local calibration reports strictly on unseen 50% spatial holdout + JSON metadata
+  const cal = engine.runLocalCalibration();
+  assert.equal(cal.metrics.validationSplit, 'holdout');
+  assert.equal(cal.baselineMetrics.validationSplit, 'holdout');
+  if (IS_BALINGKA) {
+    assert.ok(cal.metrics.landslideAuc !== null && cal.metrics.landslideAuc > 0.5);
+  }
+  const exported = JSON.parse(buildScenarioExportJson(
+    {
+      rainMmHr: 40,
+      durationMin: 180,
+      progress: 0.78,
+      soilMoisture: 'saturated',
+      rainPattern: 'upland',
+      drainCondition: 'clogged',
+      forestScenario: 'actual'
+    },
+    earlyConvective,
+    simFields.network,
+    engine.getLastRoutedNominal()
+  ));
+  assert.ok(typeof exported.uncertaintyMethod === 'string' && exported.uncertaintyMethod.includes('sensitivity envelope'));
+  assert.ok(exported.waterBalance && Math.abs(exported.waterBalance.closureErrorPct) < 0.05);
+});
+
+test('Phase 2 multi-village portability: synthetic climate statistics, IDF bounds, soil presets, and dynamic audit', t => {
+  // 1. SNI 2415:2016 Gumbel / LP3 / Mononobe pipeline on synthetic 40-yr dry vs wet daily series
+  const dates = [];
+  const dryDaily = [];
+  const wetDaily = [];
+  for (let y = 1985; y < 2025; y++) {
+    for (let d = 0; d < 365; d++) {
+      const m = Math.min(12, Math.floor(d / 30) + 1);
+      const day = (d % 30) + 1;
+      dates.push(`${y}-${String(m).padStart(2, '0')}-${String(day).padStart(2, '0')}`);
+      const stormSeed = ((y * 37 + d * 13) % 100) / 100;
+      dryDaily.push(d === 40 ? 60 + stormSeed * 45 : stormSeed > 0.85 ? 6 : 1.5);
+      wetDaily.push(d === 40 || d === 41 ? 115 + stormSeed * 75 : stormSeed > 0.65 ? 18 : 6);
+    }
+  }
+  const dryStats = computeAnnualMaxima(dates, dryDaily);
+  assert.equal(dryStats.yearsCount, 40);
+  const dryGumbel = computeGumbelQuantiles(dryStats.annualMax1d);
+  const dryLp3 = computeLp3Quantiles(dryStats.annualMax1d);
+  assert.ok(dryGumbel.t100 > dryGumbel.t10 && dryGumbel.t10 > dryGumbel.t2);
+  assert.ok(dryLp3.t100 > dryLp3.t10);
+
+  const dryBaseline = buildClimateBaselineFromDailySeries({
+    regionId: 'desa-kupang-uji',
+    regionName: 'Desa Kupang Uji',
+    targetCoord: [-10.17, 123.58],
+    gridCoord: [-10.15, 123.6],
+    gridElevM: 45,
+    dailyDates: dates,
+    dailyMm: dryDaily,
+    biasFactor: 1.0
+  });
+  const wetBaseline = buildClimateBaselineFromDailySeries({
+    regionId: 'desa-basah-uji',
+    regionName: 'Desa Basah Uji',
+    targetCoord: [-0.34, 100.32],
+    gridCoord: [-0.32, 100.34],
+    gridElevM: 1200,
+    dailyDates: dates,
+    dailyMm: wetDaily,
+    biasFactor: 1.07
+  });
+  assert.ok(
+    wetBaseline.returnPeriodsMm.r24.t100Gumbel > dryBaseline.returnPeriodsMm.r24.t100Gumbel,
+    'wet climate 100-yr 24h rainfall must exceed dry climate'
+  );
+  assert.ok(
+    wetBaseline.idfCapsMmHr['180'] > dryBaseline.idfCapsMmHr['180'],
+    `wet 3h IDF cap (${wetBaseline.idfCapsMmHr['180']}) must exceed dry 3h IDF cap (${dryBaseline.idfCapsMmHr['180']})`
+  );
+  const mononobe = deriveMononobeIdfEnvelope(dryBaseline.returnPeriodsMm);
+  assert.ok(mononobe['30'] >= mononobe['60'] && mononobe['60'] >= mononobe['180'] && mononobe['180'] >= mononobe['1440']);
+
+  // 2. getMaxRealisticRainMmHr honors custom regional IDF baseline and falls back cleanly
+  assert.equal(getMaxRealisticRainMmHr(180), 45);
+  assert.equal(getMaxRealisticRainMmHr(180, dryBaseline), dryBaseline.idfCapsMmHr['180']);
+
+  // 3. Audit rows dynamically reflect custom village & soil preset without leaking Balingka strings
+  const audit = buildModelParameterAudit(dryBaseline, 'alluvial_clay', {
+    name: 'Desa Kupang Uji',
+    areaKm2: 14.2,
+    officialBoundaryCode: '53.01.01.2001',
+    regionalOverlays: { enabled: false }
+  });
+  const auditText = JSON.stringify(audit);
+  assert.equal(auditText.includes('Balingka'), false, 'custom audit must not contain Balingka');
+  assert.equal(auditText.includes('Padang Panjang'), false, 'custom audit must not contain Padang Panjang');
+  assert.equal(auditText.includes('Sicincin'), false, 'custom audit must not contain Sicincin');
+  assert.ok(auditText.includes('Alluvial Clay') && auditText.includes('Lempung Aluvial'));
+
+  // 4. Checked-in public/data/climate-baseline.json & reset-region cleanup
+  const climPath = path.join(DATA_DIR, 'climate-baseline.json');
+  assert.ok(fs.existsSync(climPath), 'expected public/data/climate-baseline.json');
+  const climJson = JSON.parse(fs.readFileSync(climPath, 'utf8'));
+  assert.equal(climJson.regionId, 'nagari-balingka');
+  assert.equal(climJson.idfCapsMmHr['2880'], 8);
+
+  const tmpResetDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gis-reset-clim-'));
+  try {
+    fs.mkdirSync(path.join(tmpResetDir, 'public', 'data'), { recursive: true });
+    fs.writeFileSync(path.join(tmpResetDir, 'region.config.json'), JSON.stringify({ id: 'desa-custom', name: 'Desa Custom' }));
+    fs.writeFileSync(path.join(tmpResetDir, 'public', 'data', 'climate-baseline.json'), '{}');
+    const cleanRes = runResetRegion({ rootDir: tmpResetDir });
+    assert.ok(cleanRes.removed.includes('public/data/climate-baseline.json'));
+  } finally {
+    fs.rmSync(tmpResetDir, { recursive: true, force: true });
+  }
+
+  // 5. Soil presets produce physically distinct hydrological/slope response when regional raster is absent
+  const simPath = path.join(DATA_DIR, 'sim-fields.json');
+  if (!fs.existsSync(simPath)) {
+    t.skip('sim-fields.json not present yet');
+    return;
+  }
+  const simFields = JSON.parse(fs.readFileSync(simPath, 'utf8'));
+  const fieldsNoSoilRaster = { ...simFields, soilErodibilityBase64: undefined };
+  const engNoRaster = new CascadeEngine(fieldsNoSoilRaster);
+  const testStorm = {
+    rainMmHr: 40,
+    durationMin: 180,
+    progress: 0.78,
+    soilMoisture: 'moist',
+    antecedent5dMm: 45,
+    rainPattern: 'upland',
+    drainCondition: 'clogged',
+    forestScenario: 'actual'
+  };
+  const clayKpis = engNoRaster.evaluate({ ...testStorm, soilProfile: 'alluvial_clay' }, { skipValidation: true });
+  const karstKpis = engNoRaster.evaluate({ ...testStorm, soilProfile: 'karst_limestone' }, { skipValidation: true });
+  assert.ok(
+    clayKpis.effectiveRunoffMm > karstKpis.effectiveRunoffMm,
+    `alluvial_clay runoff (${clayKpis.effectiveRunoffMm} mm) must exceed permeable karst_limestone (${karstKpis.effectiveRunoffMm} mm)`
+  );
+});
+
+test('Phase 3 paper benchmarks: LHS stratification, nominalOnly parity, sensitivity sweep, and analytical verification', t => {
+  // 1. Stratified Latin Hypercube determinism & uniform coverage across strata
+  const nLhs = 20;
+  const lhsA = generateLatinHypercube(nLhs, 4, 2026);
+  const lhsB = generateLatinHypercube(nLhs, 4, 2026);
+  assert.equal(lhsA.length, nLhs);
+  assert.deepEqual(Array.from(lhsA[0]), Array.from(lhsB[0]));
+  for (let d = 0; d < 4; d++) {
+    const strataHit = new Set(lhsA.map(row => Math.floor(row[d] * nLhs)));
+    assert.equal(strataHit.size, nLhs, `dimension ${d} must place exactly 1 sample in each stratum`);
+  }
+  assert.equal(computeSpearmanRankCorrelation([1, 2, 3, 4, 5], [10, 20, 30, 40, 50]), 1);
+  assert.equal(computeSpearmanRankCorrelation([1, 2, 3, 4, 5], [50, 40, 30, 20, 10]), -1);
+
+  const simPath = path.join(DATA_DIR, 'sim-fields.json');
+  if (!fs.existsSync(simPath)) {
+    t.skip('sim-fields.json not present yet');
+    return;
+  }
+  const simFields = JSON.parse(fs.readFileSync(simPath, 'utf8'));
+  const settlements = fs.existsSync(path.join(DATA_DIR, 'settlements.geojson'))
+    ? JSON.parse(fs.readFileSync(path.join(DATA_DIR, 'settlements.geojson'), 'utf8'))
+    : { type: 'FeatureCollection', features: [] };
+  const engine = new CascadeEngine(simFields, extractBuildingCentroids(settlements), 37);
+
+  // 2. nominalOnly fast path matches full evaluation bit-for-bit on nominal metrics
+  const probeScenario = {
+    rainMmHr: 40,
+    durationMin: 180,
+    progress: 0.78,
+    soilMoisture: 'moist',
+    antecedent5dMm: 65,
+    rainPattern: 'upland',
+    drainCondition: 'clogged',
+    forestScenario: 'actual',
+    hyetograph: 'alternating_block',
+    debrisCoupling: 'coupled'
+  };
+  const full = engine.evaluate(probeScenario, { skipValidation: true });
+  const fast = engine.evaluate(probeScenario, { skipValidation: true, nominalOnly: true });
+  assert.equal(fast.peakDischargeM3s, full.peakDischargeM3s);
+  assert.equal(fast.floodAreaHa, full.floodAreaHa);
+  assert.equal(fast.landslideAreaHa, full.landslideAreaHa);
+  assert.equal(fast.effectiveRunoffMm, full.effectiveRunoffMm);
+  assert.deepEqual(fast.waterBalance, full.waterBalance);
+
+  // 3. Fast offline LHS + Morris sensitivity check
+  const sens = runSensitivityAnalysis({
+    engine,
+    baseScenario: probeScenario,
+    nLhs: 12,
+    morrisTrajectories: 2,
+    seed: 99
+  });
+  assert.ok(sens.distributions.peakDischargeM3s.p10 <= sens.distributions.peakDischargeM3s.p50);
+  assert.ok(sens.distributions.peakDischargeM3s.p50 <= sens.distributions.peakDischargeM3s.p90);
+  assert.ok(sens.morris.landslideAreaHa.every(r => r.muStar >= 0));
+  assert.ok(sens.spearman.peakDischargeM3s.every(r => Number.isFinite(r.rho)));
+
+  // 4. Analytical solver verification checks (SCS-CN, Muskingum-Cunge, FHWA HDS-5, Water Balance)
+  const ver = runAnalyticalVerifications({ simFields, settlements: null });
+  assert.ok(ver.scsCnAnalytical.r2 > 0.999, `expected SCS-CN analytical R2 > 0.999, got ${ver.scsCnAnalytical.r2}`);
+  assert.ok(ver.fhwaHds5Orifice.maxRelErrPct < 0.5, `expected HDS-5 error < 0.5%, got ${ver.fhwaHds5Orifice.maxRelErrPct}`);
+  assert.ok(ver.muskingumChannel.minQ >= 0 && ver.muskingumChannel.lagMin > 0);
+  assert.ok(ver.waterBalanceClosure.maxAbsClosureErrorPct < 0.05);
+
+  // 5. Saved Phase 3 & multi-village replicability benchmark artifact integrity
+  const benchmarkDir = path.join(ROOT_DIR, 'docs', 'benchmarks');
+  const verArtifact = JSON.parse(fs.readFileSync(path.join(benchmarkDir, 'verification-summary.json'), 'utf8'));
+  const sensArtifact = JSON.parse(fs.readFileSync(path.join(benchmarkDir, 'sensitivity-summary.json'), 'utf8'));
+  const repArtifact = JSON.parse(fs.readFileSync(path.join(benchmarkDir, 'replicability-summary.json'), 'utf8'));
+
+  assert.ok(verArtifact.analytical.scsCnAnalytical.r2 > 0.999);
+  assert.ok(verArtifact.analytical.waterBalanceClosure.maxAbsClosureErrorPct < 0.05);
+  assert.ok(sensArtifact.nLhs >= 500 && sensArtifact.scenarios?.upland_3h && sensArtifact.scenarios?.monsoon_48h);
+  assert.equal(repArtifact.checks.causalHydrograph, true);
+  assert.equal(repArtifact.checks.zeroBalingkaLeakage, true);
+  assert.ok(repArtifact.checks.maxClosureErrorPct < 0.05);
+  assert.ok(repArtifact.terrainAndNetwork.reachCount > 0 && repArtifact.terrainAndNetwork.buildingCount > 0);
+});
+
+test('regions.config.json defines Nagari Balingka and Malalak Timur & Utara with isolated paths and generated spatial assets', () => {
+  const manifestPath = path.join(ROOT_DIR, 'regions.config.json');
+  assert.ok(fs.existsSync(manifestPath), 'regions.config.json must exist');
+  const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+  assert.equal(manifest.defaultRegionId, 'nagari-balingka');
+  assert.equal(manifest.regions.length, 2);
+
+  const ids = new Set();
+  for (const reg of manifest.regions) {
+    assert.ok(reg.id && !ids.has(reg.id), `Duplicate or missing region id: ${reg.id}`);
+    ids.add(reg.id);
+    assert.ok(reg.bbox.west < reg.bbox.east && reg.bbox.south < reg.bbox.north, `Invalid bbox for ${reg.id}`);
+    assert.ok(Array.isArray(reg.cameraPresets) && reg.cameraPresets.length >= 4, `Missing cameraPresets for ${reg.id}`);
+    const rel = String(reg.dataBasePath || '/data').replace(/^\/+/, '');
+    const regDataDir = path.join(ROOT_DIR, 'public', ...rel.split('/'));
+    assert.ok(fs.existsSync(path.join(regDataDir, 'metadata.json')), `Missing metadata.json for ${reg.id}`);
+    assert.ok(fs.existsSync(path.join(regDataDir, 'nagari-boundary.geojson')), `Missing nagari-boundary.geojson for ${reg.id}`);
+    assert.ok(fs.existsSync(path.join(regDataDir, 'sub-boundaries.geojson')), `Missing sub-boundaries.geojson for ${reg.id}`);
+    assert.ok(fs.existsSync(path.join(regDataDir, 'mask.geojson')), `Missing mask.geojson for ${reg.id}`);
+    assert.ok(fs.existsSync(path.join(regDataDir, 'sim-fields.json')), `Missing sim-fields.json for ${reg.id}`);
+    const meta = JSON.parse(fs.readFileSync(path.join(regDataDir, 'metadata.json'), 'utf8'));
+    if (reg.id === 'nagari-balingka') {
+      assert.ok(meta.studyAreaKm2 > 28 && meta.studyAreaKm2 < 32, `Unexpected area for Balingka: ${meta.studyAreaKm2}`);
+    } else if (reg.id === 'malalak-timur-utara') {
+      assert.ok(meta.studyAreaKm2 > 50 && meta.studyAreaKm2 < 60, `Unexpected area for Malalak Timur & Utara: ${meta.studyAreaKm2}`);
+      const subFc = JSON.parse(fs.readFileSync(path.join(regDataDir, 'sub-boundaries.geojson'), 'utf8'));
+      assert.equal(subFc.features.length, 2, 'Malalak Timur & Utara should include both official Nagari sub-boundaries');
+    }
+  }
 });
