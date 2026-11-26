@@ -10,6 +10,7 @@ import {
   Wrench
 } from 'lucide-react';
 import { ActiveMapLegend } from './components/ActiveMapLegend';
+import { BrandMark } from './components/BrandMark';
 import { DrainageTab } from './components/DrainageTab';
 import { EditorTab } from './components/EditorTab';
 import { EditorUnlockModal } from './components/EditorUnlockModal';
@@ -74,6 +75,7 @@ const DEFAULT_LAYERS: LayerToggles = {
 };
 
 const DEFAULT_FLOW_DENSITY = 1;
+const LAST_REGION_KEY = 'peta_alur_air_last_region_v1';
 const SIM_DISCLAIMER_SESSION_KEY = 'balingka_sim_disclaimer_session_v1';
 const SIM_DISCLAIMER_HIDE_KEY = 'balingka_sim_disclaimer_hide_v1';
 
@@ -89,10 +91,23 @@ function makeInitialMapLoadState(basemap: BasemapId): MapLoadState {
   };
 }
 
-function getInitialRegionIdFromUrl(): string {
+function getRegionIdFromUrlOnly(): string {
   if (typeof window === 'undefined') return DEFAULT_REGION_ID;
   const param = new URLSearchParams(window.location.search).get('region');
   return isValidRegionId(param) ? param! : DEFAULT_REGION_ID;
+}
+
+function getInitialRegionId(): string {
+  if (typeof window === 'undefined') return DEFAULT_REGION_ID;
+  const param = new URLSearchParams(window.location.search).get('region');
+  if (isValidRegionId(param)) return param!;
+  try {
+    const saved = window.localStorage.getItem(LAST_REGION_KEY);
+    if (isValidRegionId(saved)) return saved!;
+  } catch {
+    // ignore storage failures
+  }
+  return DEFAULT_REGION_ID;
 }
 
 const REGION_GROUPS = groupRegionsByDistrict(REGIONS);
@@ -116,7 +131,7 @@ const MAP_LAYER_KEYS: (keyof LayerToggles)[] = [
 ];
 
 export function App() {
-  const [activeRegionId, setActiveRegionId] = useState<string>(() => getInitialRegionIdFromUrl());
+  const [activeRegionId, setActiveRegionId] = useState<string>(() => getInitialRegionId());
   const activeRegion = useMemo(() => getRegionById(activeRegionId), [activeRegionId]);
   const dataBasePath = useMemo(() => getRegionDataBasePath(activeRegion), [activeRegion]);
 
@@ -173,12 +188,12 @@ export function App() {
   const t = useMemo(() => getTranslations(activeRegion)[lang], [activeRegion, lang]);
 
   useEffect(() => {
-    document.title = `${t.appTitle} — Portal Data Spasial Topografi & Drainase`;
-  }, [t.appTitle]);
+    document.title = `${t.brandName} — ${activeRegion.name}`;
+  }, [t.brandName, activeRegion.name]);
 
   useEffect(() => {
     const onPopState = () => {
-      setActiveRegionId(getInitialRegionIdFromUrl());
+      setActiveRegionId(getRegionIdFromUrlOnly());
     };
     window.addEventListener('popstate', onPopState);
     return () => window.removeEventListener('popstate', onPopState);
@@ -290,6 +305,11 @@ export function App() {
       if (nextId === DEFAULT_REGION_ID) url.searchParams.delete('region');
       else url.searchParams.set('region', nextId);
       window.history.pushState(null, '', url.toString());
+      try {
+        window.localStorage.setItem(LAST_REGION_KEY, nextId);
+      } catch {
+        // ignore storage failures
+      }
 
       setActiveRegionId(nextId);
       setCameraPreset('center');
@@ -630,47 +650,59 @@ export function App() {
           <span className="h-1.5 w-11 rounded-full bg-[#161c1a]/25" />
         </button>
 
-        <header className="shrink-0 border-b border-[#161c1a]/12 bg-white px-4 py-3 max-md:px-3.5 max-md:py-1.5">
-          <div className="flex items-center justify-between gap-2">
-            <div className="flex min-w-0 flex-1 items-center gap-2.5">
-              <div className="grid h-8.5 w-8.5 shrink-0 place-items-center rounded-[10px] bg-[#0369a1] text-white max-md:h-7 max-md:w-7">
-                <Droplets className="h-4.5 w-4.5 max-md:h-4 max-md:w-4" />
-              </div>
-              <div className="min-w-0 flex-1">
-                <div className="relative inline-flex max-w-full items-center">
-                  <select
-                    data-testid="region-select"
-                    aria-label={lang === 'en' ? 'Select Nagari region' : 'Pilih wilayah Nagari'}
-                    value={activeRegionId}
-                    onChange={e => handleSelectRegion(e.target.value)}
-                    className="w-full max-w-full cursor-pointer appearance-none rounded-lg border border-transparent bg-transparent py-0.5 pr-6 pl-0 text-[16px] leading-tight font-extrabold tracking-tight text-[#161c1a] transition hover:border-[#161c1a]/15 hover:bg-[#fafaf8] hover:pl-1.5 focus:border-[#0369a1] focus:bg-white focus:pl-1.5 focus:outline-none max-md:text-[14.5px]"
-                  >
-                    {REGION_GROUPS.map(grp => (
-                      <optgroup key={`${grp.district}-${grp.regency}`} label={`${grp.district}, ${grp.regency}`}>
-                        {grp.regions.map(r => (
-                          <option key={r.id} value={r.id}>
-                            {lang === 'en' ? r.appTitle.en : r.appTitle.id}
-                          </option>
-                        ))}
-                      </optgroup>
-                    ))}
-                  </select>
-                  <ChevronDown className="pointer-events-none absolute right-1 h-4 w-4 text-[#0369a1]" />
+        <header className="shrink-0 border-b border-[#161c1a]/12 bg-white px-4 py-3 max-md:px-3 max-md:py-2">
+          <div className="flex flex-col gap-2 max-md:flex-row max-md:items-center max-md:justify-between max-md:gap-2">
+            <div className="flex min-w-0 items-center justify-between gap-2 max-md:shrink-0">
+              <div className="flex min-w-0 items-center gap-2.5 max-md:gap-2">
+                <div className="grid h-8.5 w-8.5 shrink-0 place-items-center rounded-[10px] bg-[#0369a1] text-white max-md:h-7 max-md:w-7 max-md:rounded-[8px]">
+                  <BrandMark className="h-5 w-5 max-md:h-4 max-md:w-4" />
                 </div>
-                <div className="mt-0.5 truncate text-[12px] font-medium text-[#636f6a] max-md:hidden">
+                <div className="min-w-0">
+                  <h1 className="m-0 truncate text-[16px] leading-tight font-extrabold tracking-tight text-[#161c1a] max-md:text-[14.5px]">
+                    {t.brandName}
+                  </h1>
+                  <div className="mt-0.5 truncate text-[11.5px] font-medium text-[#636f6a] max-md:hidden">
+                    {t.brandTagline}
+                  </div>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setSidebarCollapsed(true)}
+                aria-label="Collapse panel"
+                className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-[#434d49] hover:bg-[#f2f3ef] max-md:hidden"
+              >
+                <ChevronLeft className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="relative flex min-w-0 items-center gap-2 rounded-xl border border-[#161c1a]/12 bg-[#fafaf8] px-2.5 py-1.5 transition focus-within:border-[#0369a1] focus-within:bg-white hover:border-[#161c1a]/22 max-md:max-w-[54%] max-md:rounded-lg max-md:px-2 max-md:py-1">
+              <MapPin className="h-3.5 w-3.5 shrink-0 text-[#0369a1]" />
+              <div className="min-w-0 flex-1">
+                <select
+                  data-testid="region-select"
+                  aria-label={lang === 'en' ? 'Select region' : 'Pilih wilayah'}
+                  value={activeRegionId}
+                  onChange={e => handleSelectRegion(e.target.value)}
+                  className="w-full cursor-pointer appearance-none truncate bg-transparent pr-5 text-[13px] leading-tight font-bold text-[#161c1a] focus:outline-none max-md:text-[12px]"
+                >
+                  {REGION_GROUPS.map(grp => (
+                    <optgroup key={`${grp.district}-${grp.regency}`} label={`${grp.district}, ${grp.regency}`}>
+                      {grp.regions.map(r => (
+                        <option key={r.id} value={r.id}>
+                          {r.name}
+                        </option>
+                      ))}
+                    </optgroup>
+                  ))}
+                </select>
+                <div className="mt-0.5 truncate text-[11px] font-medium text-[#636f6a] max-md:hidden">
                   {t.subtitle}
                 </div>
               </div>
+              <ChevronDown className="pointer-events-none absolute right-2 h-3.5 w-3.5 shrink-0 text-[#0369a1] max-md:right-1.5" />
             </div>
-
-            <button
-              type="button"
-              onClick={() => setSidebarCollapsed(true)}
-              aria-label="Collapse panel"
-              className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-[#434d49] hover:bg-[#f2f3ef] max-md:hidden"
-            >
-              <ChevronLeft className="h-4 w-4" />
-            </button>
           </div>
         </header>
 

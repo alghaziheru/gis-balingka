@@ -1,16 +1,16 @@
-# Nagari Balingka Community GIS
+# Peta Alur Air *(gis-balingka)*
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-0284c7.svg)](./LICENSE)
 [![Node >= 24](https://img.shields.io/badge/Node.js-%3E%3D24-047857.svg)](https://nodejs.org/)
 [![Live Demo](https://img.shields.io/badge/Live%20Demo-gsb.jenderalist.web.id-0369a1.svg)](https://gsb.jenderalist.web.id)
 
-Open-source (**MIT**) public spatial data viewer, terrain & drainage inventory, computational terrain-flow visualizer, and collaborative waterway & boundary editor — built for **Nagari Balingka** (`29.89 km²`, `1,032–2,869 mdpl`, Kec. IV Koto, Kab. Agam, West Sumatra) and configurable for **any Indonesian Desa / Nagari** via [`region.config.json`](./region.config.json).
+Open-source (**MIT**) public spatial data viewer, terrain & soil atlas, drainage inventory, computational rain-flow visualizer, and collaborative waterway & boundary editor — built to help villagers understand their terrain, contours, soil, drainage, and where water flows when rain happens. Ships pre-configured with **Nagari Balingka** (`29.89 km²`, `1,032–2,869 mdpl`, Kec. IV Koto) and **Malalak Timur & Utara** (`54.6 km²`, Kec. Malalak) in Kab. Agam, West Sumatra, and is configurable for **any Indonesian Desa / Nagari** via [`regions.config.json`](./regions.config.json) / [`region.config.json`](./region.config.json) *(repository slug remains `gis-balingka` for backwards compatibility)*.
 
 **Live Viewer:** [https://gsb.jenderalist.web.id](https://gsb.jenderalist.web.id) *(public read-only build hosted on Cloudflare Pages)*
 
-![Nagari Balingka Community GIS — Desktop View](./docs/screenshot-desktop.png)
+![Peta Alur Air — Desktop View](./docs/screenshot-desktop.png)
 
-> **Scope & Role Boundary:** This application displays open geospatial datasets (BIG, Pemkab Agam, ESA/Copernicus, OpenStreetMap) and field-recorded infrastructure data alongside computational terrain visualizations — it **does not** issue disaster predictions, hazard declarations, or official evacuation designations. Official hazard assessments and emergency directives belong exclusively to **BNPB**, **BPBD Kab. Agam**, **BMKG**, **PVMBG**, and **Wali Nagari Balingka**.
+> **Scope & Role Boundary:** This application displays open geospatial datasets (BIG, Pemkab Agam, ESA/Copernicus, OpenStreetMap) and field-recorded infrastructure data alongside computational terrain visualizations — it **does not** issue disaster predictions, hazard declarations, or official evacuation designations. Official hazard assessments and emergency directives belong exclusively to **BNPB**, **BPBD Kab. Agam**, **BMKG**, **PVMBG**, and the respective **Wali Nagari**.
 
 Clipped strictly to the official **Badan Informasi Geospasial (BIG) June 2026** Nagari Balingka perimeter (`KDEPUM 13.06.05.2003`) while computing hydrology on a padded catchment box behind the scenes, the app combines **BIG DEMNAS (`542×760`, ~13.8 m)** terrain rasters (*Elevasi*, *Relief*, *Lereng*), official **Pemkab Agam & BIG RBI 50K** reference layers, **ESA WorldCover 10m** forest cover, **Copernicus Sentinel-2 L2A** NDVI vegetation-cover difference, **Google Open Buildings v3 + OSM** settlement footprints (`2,175` buildings), and an immutable **SQLite Audit Trail** in a clean `Ringkas` / `Lengkap` interface.
 
@@ -271,4 +271,4 @@ Contributions, bug reports, field data improvements, and regional adaptations ar
 
 Source code is licensed under **[MIT](./LICENSE)**. Geospatial reference data is used with public attribution to **Badan Informasi Geospasial (BIG)**, **Pemerintah Kabupaten Agam**, **ESA WorldCover / Copernicus Sentinel-2**, **Google Open Buildings v3**, and **OpenStreetMap contributors**.
 
-Computational terrain-flow visualizations, HAND basin indices, and theoretical Manning equations are exploratory open-data tools — **not** certified hydraulic engineering designs or official disaster warnings. Always follow official announcements and instructions from **BNPB**, **BPBD Kab. Agam**, **BMKG**, **PVMBG**, and **Wali Nagari Balingka**.
+Computational terrain-flow visualizations, HAND basin indices, and theoretical Manning equations are exploratory open-data tools — **not** certified hydraulic engineering designs or official disaster warnings. Always follow official announcements and instructions from **BNPB**, **BPBD Kab. Agam**, **BMKG**, **PVMBG**, and your local **Wali Nagari**.

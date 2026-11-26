@@ -8,15 +8,32 @@ function regionHtmlPlugin() {
   return {
     name: 'region-html-metadata',
     transformIndexHtml(html: string) {
-      const cfgPath = path.resolve(import.meta.dirname, 'region.config.json');
-      if (!fs.existsSync(cfgPath)) return html;
+      const regionsCfgPath = path.resolve(import.meta.dirname, 'regions.config.json');
+      const singleCfgPath = path.resolve(import.meta.dirname, 'region.config.json');
       try {
-        const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
-        const appTitle = cfg.appTitle?.id || `Peta ${cfg.name || 'Wilayah'}`;
-        const regionName = cfg.name || 'Wilayah';
-        const loc = [cfg.district, cfg.regency].filter(Boolean).join(', ');
-        const title = `${appTitle} — Portal Data Spasial Topografi &amp; Drainase`;
-        const desc = `Portal data spasial terbuka ${regionName}${loc ? ` (${loc})` : ''} untuk menampilkan jaringan sungai, inventaris drainase/gorong-gorong, topografi DEM, dan simulasi model aliran.`;
+        let brandName = 'Peta Alur Air';
+        let brandTagline = 'Topografi, Drainase & Aliran Hujan';
+        let regionNames: string[] = [];
+
+        if (fs.existsSync(regionsCfgPath)) {
+          const manifest = JSON.parse(fs.readFileSync(regionsCfgPath, 'utf8'));
+          brandName = manifest.appBrand?.name || brandName;
+          brandTagline = manifest.appBrand?.tagline?.id || brandTagline;
+          if (Array.isArray(manifest.regions)) {
+            regionNames = manifest.regions.map((r: { name?: string }) => r.name).filter(Boolean) as string[];
+          }
+        } else if (fs.existsSync(singleCfgPath)) {
+          const cfg = JSON.parse(fs.readFileSync(singleCfgPath, 'utf8'));
+          if (cfg.name) regionNames = [cfg.name];
+        }
+
+        const escapeHtml = (s: string) =>
+          s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        const title = `${escapeHtml(brandName)} — ${escapeHtml(brandTagline)}`;
+        const regionSummary =
+          regionNames.length > 0 ? ` (${regionNames.join(', ')})` : '';
+        const desc = `${brandName} — portal data spasial terbuka${regionSummary} untuk menampilkan kontur & topografi DEM, jenis tanah, jaringan sungai, inventaris drainase/gorong-gorong, serta simulasi aliran hujan.`;
+
         return html
           .replace(/<title>[\s\S]*?<\/title>/, `<title>${title}</title>`)
           .replace(

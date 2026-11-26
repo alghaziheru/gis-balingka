@@ -71,12 +71,26 @@ export interface RegionConfig {
   repositoryUrl: string;
 }
 
+export interface AppBrandConfig {
+  name: string;
+  tagline: { id: string; en: string };
+}
+
 interface RegionsManifest {
+  appBrand?: AppBrandConfig;
   defaultRegionId: string;
   regions: RegionConfig[];
 }
 
 const manifest = rawManifest as RegionsManifest;
+
+export const APP_BRAND: AppBrandConfig = {
+  name: manifest.appBrand?.name || 'Peta Alur Air',
+  tagline: {
+    id: manifest.appBrand?.tagline?.id || 'Topografi, Drainase & Aliran Hujan',
+    en: manifest.appBrand?.tagline?.en || 'Terrain, Drainage & Rain-Flow Atlas'
+  }
+};
 
 export const REGIONS: RegionConfig[] = manifest.regions;
 export const DEFAULT_REGION_ID: string = manifest.defaultRegionId || REGIONS[0]?.id || 'nagari-balingka';

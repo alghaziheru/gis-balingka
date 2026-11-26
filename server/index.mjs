@@ -567,7 +567,7 @@ if (isMain) {
   const { server } = createAppServer({ dbPath, adminPassphrase });
   server.listen(port, host, () => {
     console.log(
-      `Nagari Balingka & Multi-Region SQLite API listening on http://${host}:${port} (passphrase=${adminPassphrase ? 'enabled' : 'open-local'})`
+      `Peta Alur Air (Multi-Region SQLite API) listening on http://${host}:${port} (passphrase=${adminPassphrase ? 'enabled' : 'open-local'})`
     );
   });
 }

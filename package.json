@@ -4,7 +4,7 @@
   "private": false,
   "license": "MIT",
   "type": "module",
-  "description": "Open-source public spatial data viewer for Nagari Balingka (Kab. Agam, West Sumatra) and configurable Indonesian village/nagari terrain, hydrology, and drainage infrastructure.",
+  "description": "Peta Alur Air — open-source public spatial data viewer for terrain, soil, drainage inventory, and rain-flow awareness across Nagari Balingka, Malalak Timur & Utara, and configurable Indonesian villages/nagari.",
   "engines": {
     "node": ">=24.0.0"
   },

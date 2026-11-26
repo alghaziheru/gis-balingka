@@ -1,4 +1,4 @@
-import { DEFAULT_REGION_ID, REGION, type RegionConfig } from '../config/region';
+import { APP_BRAND, DEFAULT_REGION_ID, REGION, type RegionConfig } from '../config/region';
 import type { Language } from '../types/gis';
 
 function buildTranslations(region: RegionConfig) {
@@ -11,7 +11,9 @@ function buildTranslations(region: RegionConfig) {
 
   return {
     id: {
-      appTitle: region.appTitle.id,
+      brandName: APP_BRAND.name,
+      brandTagline: APP_BRAND.tagline.id,
+      appTitle: `${APP_BRAND.name} — ${region.name}`,
       subtitle: `${region.district}, ${region.regency} · ${AREA_ID} km²`,
       modeSimple: 'Ringkas',
       modeDetail: 'Lengkap',
@@ -359,7 +361,7 @@ function buildTranslations(region: RegionConfig) {
       toastExported: 'Berkas berhasil diunduh.',
       toastNeed2Pts: 'Minimal 2 titik diperlukan untuk menggambar jalur.',
       feedbackTitle: 'Kirim Masukan',
-      feedbackSubtitle: `Bantu kami menyempurnakan tampilan, kejelasan informasi, atau fitur ${region.appTitle.id}.`,
+      feedbackSubtitle: `Bantu kami menyempurnakan tampilan, kejelasan informasi, atau fitur ${APP_BRAND.name} (${region.name}).`,
       feedbackSubmitBtn: 'Kirim Masukan',
       feedbackSentToast: 'Terima kasih! Masukan Anda sudah diterima.',
       feedbackStaticHint:
@@ -377,7 +379,9 @@ function buildTranslations(region: RegionConfig) {
       glossaryResetSearch: 'Tampilkan semua'
     },
     en: {
-      appTitle: region.appTitle.en,
+      brandName: APP_BRAND.name,
+      brandTagline: APP_BRAND.tagline.en,
+      appTitle: `${APP_BRAND.name} — ${region.name}`,
       subtitle: `${region.district.replace(/^Kec\.\s*/i, '')}, ${region.regency.replace(/^Kab\.\s*/i, '')} · ${AREA_EN} km²`,
       modeSimple: 'Simple',
       modeDetail: 'Detailed',
@@ -725,7 +729,7 @@ function buildTranslations(region: RegionConfig) {
       toastExported: 'File downloaded successfully.',
       toastNeed2Pts: 'At least 2 points are required for a line.',
       feedbackTitle: 'Send Feedback',
-      feedbackSubtitle: `Help us improve the interface, data clarity, or features of ${region.appTitle.en}.`,
+      feedbackSubtitle: `Help us improve the interface, data clarity, or features of ${APP_BRAND.name} (${region.name}).`,
       feedbackSubmitBtn: 'Submit Feedback',
       feedbackSentToast: 'Thank you! Your feedback has been received.',
       feedbackStaticHint:

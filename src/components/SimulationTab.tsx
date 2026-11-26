@@ -12,7 +12,7 @@ import {
   SlidersHorizontal,
   X
 } from 'lucide-react';
-import { useT } from '../context/RegionContext';
+import { useActiveRegion, useT } from '../context/RegionContext';
 import type { ClimateBaselineData } from '../data/climateBaseline';
 import { estimateChannelThresholds, resolveWaterwayCatchmentFromNetwork } from '../lib/channelHydraulics';
 import type { DemClient } from '../lib/demClient';
@@ -214,6 +214,7 @@ export function SimulationTab({
   onOpenMethodology
 }: SimulationTabProps) {
   const uid = useId();
+  const region = useActiveRegion();
   const t = useT(lang);
   const isEn = lang === 'en';
   const isDetail = viewMode === 'detail';
@@ -1170,7 +1171,7 @@ export function SimulationTab({
               data-testid="sim-export-csv"
               onClick={() => {
                 const csv = buildHydrographCsv(kpis);
-                triggerBrowserDownload(csv, `balingka-hydrograph-${rainMm}mmh-${durationMin}m.csv`, 'text/csv;charset=utf-8');
+                triggerBrowserDownload(csv, `${region.id}-hydrograph-${rainMm}mmh-${durationMin}m.csv`, 'text/csv;charset=utf-8');
               }}
               className="inline-flex min-h-[32px] items-center justify-center gap-1.5 rounded-lg border border-[#161c1a]/14 bg-white px-2 py-1 text-[11px] font-bold text-[#161c1a] transition hover:border-[#0369a1]/40 hover:text-[#0369a1]"
             >
@@ -1198,7 +1199,7 @@ export function SimulationTab({
                   debrisCoupling
                 };
                 const json = buildScenarioExportJson(fallbackParams, kpis, simNetwork, routedNominal);
-                triggerBrowserDownload(json, `balingka-scenario-${rainMm}mmh-${durationMin}m.json`, 'application/json;charset=utf-8');
+                triggerBrowserDownload(json, `${region.id}-scenario-${rainMm}mmh-${durationMin}m.json`, 'application/json;charset=utf-8');
               }}
               className="inline-flex min-h-[32px] items-center justify-center gap-1.5 rounded-lg border border-[#161c1a]/14 bg-white px-2 py-1 text-[11px] font-bold text-[#161c1a] transition hover:border-[#0369a1]/40 hover:text-[#0369a1]"
             >

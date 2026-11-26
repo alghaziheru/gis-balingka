@@ -1,3 +1,6 @@
+import { DEFAULT_REGION, type RegionConfig } from '../config/region';
+import type { DatasetMetadata } from '../types/gis';
+
 export interface GlossaryLink {
   kind: 'article' | 'video';
   labelId: string;
@@ -16,17 +19,38 @@ export interface GlossaryEntry {
   links: GlossaryLink[];
 }
 
-export const GLOSSARY_ENTRIES: GlossaryEntry[] = [
+export function getGlossaryEntries(
+  region: RegionConfig = DEFAULT_REGION,
+  metadata?: DatasetMetadata | null
+): GlossaryEntry[] {
+  const areaId = region.areaKm2.toLocaleString('id-ID', { maximumFractionDigits: 2 });
+  const areaEn = region.areaKm2.toLocaleString('en-US', { maximumFractionDigits: 2 });
+  const primaryRiver = region.mainRivers[0] || 'Batang Ngalai';
+  const subRegions = region.cameraPresets
+    .filter(p => p.id !== 'center')
+    .map(p => p.label)
+    .join(', ');
+  const hasElev = metadata?.minElevM != null && metadata?.maxElevM != null;
+  const minElevId = hasElev ? Math.round(metadata!.minElevM).toLocaleString('id-ID') : '';
+  const maxElevId = hasElev ? Math.round(metadata!.maxElevM).toLocaleString('id-ID') : '';
+  const minElevEn = hasElev ? Math.round(metadata!.minElevM).toLocaleString('en-US') : '';
+  const maxElevEn = hasElev ? Math.round(metadata!.maxElevM).toLocaleString('en-US') : '';
+  const codeTextId = region.officialBoundaryCode ? `kode BIG ${region.officialBoundaryCode}, ` : '';
+  const codeTextEn = region.officialBoundaryCode ? `${region.officialBoundaryCode}, ` : '';
+
+  return [
   {
     id: 'mdpl',
     termId: 'mdpl',
     termEn: 'mdpl (m asl)',
     shortId: 'Meter di Atas Permukaan Laut',
     shortEn: 'Meters above mean sea level',
-    descId:
-      'Satuan ketinggian permukaan tanah yang diukur dari permukaan laut rata-rata. Di Nagari Balingka, ketinggian berkisar dari 1.032 mdpl di area lembah hingga 2.869 mdpl di lereng atas Gunung Singgalang.',
-    descEn:
-      'Ground elevation measured above mean sea level. Across Nagari Balingka, elevation ranges from 1,032 m in valley settlements up to 2,869 m on the upper slopes of Mount Singgalang.',
+    descId: hasElev
+      ? `Satuan ketinggian permukaan tanah yang diukur dari permukaan laut rata-rata. Di ${region.name}, ketinggian berkisar dari ${minElevId} mdpl di area lembah hingga ${maxElevId} mdpl di lereng atas ${region.uplandLandmark.id}.`
+      : `Satuan ketinggian permukaan tanah yang diukur dari permukaan laut rata-rata. Di ${region.name}, ketinggian memuncak menuju lereng atas ${region.uplandLandmark.id}.`,
+    descEn: hasElev
+      ? `Ground elevation measured above mean sea level. Across ${region.name}, elevation ranges from ${minElevEn} m in valley settlements up to ${maxElevEn} m on the upper slopes of ${region.uplandLandmark.en}.`
+      : `Ground elevation measured above mean sea level. Across ${region.name}, elevation rises from valley settlements toward the upper slopes of ${region.uplandLandmark.en}.`,
     links: [
       {
         kind: 'article',
@@ -356,9 +380,9 @@ export const GLOSSARY_ENTRIES: GlossaryEntry[] = [
     shortId: 'Peta Rupa Bumi Indonesia',
     shortEn: 'Indonesian Topographic Base Map',
     descId:
-      'Peta dasar topografi resmi Indonesia terbitan Badan Informasi Geospasial (edisi Kab. Agam Des 2022). Menyediakan jaringan sungai & anak sungai (322 ruas di area Balingka), jembatan, gorong-gorong, serta lokasi fasilitas umum.',
+      `Peta dasar topografi resmi Indonesia terbitan Badan Informasi Geospasial (edisi ${region.regency}). Menyediakan jaringan sungai & anak sungai, jembatan, gorong-gorong, serta lokasi fasilitas umum di wilayah ${region.name} dan sekitarnya.`,
     descEn:
-      'Official Indonesian topographic base map published by BIG (Kab. Agam Dec 2022 edition). Provides 322 river/tributary reaches, bridges, culverts, and public facilities across the Balingka area.',
+      `Official Indonesian topographic base map published by BIG (${region.regency} edition). Provides river/tributary reaches, bridges, culverts, and public facilities across ${region.name} and surrounding catchments.`,
     links: [
       {
         kind: 'article',
@@ -456,9 +480,9 @@ export const GLOSSARY_ENTRIES: GlossaryEntry[] = [
     shortId: 'Jenis tanah vulkanik lereng gunung',
     shortEn: 'Volcanic highland soil types',
     descId:
-      'Andosol adalah tanah subur berwarna gelap yang terbentuk dari abu gunung api (seperti lereng Gunung Singgalang) — sangat gembur dan mudah menyerap air, namun rentan tergerus jika jenuh air di lereng curam. Kambisol adalah tanah muda yang mulai berkembang di bawahnya.',
+      `Andosol adalah tanah subur berwarna gelap yang terbentuk dari abu gunung api (seperti lereng ${region.uplandLandmark.id}) — sangat gembur dan mudah menyerap air, namun rentan tergerus jika jenuh air di lereng curam. Kambisol adalah tanah muda yang mulai berkembang di bawahnya.`,
     descEn:
-      'Andosol is porous, dark volcanic ash soil common on mountain slopes like Singgalang — fertile and permeable when vegetated, yet prone to erosion when saturated on steep slopes. Kambisol is moderately developed young soil.',
+      `Andosol is porous, dark volcanic ash soil common on mountain slopes like ${region.uplandLandmark.en} — fertile and permeable when vegetated, yet prone to erosion when saturated on steep slopes. Kambisol is moderately developed young soil.`,
     links: [
       {
         kind: 'article',
@@ -519,9 +543,9 @@ export const GLOSSARY_ENTRIES: GlossaryEntry[] = [
     shortId: 'Istilah alur air & bangunan silang lokal',
     shortEn: 'Local waterway & road-crossing terms',
     descId:
-      'Di Sumatera Barat, "Batang" berarti sungai utama (mis. Batang Ngalai), "Anak Sungai" adalah cabang alur kecil dari lereng, "Bandar/Parit" adalah saluran irigasi/drainase tepi jalan, dan "Gorong-gorong" adalah saluran tertutup di bawah badan jalan.',
+      `Di Sumatera Barat, "Batang" berarti sungai utama (mis. ${primaryRiver}), "Anak Sungai" adalah cabang alur kecil dari lereng, "Bandar/Parit" adalah saluran irigasi/drainase tepi jalan, dan "Gorong-gorong" adalah saluran tertutup di bawah badan jalan.`,
     descEn:
-      'In West Sumatra, "Batang" denotes a main river (e.g. Batang Ngalai), "Anak Sungai" is a tributary stream, "Bandar/Parit" is an open roadside canal or drain, and "Gorong-gorong" is a culvert carrying water beneath a road.',
+      `In West Sumatra, "Batang" denotes a main river (e.g. ${primaryRiver}), "Anak Sungai" is a tributary stream, "Bandar/Parit" is an open roadside canal or drain, and "Gorong-gorong" is a culvert carrying water beneath a road.`,
     links: [
       {
         kind: 'article',
@@ -538,9 +562,9 @@ export const GLOSSARY_ENTRIES: GlossaryEntry[] = [
     shortId: 'Poligon BIG Juni 2026 & batas jorong lokal',
     shortEn: 'BIG June 2026 polygon & community Jorong zones',
     descId:
-      'Garis hijau putus-putus adalah batas resmi Nagari Balingka (kode BIG 13.06.05.2003, luas 29,89 km²). Batas antar Jorong (Subarang, Koto Hilalang, Pahambatan) belum tersedia terbuka secara digital sehingga bertanda "Indikatif" hingga disahkan bersama Wali Nagari di Editor.',
+      `Garis hijau putus-putus adalah batas resmi ${region.name} (${codeTextId}luas ${areaId} km²). Batas antar ${region.subRegionLabel.id}${subRegions ? ` (${subRegions})` : ''} belum tersedia terbuka secara digital sehingga bertanda "Indikatif" hingga disahkan bersama ${region.authorities.localAuthorityShort} di Editor.`,
     descEn:
-      'The dashed green boundary is the official BIG June 2026 Nagari Balingka extent (13.06.05.2003, 29.89 km²). Sub-village Jorong boundaries are not yet openly published and remain marked "Indicative" until verified with local authorities.',
+      `The dashed green boundary is the official BIG June 2026 ${region.name} extent (${codeTextEn}${areaEn} km²). Sub-village ${region.subRegionLabel.en}${subRegions ? ` (${subRegions})` : ''} boundaries are not yet openly published and remain marked "Indicative" until verified with ${region.authorities.localAuthorityShort}.`,
     links: [
       {
         kind: 'article',
@@ -551,3 +575,6 @@ export const GLOSSARY_ENTRIES: GlossaryEntry[] = [
     ]
   }
 ];
+}
+
+export const GLOSSARY_ENTRIES: GlossaryEntry[] = getGlossaryEntries(DEFAULT_REGION);

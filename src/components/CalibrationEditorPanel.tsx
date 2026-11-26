@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { Crosshair, Download, Gauge, Lock, MapPinPlus, Pencil, RotateCcw, SlidersHorizontal, Trash2, Unlock } from 'lucide-react';
+import { useActiveRegion } from '../context/RegionContext';
 import type { CascadeEngine } from '../lib/cascadeEngine';
 import { buildFieldSurveyPriorityCsv, triggerBrowserDownload } from '../lib/scenarioExport';
 import type {
@@ -74,6 +75,7 @@ export function CalibrationEditorPanel({
   onSaveProfile,
   onNotify
 }: CalibrationEditorPanelProps) {
+  const region = useActiveRegion();
   const isEn = lang === 'en';
   const [name, setName] = useState('');
   const [kind, setKind] = useState<CalibrationMarkKind>('hwm');
@@ -277,7 +279,7 @@ export function CalibrationEditorPanel({
           data-testid="download-survey-priority-csv"
           onClick={() => {
             const csv = buildFieldSurveyPriorityCsv(simNetwork);
-            triggerBrowserDownload(csv, 'balingka-field-survey-priority.csv', 'text/csv;charset=utf-8');
+            triggerBrowserDownload(csv, `${region.id}-field-survey-priority.csv`, 'text/csv;charset=utf-8');
             onNotify(
               isEn
                 ? 'Downloaded prioritized culvert & river field survey sheet (CSV).'

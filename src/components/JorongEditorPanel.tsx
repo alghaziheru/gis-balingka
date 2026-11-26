@@ -164,8 +164,8 @@ export function JorongEditorPanel({
 
         <p className="mt-2.5 mb-0 text-[12px] leading-relaxed text-[#434d49]">
           {isEn
-            ? 'Official sub-nagari Jorong boundaries are not yet open digitally. Draft indicative polygons here or import GeoJSON from Wali Nagari Balingka.'
-            : 'Batas resmi antar Jorong belum tersedia digital terbuka. Gambar poligon indikatif atau impor GeoJSON dari Kantor Wali Nagari untuk disahkan bersama.'}
+            ? `Official sub-${region.adminLevelLabel.en.toLowerCase()} ${region.subRegionLabel.en} boundaries are not yet open digitally. Draft indicative polygons here or import GeoJSON from ${region.authorities.localAuthorityShort}.`
+            : `Batas resmi antar ${region.subRegionLabel.id} belum tersedia digital terbuka. Gambar poligon indikatif atau impor GeoJSON dari ${region.authorities.localAuthorityShort} untuk disahkan bersama.`}
         </p>
 
         {editorUnlocked && apiAvailable && (

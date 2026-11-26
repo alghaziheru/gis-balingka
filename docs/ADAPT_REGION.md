@@ -1,8 +1,8 @@
-# Adapting This GIS for Another Desa, Nagari, or Kelurahan
+# Adapting Peta Alur Air for Another Desa, Nagari, or Kelurahan
 
 *Panduan Replikasi Wilayah Lain — untuk Manusia & AI Coding Agent (Cursor, Claude Code, Codex, Antigravity).*
 
-This repository ships pre-configured for **Nagari Balingka** (`29.89 km²`, Kab. Agam, West Sumatra) so it runs immediately after cloning. To deploy it for **your own village / nagari / kelurahan**, follow this guide end-to-end.
+**Peta Alur Air** *(repository `gis-balingka`)* ships with multi-region support in [`regions.config.json`](../regions.config.json) (**Nagari Balingka** `29.89 km²` and **Malalak Timur & Utara** `54.6 km²`, Kab. Agam, West Sumatra) and single-region defaults in [`region.config.json`](../region.config.json) so it runs immediately after cloning. To deploy it for **your own village / nagari / kelurahan**, follow this guide end-to-end.
 
 ---
 

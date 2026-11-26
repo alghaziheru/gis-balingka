@@ -1,12 +1,13 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { BookOpen, BookText, Code2, Database, ExternalLink, PlayCircle, Search, ShieldAlert, X } from 'lucide-react';
+import { APP_BRAND } from '../config/region';
 import {
   buildModelParameterAudit,
   CLIMATE_BASELINE,
   type ClimateBaselineData,
   type ParameterAuditBadge
 } from '../data/climateBaseline';
-import { GLOSSARY_ENTRIES } from '../data/glossary';
+import { getGlossaryEntries } from '../data/glossary';
 import { useActiveRegion, useT } from '../context/RegionContext';
 import type { DatasetMetadata, Language } from '../types/gis';
 
@@ -68,8 +69,9 @@ function InfoDataModalContent({
     { id: 'api', label: t.infoTabApi, Icon: Code2 }
   ];
 
+  const glossaryEntries = useMemo(() => getGlossaryEntries(region, metadata), [region, metadata]);
   const normalizedQuery = glossaryQuery.trim().toLowerCase();
-  const filteredGlossary = GLOSSARY_ENTRIES.filter(entry => {
+  const filteredGlossary = glossaryEntries.filter(entry => {
     if (!normalizedQuery) return true;
     const haystack = [
       entry.termId,
@@ -169,7 +171,7 @@ function InfoDataModalContent({
         <div className="flex items-center justify-between border-b border-[#161c1a]/12 bg-[#fafaf8] px-5 py-4">
           <div>
             <h2 id="info-modal-title" className="m-0 text-[16px] font-extrabold text-[#161c1a]">
-              {isEn ? `About ${region.appTitle.en} & Open Data` : `Tentang ${region.appTitle.id} & Data Terbuka`}
+              {isEn ? `About ${APP_BRAND.name} & Open Data` : `Tentang ${APP_BRAND.name} & Data Terbuka`}
             </h2>
             <p className="mt-0.5 mb-0 text-[13px] text-[#434d49]">
               {isEn

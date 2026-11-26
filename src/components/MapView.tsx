@@ -10,6 +10,8 @@ import {
   type FilterSpecification
 } from 'maplibre-gl';
 import maplibreWorkerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url';
+import { APP_BRAND } from '../config/region';
+import { useActiveRegion } from '../context/RegionContext';
 import { buildFlowCorridors } from '../lib/flowRibbons';
 import { computeRunoffMergeNetwork, haversineMeters, type MergedWaterwayReach } from '../lib/geometry';
 import { registerLocalDemRegion } from '../lib/localTerrainProtocol';
@@ -88,6 +90,7 @@ const INITIAL_VISIBLE_VECTOR_SOURCES = [
 ] as const;
 
 export function MapView(props: MapViewProps) {
+  const region = useActiveRegion();
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   const mapLoadedRef = useRef(false);
@@ -1024,7 +1027,7 @@ export function MapView(props: MapViewProps) {
 
   return (
     <div className="relative h-full w-full">
-      <div ref={containerRef} className="absolute inset-0 h-full w-full" aria-label="Balingka GIS Map" />
+      <div ref={containerRef} className="absolute inset-0 h-full w-full" aria-label={`${APP_BRAND.name} — ${region.name}`} />
       <FlowFilamentOverlay
         active={props.tab === 'sim' && props.simProgress > 0.02 && Boolean(props.cascadeEngine)}
         mapRef={mapRef}

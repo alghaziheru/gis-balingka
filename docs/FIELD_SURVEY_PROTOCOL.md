@@ -1,4 +1,4 @@
-# Field Survey Protocol — Nagari Balingka Hydrology Calibration (Tier 3)
+# Field Survey Protocol — Peta Alur Air Hydrology Calibration (Tier 3)
 
 > **Why this matters:** Adding **10 real culvert/bridge opening measurements**, **10 river cross-sections**, and **3+ High-Water Marks (HWM)** improves hydraulic model reliability far more than complex 2D equations running on unverified geometric assumptions.
 
@@ -14,7 +14,7 @@
 
 ## 2. Priority Targets to Measure First
 
-Download `balingka-field-survey-priority.csv` directly in the app. It ranks the highest-drainage-area unmeasured structures and reaches in Nagari Balingka (highest `upstream_area_km2` first).
+Download `<region-id>-field-survey-priority.csv` (e.g., `nagari-balingka-field-survey-priority.csv`) directly in the app. It ranks the highest-drainage-area unmeasured structures and reaches in the active region (highest `upstream_area_km2` first).
 
 ### A. Culverts & Bridges (Target: Top 10 Crossings)
 At each bridge or road culvert:
