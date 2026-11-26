@@ -332,6 +332,14 @@ export function createAppServer({
         return sendJson(res, 200, { jorongBoundaries: activeStore.getState().jorongBoundaries });
       }
 
+      if (method === 'GET' && pathname === '/api/calibration') {
+        const st = activeStore.getState();
+        return sendJson(res, 200, {
+          calibrationMarks: st.calibrationMarks,
+          calibrationProfile: st.calibrationProfile
+        });
+      }
+
       if (method === 'GET' && pathname === '/api/audit') {
         const limit = Number(url.searchParams.get('limit') || 150);
         return sendJson(res, 200, { logs: activeStore.listAuditLogs(limit) });
@@ -378,6 +386,10 @@ export function createAppServer({
         (method === 'POST' && pathname === '/api/jorong-boundaries') ||
         (method === 'PUT' && pathname.startsWith('/api/jorong-boundaries/')) ||
         (method === 'DELETE' && pathname.startsWith('/api/jorong-boundaries/')) ||
+        (method === 'POST' && pathname === '/api/calibration-marks') ||
+        (method === 'PUT' && pathname.startsWith('/api/calibration-marks/')) ||
+        (method === 'DELETE' && pathname.startsWith('/api/calibration-marks/')) ||
+        (method === 'PUT' && pathname === '/api/calibration-profile') ||
         (method === 'POST' && pathname === '/api/dem-segments/suppress') ||
         (method === 'DELETE' && pathname.startsWith('/api/dem-segments/')) ||
         (method === 'POST' && /^\/api\/audit\/\d+\/revert$/.test(pathname)) ||
@@ -439,6 +451,30 @@ export function createAppServer({
       if (jbMatch && method === 'DELETE') {
         const body = await readJsonBody(req, 16 * 1024).catch(() => ({}));
         const result = activeStore.deleteJorongBoundary(jbMatch[1], body);
+        return sendJson(res, 200, result);
+      }
+
+      if (method === 'POST' && pathname === '/api/calibration-marks') {
+        const body = await readJsonBody(req, 64 * 1024);
+        const result = activeStore.createCalibrationMark(body);
+        return sendJson(res, 201, result);
+      }
+
+      const calMatch = pathname.match(/^\/api\/calibration-marks\/([^/]+)$/);
+      if (calMatch && method === 'PUT') {
+        const body = await readJsonBody(req, 64 * 1024);
+        const result = activeStore.updateCalibrationMark(calMatch[1], body);
+        return sendJson(res, 200, result);
+      }
+      if (calMatch && method === 'DELETE') {
+        const body = await readJsonBody(req, 16 * 1024).catch(() => ({}));
+        const result = activeStore.deleteCalibrationMark(calMatch[1], body);
+        return sendJson(res, 200, result);
+      }
+
+      if (method === 'PUT' && pathname === '/api/calibration-profile') {
+        const body = await readJsonBody(req, 32 * 1024);
+        const result = activeStore.saveCalibrationProfile(body);
         return sendJson(res, 200, result);
       }
 

@@ -34,6 +34,10 @@ If you are an **AI coding agent** asked to adapt this repository for a new villa
    - Set a unique `"id"` (e.g., `"desa-sukamaju"` — **must not** stay `"nagari-balingka"`).
    - Fill `name`, `shortName`, `adminLevelLabel`, `subRegionLabel`, `district`, `regency`, `province`, `appTitle`, `bbox`, `defaultView`, `dataCenter`, `cameraPresets`, `subRegionSuggestions`, `drainageFocus`, `authorities`, and `repositoryUrl`.
    - Set `regionalOverlays.enabled: false`, `regionalOverlays.rbiAvailable: false`, and `regionalOverlays.sentinelChangeAvailable: false` (unless you provide custom regional overlays or extracted BIG RBI 50K layers — if you have BIG RBI 50K, set `rbiAvailable: true`).
+   - Configure `"hydrology"` in `region.config.json`:
+     - `"soilProfile"`: choose from `"volcanic_andosol"` (humic volcanic highlands), `"cambisol_loam"` (general Indonesian hillslopes, recommended default), `"alluvial_clay"` (lowland river plains), or `"karst_limestone"` (porous limestone).
+     - `"climateBiasFactor"`: `1.0` (default) or a local ratio if you cross-check ERA5-Land against nearby BMKG station summaries.
+     - Note: `pnpm run prepare-data` automatically fetches and caches 41 years (`1985–2025`) of Open-Meteo ERA5-Land daily precipitation at your `dataCenter`, computing local SNI 2415:2016 return periods and Mononobe IDF slider bounds into `public/data/climate-baseline.json`.
 2. **Clean stale Nagari Balingka artifacts:**
    ```bash
    pnpm run reset-region

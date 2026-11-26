@@ -116,6 +116,8 @@ export function MapView(props: MapViewProps) {
   controlRefProp.current = props.controlRef;
   const tabRef = useRef(props.tab);
   tabRef.current = props.tab;
+  const basemapRef = useRef(props.basemap);
+  basemapRef.current = props.basemap;
   const simProgressRef = useRef(props.simProgress);
   simProgressRef.current = props.simProgress;
   const cascadeEngineRef = useRef(props.cascadeEngine);
@@ -125,6 +127,7 @@ export function MapView(props: MapViewProps) {
   const [poolGlintPoints, setPoolGlintPoints] = useState<[number, number][]>([]);
   const lastSkyKeyRef = useRef('');
   const landslideCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const agreementCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const lastCascadeTsRef = useRef(0);
   const lastCascadeKeyRef = useRef('');
 
@@ -138,13 +141,15 @@ export function MapView(props: MapViewProps) {
         props.datasets.agamRbiRivers,
         {
           includeVerified: props.layers.verifiedWaterways,
-          includeRbi: props.layers.agamRbiRivers
+          includeRbi: props.layers.agamRbiRivers,
+          nagariBoundary: props.datasets.nagariBoundary
         }
       ),
     [
       props.verifiedWaterways,
       props.datasets.flowPaths,
       props.datasets.agamRbiRivers,
+      props.datasets.nagariBoundary,
       props.suppressedDemIds,
       props.demClient,
       props.layers.verifiedWaterways,
@@ -190,6 +195,8 @@ export function MapView(props: MapViewProps) {
   onOpenUnlockRef.current = props.onOpenUnlock;
   const onRedrawDemRef = useRef(props.onRedrawDemSegment);
   onRedrawDemRef.current = props.onRedrawDemSegment;
+  const onSetStructureBlockageOverrideRef = useRef(props.onSetStructureBlockageOverride);
+  onSetStructureBlockageOverrideRef.current = props.onSetStructureBlockageOverride;
   const onSnapFeedbackRef = useRef(props.onSnapFeedback);
   onSnapFeedbackRef.current = props.onSnapFeedback;
   const animPathsRef = useRef<GeoFeature[]>([]);
@@ -198,6 +205,7 @@ export function MapView(props: MapViewProps) {
   const mergingFlowIdsRef = useRef<Set<string>>(new Set());
   const particlesClearedRef = useRef(true);
   const isDraggingVertexRef = useRef(false);
+  const isRaining = props.tab === 'sim' && props.simProgress > 0.02;
   const onLoadStateChangeRef = useRef(props.onLoadStateChange);
   onLoadStateChangeRef.current = props.onLoadStateChange;
   const activeBasemapRef = useRef(props.basemap);
@@ -287,6 +295,7 @@ export function MapView(props: MapViewProps) {
       onPromoteDemRef,
       onSuppressDemRef,
       onPromoteRbiRef,
+      onSetStructureBlockageOverrideRef,
       onSnapFeedbackRef
     };
 
@@ -463,7 +472,7 @@ export function MapView(props: MapViewProps) {
   // Sync surfaces, smooth overlays, filters, and terrain exaggeration
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !mapLoadedRef.current) return;
+    if (!map || !mapLoadedRef.current || !mapReady || !map.getLayer('basemap-sat')) return;
 
     const vis = (on: boolean) => (on ? 'visible' : 'none');
 
@@ -591,8 +600,6 @@ export function MapView(props: MapViewProps) {
       lastTerrainExagRef.current = nextExag;
     }
 
-    const isRaining = props.tab === 'sim' && props.simProgress > 0.02;
-
     map.setLayoutProperty('nagari-boundary-casing', 'visibility', vis(props.layers.das));
     map.setLayoutProperty('nagari-boundary-line', 'visibility', vis(props.layers.das));
     if (map.getLayer('sub-boundaries-casing')) {
@@ -604,9 +611,10 @@ export function MapView(props: MapViewProps) {
     map.setLayoutProperty('jorong-fill', 'visibility', vis(props.layers.das));
     map.setLayoutProperty('jorong-casing', 'visibility', vis(props.layers.das));
     map.setLayoutProperty('jorong-line', 'visibility', vis(props.layers.das));
-    map.setLayoutProperty('settlements-residential-fill', 'visibility', vis(props.layers.settlements && !isRaining));
-    map.setLayoutProperty('settlements-buildings-fill', 'visibility', vis(props.layers.settlements && !isRaining));
-    map.setLayoutProperty('settlements-buildings-line', 'visibility', vis(props.layers.settlements && !isRaining));
+    const showSettlements = props.layers.settlements && props.tab !== 'sim';
+    map.setLayoutProperty('settlements-residential-fill', 'visibility', vis(showSettlements));
+    map.setLayoutProperty('settlements-buildings-fill', 'visibility', vis(showSettlements));
+    map.setLayoutProperty('settlements-buildings-line', 'visibility', vis(showSettlements));
     map.setLayoutProperty('landcover-overlay', 'visibility', vis(props.layers.landCover));
     map.setLayoutProperty('scour-change-overlay', 'visibility', vis(props.layers.scourChange));
     map.setLayoutProperty('agam-landslide-fill', 'visibility', vis(props.layers.agamLandslide));
@@ -683,8 +691,8 @@ export function MapView(props: MapViewProps) {
       );
     }
 
-    const maxTier = props.tab === 'sim' ? 0 : props.flowDensity;
-    const flowVis = props.tab !== 'sim' && maxTier > 0;
+    const maxTier = props.flowDensity;
+    const flowVis = maxTier > 0;
     const flowAnimActive = props.tab !== 'sim' && props.flowDensity > 0;
     flowAnimActiveRef.current = flowAnimActive;
 
@@ -759,7 +767,7 @@ export function MapView(props: MapViewProps) {
       map.setPaintProperty(
         'verified-waterways-merged-glow',
         'line-opacity',
-        isRaining ? Math.min(0.64, 0.34 + props.simProgress * 0.24 + (props.simRain / 150) * 0.1) : 0.42
+        isRaining ? 0.56 : 0.42
       );
     } else {
       mergedReachesRef.current = [];
@@ -781,23 +789,20 @@ export function MapView(props: MapViewProps) {
       })
       .slice(0, 60);
 
-    const cleanupCascade = syncSimulationOverlays({
-      map,
-      isRaining,
-      datasets: props.datasets,
-      layers: props.layers,
-      simRain: props.simRain,
-      simDurationMin: props.simDurationMin,
-      simProgress: props.simProgress,
-      simScenario: props.simScenario,
-      cascadeEngine: props.cascadeEngine,
-      cascadeParams: props.cascadeParams,
-      verifiedWaterways: props.verifiedWaterways,
-      lastCascadeKeyRef,
-      lastCascadeTsRef,
-      landslideCanvasRef,
-      setPoolGlintPoints
-    });
+    const calSrc = map.getSource('src-calibration-marks') as GeoJSONSource | undefined;
+    if (calSrc) {
+      calSrc.setData(
+        asGeoInput({
+          type: 'FeatureCollection',
+          features: props.calibrationMarks as unknown as GeoFeature[]
+        })
+      );
+    }
+    const showCalMarks =
+      props.calibrationMarks.length > 0 && (props.tab === 'editor' || (props.tab === 'sim' && props.viewMode === 'detail'));
+    if (map.getLayer('calibration-marks-circle')) {
+      map.setLayoutProperty('calibration-marks-circle', 'visibility', vis(showCalMarks));
+    }
 
     // Draft Crossings (filtered to hide points already covered by verified structures) & Hazard/Evac Points
     const draftSrc = map.getSource('src-draft-pts') as GeoJSONSource | undefined;
@@ -854,12 +859,9 @@ export function MapView(props: MapViewProps) {
       }
       map.setFilter('draft-points', ['any', ...anyClauses] as FilterSpecification);
     }
-
     if (props.editorHydrated) {
       hydratedSyncedRef.current = true;
     }
-
-    return cleanupCascade;
   }, [
     mapReady,
     props.editorHydrated,
@@ -869,18 +871,15 @@ export function MapView(props: MapViewProps) {
     props.layers,
     props.flowDensity,
     props.tab,
-    props.simRain,
-    props.simDurationMin,
-    props.simProgress,
-    props.simScenario,
+    isRaining,
     props.lang,
+    props.viewMode,
     props.rainAnimEnabled,
-    props.cascadeEngine,
-    props.cascadeParams,
     props.drainFilter,
     props.verifiedWaterways,
     props.verifiedStructures,
     props.jorongBoundaries,
+    props.calibrationMarks,
     props.datasets.drainageDraft,
     props.datasets.flowPaths,
     props.suppressedDemIds
@@ -888,20 +887,60 @@ export function MapView(props: MapViewProps) {
 
   useEffect(() => {
     const map = mapRef.current;
+    if (!map || !mapLoadedRef.current || !mapReady || !map.getLayer('basemap-sat')) return;
+    return syncSimulationOverlays({
+      map,
+      tab: props.tab,
+      isRaining,
+      simMapViewMode: props.simMapViewMode,
+      datasets: props.datasets,
+      layers: props.layers,
+      simRain: props.simRain,
+      simDurationMin: props.simDurationMin,
+      simProgress: props.simProgress,
+      simScenario: props.simScenario,
+      cascadeEngine: props.cascadeEngine,
+      cascadeParams: props.cascadeParams,
+      verifiedWaterways: props.verifiedWaterways,
+      lastCascadeKeyRef,
+      lastCascadeTsRef,
+      landslideCanvasRef,
+      agreementCanvasRef,
+      setPoolGlintPoints
+    });
+  }, [
+    mapReady,
+    props.tab,
+    isRaining,
+    props.simMapViewMode,
+    props.datasets,
+    props.layers,
+    props.simRain,
+    props.simDurationMin,
+    props.simProgress,
+    props.simScenario,
+    props.cascadeEngine,
+    props.cascadeParams,
+    props.verifiedWaterways
+  ]);
+
+  const quantizedSkyProgress = Math.round(props.simProgress * 10) / 10;
+  useEffect(() => {
+    const map = mapRef.current;
     if (!map || !mapLoadedRef.current) return;
     syncStormSky(map, lastSkyKeyRef, {
       tab: props.tab,
       rainAnimEnabled: props.rainAnimEnabled,
-      simProgress: props.simProgress,
+      simProgress: quantizedSkyProgress,
       simRain: props.simRain
     });
-  }, [mapReady, props.tab, props.rainAnimEnabled, props.simProgress, props.simRain]);
+  }, [mapReady, props.tab, props.rainAnimEnabled, quantizedSkyProgress, props.simRain]);
 
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !mapLoadedRef.current) return;
-    applyBasemapContrastPalette(map, props.basemap, props.tab, props.simProgress);
-  }, [mapReady, props.basemap, props.tab, props.simProgress]);
+    applyBasemapContrastPalette(map, props.basemap, props.tab, isRaining ? 1 : 0);
+  }, [mapReady, props.basemap, props.tab, isRaining]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -991,6 +1030,7 @@ export function MapView(props: MapViewProps) {
         mapRef={mapRef}
         corridors={corridors}
         glintPoints={poolGlintPoints}
+        nagariBoundary={props.datasets.nagariBoundary}
         rainMmHr={props.simRain}
         durationMin={props.simDurationMin}
         progress={props.simProgress}

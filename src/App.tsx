@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type SetStateAction } from 'react';
 import {
   ChevronDown,
   ChevronLeft,
@@ -19,6 +19,7 @@ import { InfoDataModal, type InfoModalTab } from './components/InfoDataModal';
 import { MapLoadingOverlay } from './components/MapLoadingOverlay';
 import { MapView, type FlyRequest, type MapCameraState, type MapControlHandle, type MapLoadState } from './components/MapView';
 import { RainOverlay } from './components/RainOverlay';
+import { SimulationDisclaimerModal } from './components/SimulationDisclaimerModal';
 import { SidebarSkeleton } from './components/SidebarSkeleton';
 import { SimulationTab } from './components/SimulationTab';
 import { TelemetryDock } from './components/TelemetryDock';
@@ -73,6 +74,8 @@ const DEFAULT_LAYERS: LayerToggles = {
 };
 
 const DEFAULT_FLOW_DENSITY = 1;
+const SIM_DISCLAIMER_SESSION_KEY = 'balingka_sim_disclaimer_session_v1';
+const SIM_DISCLAIMER_HIDE_KEY = 'balingka_sim_disclaimer_hide_v1';
 
 function makeInitialMapLoadState(basemap: BasemapId): MapLoadState {
   return {
@@ -126,9 +129,17 @@ export function App() {
   const [exaggeration, setExaggeration] = useState(1.35);
   const [flowDensity, setFlowDensity] = useState(DEFAULT_FLOW_DENSITY);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const preSimBasemapRef = useRef<BasemapId>('sat');
+  const tabRef = useRef<TabId>(tab);
+  tabRef.current = tab;
+  const basemapRef = useRef<BasemapId>(basemap);
+  basemapRef.current = basemap;
   const [mobileSheetMode, setMobileSheetMode] = useState<'peek' | 'half' | 'full'>('peek');
   const [infoModalTab, setInfoModalTab] = useState<InfoModalTab | null>(null);
   const [feedbackOpen, setFeedbackOpen] = useState(false);
+  const [simDisclaimerOpen, setSimDisclaimerOpen] = useState(false);
+  const prevTabBeforeSimRef = useRef<TabId>('terrain');
+  const simPauseRef = useRef<() => void>(() => {});
   const [layers, setLayers] = useState<LayerToggles>(DEFAULT_LAYERS);
 
   const [activeTool, setActiveTool] = useState<ActiveTool>(null);
@@ -158,8 +169,6 @@ export function App() {
   const [toast, setToast] = useState<string | null>(null);
   const toastTimerRef = useRef<number | null>(null);
   const [mapLoad, setMapLoad] = useState<MapLoadState>(() => makeInitialMapLoadState(basemap));
-  const basemapRef = useRef(basemap);
-  basemapRef.current = basemap;
 
   const t = useMemo(() => getTranslations(activeRegion)[lang], [activeRegion, lang]);
 
@@ -194,6 +203,7 @@ export function App() {
     metadata,
     demClient,
     simFields,
+    climateBaseline,
     loadError,
     datasetProgress,
     retryLoad,
@@ -216,11 +226,35 @@ export function App() {
     }
   }, [initialTelemetry]);
 
-  const sim = useSimulationController({
-    simFields,
-    settlements: datasets?.settlements,
-    metadata
-  });
+  const handleTabChange = useCallback(
+    (nextTabOrUpdater: SetStateAction<TabId>) => {
+      const prevTab = tabRef.current;
+      const nextTab = typeof nextTabOrUpdater === 'function' ? nextTabOrUpdater(prevTab) : nextTabOrUpdater;
+      if (nextTab === prevTab) return;
+      if (prevTab !== 'sim' && nextTab === 'sim') {
+        preSimBasemapRef.current = basemapRef.current;
+        setBasemap('relief');
+        let seen = false;
+        try {
+          seen =
+            window.sessionStorage.getItem(SIM_DISCLAIMER_SESSION_KEY) === '1' ||
+            window.localStorage.getItem(SIM_DISCLAIMER_HIDE_KEY) === '1';
+        } catch {
+          seen = false;
+        }
+        if (!seen) {
+          prevTabBeforeSimRef.current = prevTab;
+          simPauseRef.current();
+          setSimDisclaimerOpen(true);
+        }
+      } else if (prevTab === 'sim' && nextTab !== 'sim') {
+        const saved = preSimBasemapRef.current;
+        setBasemap(viewMode === 'simple' && saved !== 'sat' && saved !== 'osm' ? 'sat' : saved);
+      }
+      setTab(nextTab);
+    },
+    [viewMode]
+  );
 
   const editor = useEditorActions({
     region: activeRegion,
@@ -231,11 +265,22 @@ export function App() {
     setActiveTool,
     setDrawVertices,
     setViewMode,
-    setTab,
+    setTab: handleTabChange,
     notify,
     flyTo,
     reloadHydrologyData
   });
+
+  const sim = useSimulationController({
+    simFields,
+    settlements: datasets?.settlements,
+    metadata,
+    climateBaseline,
+    region: activeRegion,
+    calibrationMarks: editor.calibrationMarks,
+    calibrationProfile: editor.calibrationProfile
+  });
+  simPauseRef.current = () => sim.setSimPlaying(false);
 
   const handleSelectRegion = useCallback(
     (nextId: string) => {
@@ -255,6 +300,7 @@ export function App() {
       setActiveTool(null);
       setDrawVertices([]);
       setDrainFilter('all');
+      setSimDisclaimerOpen(false);
       sim.resetSim();
       const preset0 = nextRegion.cameraPresets[0];
       setMapCamera(prev => ({
@@ -321,11 +367,15 @@ export function App() {
   const handleChangeViewMode = (next: ViewMode) => {
     setViewMode(next);
     if (next === 'simple') {
-      if (basemap !== 'sat' && basemap !== 'osm') {
+      if (tab === 'sim') {
+        if (basemap !== 'relief' && basemap !== 'elev') {
+          setBasemap('relief');
+        }
+      } else if (basemap !== 'sat' && basemap !== 'osm') {
         setBasemap('sat');
       }
       if (tab === 'editor') {
-        setTab('terrain');
+        handleTabChange('terrain');
       }
       sim.resetForSimpleMode();
       editor.resetEditorForSimpleMode();
@@ -335,6 +385,24 @@ export function App() {
       }
     }
   };
+
+  const allowedSimBasemaps: BasemapId[] = useMemo(
+    () => (viewMode === 'detail' ? ['relief', 'elev', 'slope'] : ['relief', 'elev']),
+    [viewMode]
+  );
+
+  const effectiveBasemap: BasemapId =
+    tab === 'sim' ? (allowedSimBasemaps.includes(basemap) ? basemap : 'relief') : basemap;
+
+  const handleChangeBasemap = useCallback(
+    (next: BasemapId) => {
+      if (tab === 'sim' && !allowedSimBasemaps.includes(next)) {
+        return;
+      }
+      setBasemap(next);
+    },
+    [tab, allowedSimBasemaps]
+  );
 
   const handleMapClick = (lngLat: [number, number]) => {
     if (!demClient) return;
@@ -363,6 +431,27 @@ export function App() {
         source: 'manual',
         sourceRef: null,
         sizeNote: '',
+        openingWidthM: null,
+        openingHeightM: null,
+        defaultBlockagePct: null,
+        notes: '',
+        coordinates: lngLat
+      });
+      setActiveTool(null);
+    } else if (activeTool === 'placeStormCore') {
+      sim.setStormCore(lngLat);
+      sim.setRainPattern('storm_core');
+      setActiveTool(null);
+      notify(lang === 'en' ? 'Localized storm core placed (~2.4 km).' : 'Pusat badai lokal diletakkan (~2,4 km).');
+    } else if (activeTool === 'placeCalibrationMark') {
+      editor.setEditingCalibrationMark({
+        id: null,
+        name: '',
+        kind: 'hwm',
+        observedDepthM: 0.8,
+        rainMmHr: sim.simRain,
+        durationMin: sim.simDurationMin,
+        antecedent5dMm: sim.antecedent5dMm,
         notes: '',
         coordinates: lngLat
       });
@@ -390,6 +479,8 @@ export function App() {
     if (activeTool === 'redrawWaterway') return t.bannerRedrawWaterway;
     if (activeTool === 'placeStructure') return t.bannerPlaceStructure;
     if (activeTool === 'drawJorong') return t.bannerDrawJorong;
+    if (activeTool === 'placeStormCore') return t.bannerPlaceStormCore;
+    if (activeTool === 'placeCalibrationMark') return t.bannerPlaceCalibrationMark;
     return '';
   })();
 
@@ -413,11 +504,14 @@ export function App() {
         ? {
             ...layers,
             verifiedWaterways: sim.simShowVerifiedWaterways,
-            agamRbiRivers: sim.simShowRbiRivers
+            agamRbiRivers: sim.simShowRbiRivers,
+            osmContext: sim.simShowOsmRoads
           }
         : layers,
-    [tab, layers, sim.simShowVerifiedWaterways, sim.simShowRbiRivers]
+    [tab, layers, sim.simShowVerifiedWaterways, sim.simShowRbiRivers, sim.simShowOsmRoads]
   );
+
+  const effectiveFlowDensity = tab === 'sim' ? (sim.simShowDemFlows ? 1 : 0) : flowDensity;
 
   const mobileHeightClass =
     mobileSheetMode === 'full'
@@ -440,16 +534,17 @@ export function App() {
           viewMode={viewMode}
           tab={tab}
           is3D={is3D}
-          basemap={basemap}
+          basemap={effectiveBasemap}
           exaggeration={exaggeration}
           layers={effectiveLayers}
-          flowDensity={flowDensity}
+          flowDensity={effectiveFlowDensity}
           activeTool={activeTool}
           simRain={sim.simRain}
           simDurationMin={sim.simDurationMin}
           simProgress={sim.simProgress}
           simScenario={sim.drainCondition === 'cleared' ? 'cleared' : 'clogged'}
           rainAnimEnabled={sim.rainAnimEnabled}
+          simMapViewMode={sim.simMapViewMode}
           cascadeEngine={sim.cascadeEngine}
           cascadeParams={sim.cascadeParams}
           drainFilter={drainFilter}
@@ -459,6 +554,7 @@ export function App() {
           verifiedWaterways={editor.verifiedWaterways}
           verifiedStructures={editor.verifiedStructures}
           jorongBoundaries={editor.jorongBoundaries}
+          calibrationMarks={editor.calibrationMarks}
           suppressedDemIds={editor.suppressedDemIds}
           dataVersion={editor.dataVersion}
           editorHydrated={editor.editorHydrated}
@@ -476,6 +572,7 @@ export function App() {
           onOpenUnlock={() => editor.setUnlockModalOpen(true)}
           onSelectWaterway={editor.selectWaterwayFromMap}
           onSelectStructure={editor.selectStructureFromMap}
+          onSetStructureBlockageOverride={sim.setStructureBlockageOverride}
           onVerifyCrossing={editor.verifyCrossingFromMap}
           onMoveEditingStructure={coords => {
             editor.setEditingStructure(prev => (prev ? { ...prev, coordinates: coords } : prev));
@@ -501,6 +598,8 @@ export function App() {
         intensityMmHr={sim.simRain}
         rainPattern={sim.rainPattern}
         uplandBbox={sim.uplandBbox}
+        stormCore={sim.stormCore}
+        isRecession={sim.cascadeKpis.isRecession}
         mapControlRef={mapControlRef}
       />
 
@@ -595,12 +694,14 @@ export function App() {
                       setMobileSheetMode(m => (m === 'half' ? 'full' : 'half'));
                     }
                   }
-                  setTab(id);
+                  handleTabChange(id);
                   if (activeTool) {
                     setActiveTool(null);
                     setDrawVertices([]);
                   }
-                  if (id !== 'sim') sim.setSimPlaying(false);
+                  if (id !== 'sim') {
+                    sim.setSimPlaying(false);
+                  }
                 }}
                 className={`flex min-h-[44px] flex-col items-center justify-center gap-0.5 rounded-lg py-1.5 text-center text-[12px] leading-tight font-bold transition ${
                   active
@@ -687,15 +788,31 @@ export function App() {
               durationMin={sim.simDurationMin}
               progress={sim.simProgress}
               soilMoisture={sim.soilMoisture}
+              antecedent5dMm={sim.antecedent5dMm}
               rainPattern={sim.rainPattern}
               drainCondition={sim.drainCondition}
+              culvertBlockagePct={sim.culvertBlockagePct}
+              structureBlockageOverrides={sim.structureBlockageOverrides}
               forestScenario={sim.forestScenario}
+              hyetograph={sim.hyetograph}
+              orographicPctPerKm={sim.orographicPctPerKm}
+              stormCore={sim.stormCore}
+              debrisCoupling={sim.debrisCoupling}
+              simMapViewMode={sim.simMapViewMode}
+              isPlacingStormCore={activeTool === 'placeStormCore'}
               forestActualPct={metadata?.landCoverStats?.forestPct ?? 74}
               rainAnimEnabled={sim.rainAnimEnabled}
               showVerifiedWaterways={sim.simShowVerifiedWaterways}
               showRbiRivers={sim.simShowRbiRivers}
+              showOsmRoads={sim.simShowOsmRoads}
+              showDemFlows={sim.simShowDemFlows}
               verifiedIssueCount={editor.verifiedIssueCount}
               verifiedWaterways={editor.verifiedWaterways}
+              simNetwork={simFields?.network ?? null}
+              cascadeParams={sim.cascadeParams}
+              routedNominal={sim.cascadeEngine?.getLastRoutedNominal() ?? null}
+              hasCalibrationProfile={Boolean(editor.calibrationProfile)}
+              climateBaseline={climateBaseline}
               demClient={demClient}
               agamStats={metadata?.agamStats}
               kpis={sim.cascadeKpis}
@@ -705,13 +822,30 @@ export function App() {
               onChangeRain={sim.setSimRain}
               onChangeDuration={sim.setSimDurationMin}
               onChangeSoilMoisture={sim.setSoilMoisture}
+              onChangeAntecedent5dMm={sim.setAntecedent5dMm}
               onChangeRainPattern={sim.setRainPattern}
               onChangeDrainCondition={sim.setDrainCondition}
+              onChangeCulvertBlockagePct={sim.setCulvertBlockagePct}
+              onClearStructureBlockageOverrides={sim.clearStructureBlockageOverrides}
               onChangeForestScenario={sim.setForestScenario}
+              onChangeHyetograph={sim.setHyetograph}
+              onChangeOrographicPctPerKm={sim.setOrographicPctPerKm}
+              onTogglePlaceStormCore={() =>
+                setActiveTool(prev => (prev === 'placeStormCore' ? null : 'placeStormCore'))
+              }
+              onClearStormCore={() => {
+                sim.setStormCore(null);
+                if (sim.rainPattern === 'storm_core') sim.setRainPattern('uniform');
+              }}
+              onChangeDebrisCoupling={sim.setDebrisCoupling}
+              onChangeSimMapViewMode={sim.setSimMapViewMode}
               onApplyPreset={preset => sim.applyPreset(preset, viewMode)}
               onToggleRainAnim={sim.setRainAnimEnabled}
               onToggleVerifiedWaterways={sim.setSimShowVerifiedWaterways}
               onToggleRbiRivers={sim.setSimShowRbiRivers}
+              onToggleOsmRoads={sim.setSimShowOsmRoads}
+              onToggleDemFlows={sim.setSimShowDemFlows}
+              onOpenMethodology={() => setInfoModalTab('method')}
             />
           )}
 
@@ -757,10 +891,16 @@ export function App() {
               verifiedWaterways={editor.verifiedWaterways}
               verifiedStructures={editor.verifiedStructures}
               jorongBoundaries={editor.jorongBoundaries}
+              calibrationMarks={editor.calibrationMarks}
+              calibrationProfile={editor.calibrationProfile}
+              validationMetrics={sim.cascadeKpis.validation}
+              cascadeEngine={sim.cascadeEngine}
+              simNetwork={simFields?.network ?? null}
               suppressedDem={editor.suppressedDem}
               editingWaterway={editor.editingWaterway}
               editingStructure={editor.editingStructure}
               editingJorong={editor.editingJorong}
+              editingCalibrationMark={editor.editingCalibrationMark}
               hydroStatus={editor.hydroStatus}
               recomputingHydro={editor.recomputingHydro}
               auditLogs={editor.auditLogs}
@@ -789,33 +929,39 @@ export function App() {
       <TopHud
         lang={lang}
         viewMode={viewMode}
+        tab={tab}
         is3D={is3D}
-        basemap={basemap}
+        basemap={effectiveBasemap}
         onChangeViewMode={handleChangeViewMode}
         onToggle3D={setIs3D}
-        onChangeBasemap={setBasemap}
+        onChangeBasemap={handleChangeBasemap}
         onChangeLang={setLang}
         onOpenFeedback={() => setFeedbackOpen(true)}
         onOpenInfo={() => setInfoModalTab('guide')}
       >
-        {tab === 'sim' && sim.rainAnimEnabled && sim.simProgress > 0.01 && sim.rainPattern === 'upland' && (
-          <div
-            data-testid="upland-rain-pill"
-            className="surface-panel pointer-events-none relative z-10 inline-flex items-center gap-2 rounded-full px-3.5 py-1.5 text-[12px] leading-none font-bold text-[#0369a1] max-md:hidden"
-          >
-            <CloudRain className="h-3.5 w-3.5 shrink-0" />
-            <span>{t.uplandRainPill}</span>
-          </div>
-        )}
+        {tab === 'sim' &&
+          sim.rainAnimEnabled &&
+          sim.simProgress > 0.01 &&
+          !sim.cascadeKpis.isRecession &&
+          (sim.rainPattern === 'upland' || (sim.rainPattern === 'storm_core' && Boolean(sim.stormCore))) && (
+            <div
+              data-testid="upland-rain-pill"
+              className="surface-panel pointer-events-none relative z-10 inline-flex items-center gap-2 rounded-full px-3.5 py-1.5 text-[12px] leading-none font-bold text-[#0369a1] max-md:hidden"
+            >
+              <CloudRain className="h-3.5 w-3.5 shrink-0" />
+              <span>{sim.rainPattern === 'storm_core' ? t.stormCoreRainPill : t.uplandRainPill}</span>
+            </div>
+          )}
 
         <ActiveMapLegend
           lang={lang}
           viewMode={viewMode}
           tab={tab}
-          basemap={basemap}
+          basemap={effectiveBasemap}
           layers={effectiveLayers}
-          flowDensity={flowDensity}
+          flowDensity={effectiveFlowDensity}
           simProgress={sim.simProgress}
+          simMapViewMode={sim.simMapViewMode}
           drainFilter={drainFilter}
           elevRange={metadata ? [metadata.minElevM, metadata.maxElevM] : undefined}
           landCoverStats={metadata?.landCoverStats}
@@ -870,9 +1016,9 @@ export function App() {
         lang={lang}
         viewMode={viewMode}
         tab={tab}
-        basemap={basemap}
+        basemap={effectiveBasemap}
         layers={effectiveLayers}
-        flowDensity={flowDensity}
+        flowDensity={effectiveFlowDensity}
         simProgress={sim.simProgress}
         drainFilter={drainFilter}
         elevRange={metadata ? [metadata.minElevM, metadata.maxElevM] : undefined}
@@ -884,6 +1030,8 @@ export function App() {
         onToggleLayer={(key, val) => setLayers(prev => ({ ...prev, [key]: val }))}
         onToggleSimVerifiedWaterways={sim.setSimShowVerifiedWaterways}
         onToggleSimRbiRivers={sim.setSimShowRbiRivers}
+        onToggleSimOsmRoads={sim.setSimShowOsmRoads}
+        onToggleSimDemFlows={sim.setSimShowDemFlows}
         onChangeFlowDensity={setFlowDensity}
         onZoomIn={() => mapControlRef.current?.zoomIn()}
         onZoomOut={() => mapControlRef.current?.zoomOut()}
@@ -917,11 +1065,40 @@ export function App() {
         onClose={() => setFeedbackOpen(false)}
       />
 
+      <SimulationDisclaimerModal
+        open={simDisclaimerOpen}
+        lang={lang}
+        climateBaseline={climateBaseline}
+        onConfirm={dontShowAgain => {
+          try {
+            window.sessionStorage.setItem(SIM_DISCLAIMER_SESSION_KEY, '1');
+            if (dontShowAgain) window.localStorage.setItem(SIM_DISCLAIMER_HIDE_KEY, '1');
+          } catch {
+            // ignore storage errors
+          }
+          setSimDisclaimerOpen(false);
+        }}
+        onCancel={() => {
+          setSimDisclaimerOpen(false);
+          handleTabChange(prevTabBeforeSimRef.current);
+        }}
+        onOpenSources={() => {
+          try {
+            window.sessionStorage.setItem(SIM_DISCLAIMER_SESSION_KEY, '1');
+          } catch {
+            // ignore storage errors
+          }
+          setSimDisclaimerOpen(false);
+          setInfoModalTab('method');
+        }}
+      />
+
       <InfoDataModal
         open={infoModalTab !== null}
         initialTab={infoModalTab ?? 'guide'}
         lang={lang}
         metadata={metadata}
+        climateBaseline={climateBaseline}
         verifiedCount={editor.verifiedWaterways.length}
         onClose={() => setInfoModalTab(null)}
       />

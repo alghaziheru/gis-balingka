@@ -1,6 +1,9 @@
 import { DEFAULT_REGION_ID, REGION } from '../config/region';
 import type {
   AuditLogEntry,
+  CalibrationMarkFeature,
+  CalibrationMarkKind,
+  CalibrationProfile,
   CitizenSuggestion,
   DrainageStatus,
   EditorStatus,
@@ -119,6 +122,8 @@ export async function fetchStaticVerifiedSeed(
   waterways: VerifiedWaterwayFeature[];
   structures: VerifiedStructureFeature[];
   suppressedDem: SuppressedDemSegment[];
+  calibrationMarks: CalibrationMarkFeature[];
+  calibrationProfile: CalibrationProfile | null;
 }> {
   const base = dataBasePath.replace(/\/+$/, '');
   const fetchJson = async <T>(url: string): Promise<T | null> => {
@@ -131,10 +136,12 @@ export async function fetchStaticVerifiedSeed(
     }
   };
 
-  const [wwFc, stFc, supArr] = await Promise.all([
+  const [wwFc, stFc, supArr, calFc, calProf] = await Promise.all([
     fetchJson<{ features?: VerifiedWaterwayFeature[] }>(`${base}/verified-waterways.geojson`),
     fetchJson<{ features?: VerifiedStructureFeature[] }>(`${base}/verified-structures.geojson`),
-    fetchJson<SuppressedDemSegment[]>(`${base}/suppressed-dem.json`)
+    fetchJson<SuppressedDemSegment[]>(`${base}/suppressed-dem.json`),
+    fetchJson<{ features?: CalibrationMarkFeature[] }>(`${base}/calibration-marks.geojson`),
+    fetchJson<CalibrationProfile>(`${base}/calibration-profile.json`)
   ]);
 
   const waterways =
@@ -145,8 +152,13 @@ export async function fetchStaticVerifiedSeed(
     ? stFc.features.filter(f => f?.geometry?.type === 'Point')
     : [];
   const suppressedDem = Array.isArray(supArr) ? supArr.filter(s => s && s.seg_id) : [];
+  const calibrationMarks = Array.isArray(calFc?.features)
+    ? calFc.features.filter(f => f?.geometry?.type === 'Point')
+    : [];
+  const calibrationProfile =
+    calProf && typeof calProf.manningMult === 'number' ? calProf : null;
 
-  return { waterways, structures, suppressedDem };
+  return { waterways, structures, suppressedDem, calibrationMarks, calibrationProfile };
 }
 
 export async function fetchEditorStatus(): Promise<EditorStatus | null> {
@@ -174,6 +186,8 @@ export async function fetchWaterwaysState(regionId?: string): Promise<{
   waterways: VerifiedWaterwayFeature[];
   structures: VerifiedStructureFeature[];
   jorongBoundaries: JorongBoundaryFeature[];
+  calibrationMarks: CalibrationMarkFeature[];
+  calibrationProfile: CalibrationProfile | null;
   suppressedDem: SuppressedDemSegment[];
   hydroStatus: HydroStatus;
 }> {
@@ -181,16 +195,22 @@ export async function fetchWaterwaysState(regionId?: string): Promise<{
     waterways: { features: VerifiedWaterwayFeature[] };
     structures?: { features: VerifiedStructureFeature[] };
     jorongBoundaries?: { features: JorongBoundaryFeature[] };
+    calibrationMarks?: { features: CalibrationMarkFeature[] };
+    calibrationProfile?: CalibrationProfile | null;
     suppressedDem: SuppressedDemSegment[];
     hydroStatus?: HydroStatus;
   }>(withRegion('/api/waterways', regionId));
   const waterways = data.waterways?.features || [];
   const structures = data.structures?.features || [];
   const jorongBoundaries = data.jorongBoundaries?.features || [];
+  const calibrationMarks = data.calibrationMarks?.features || [];
+  const calibrationProfile = data.calibrationProfile || null;
   return {
     waterways,
     structures,
     jorongBoundaries,
+    calibrationMarks,
+    calibrationProfile,
     suppressedDem: data.suppressedDem || [],
     hydroStatus: data.hydroStatus || {
       dirty: false,
@@ -292,6 +312,9 @@ export async function createStructure(
     source: StructureSource;
     source_ref?: string | null;
     size_note: string;
+    opening_width_m?: number | null;
+    opening_height_m?: number | null;
+    default_blockage_pct?: number | null;
     notes: string;
     coordinates: [number, number];
     actor: string;
@@ -309,6 +332,9 @@ export async function updateStructure(
     kind?: StructureKind;
     status?: Exclude<DrainageStatus, 'unverified'>;
     size_note?: string;
+    opening_width_m?: number | null;
+    opening_height_m?: number | null;
+    default_blockage_pct?: number | null;
     notes?: string;
     coordinates?: [number, number];
     actor: string;
@@ -331,6 +357,74 @@ export async function deleteStructure(
     method: 'DELETE',
     body: JSON.stringify(payload)
   });
+}
+
+export async function createCalibrationMark(
+  payload: {
+    name: string;
+    kind: CalibrationMarkKind;
+    observed_depth_m: number | null;
+    rain_mm_hr: number;
+    duration_min: number;
+    antecedent_5d_mm: number;
+    notes: string;
+    coordinates: [number, number];
+    actor: string;
+    reason: string;
+  },
+  regionId?: string
+): Promise<{ feature: CalibrationMarkFeature; log: AuditLogEntry }> {
+  return apiFetch(withRegion('/api/calibration-marks', regionId), { method: 'POST', body: JSON.stringify(payload) });
+}
+
+export async function updateCalibrationMark(
+  id: string,
+  payload: {
+    name?: string;
+    kind?: CalibrationMarkKind;
+    observed_depth_m?: number | null;
+    rain_mm_hr?: number;
+    duration_min?: number;
+    antecedent_5d_mm?: number;
+    notes?: string;
+    coordinates?: [number, number];
+    actor: string;
+    reason: string;
+  },
+  regionId?: string
+): Promise<{ feature: CalibrationMarkFeature; log: AuditLogEntry }> {
+  return apiFetch(withRegion(`/api/calibration-marks/${encodeURIComponent(id)}`, regionId), {
+    method: 'PUT',
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function deleteCalibrationMark(
+  id: string,
+  payload: { actor: string; reason: string },
+  regionId?: string
+): Promise<void> {
+  await apiFetch(withRegion(`/api/calibration-marks/${encodeURIComponent(id)}`, regionId), {
+    method: 'DELETE',
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function saveCalibrationProfile(
+  payload: {
+    manningMult: number;
+    cnOffset: number;
+    cohesionMult: number;
+    rmseM?: number | null;
+    scourCsi?: number | null;
+    landslideAuc?: number | null;
+    notes?: string;
+    actor: string;
+    reason: string;
+  },
+  regionId?: string
+): Promise<{ profile: CalibrationProfile; log: AuditLogEntry }> {
+  return apiFetch(withRegion('/api/calibration-profile', regionId), { method: 'PUT', body: JSON.stringify(payload) });
 }
 
 export async function createJorongBoundary(

@@ -145,6 +145,7 @@ export interface MapInteractionRefs {
   onPromoteDemRef: MutableRefObject<(segId: string, coords: [number, number][]) => void>;
   onSuppressDemRef: MutableRefObject<(segId: string) => void>;
   onPromoteRbiRef: MutableRefObject<(name: string, kind: WaterwayKind, coords: [number, number][]) => void>;
+  onSetStructureBlockageOverrideRef: MutableRefObject<((structureId: string, pct: number | null) => void) | undefined>;
   onSnapFeedbackRef: MutableRefObject<((msg: string) => void) | undefined>;
 }
 
@@ -165,10 +166,13 @@ export function attachInteractiveLayerHandlers(map: MapLibreMap, refs: MapIntera
     popupRef: refs.popupRef,
     lang: refs.langRef.current,
     viewMode: refs.viewModeRef.current,
+    tab: refs.tabRef.current,
     demClient: refs.demRef.current,
     editorUnlocked: refs.editorUnlockedRef.current,
     apiAvailable: refs.apiAvailableRef.current,
     requiresPassphrase: refs.requiresPassphraseRef.current,
+    structureBlockageOverrides: refs.cascadeParamsRef.current.structureBlockageOverrides,
+    onSetStructureBlockageOverride: (stId, pct) => refs.onSetStructureBlockageOverrideRef.current?.(stId, pct),
     onVerifyCrossing: (draftId, coords, name, kind) =>
       refs.onVerifyCrossingRef.current(draftId, coords, name, kind),
     onOpenUnlock: () => refs.onOpenUnlockRef.current(),
@@ -227,15 +231,15 @@ export function attachMapClickAndCursorHandlers(map: MapLibreMap, refs: MapInter
       const hits = hitLayers.length > 0 ? map.queryRenderedFeatures(e.point, { layers: hitLayers }) : [];
       if (hits.length > 0) return;
 
-      // Click-to-explain corridor water zone during active simulation
-      if (refs.tabRef.current === 'sim' && refs.simProgressRef.current > 0.02 && refs.cascadeEngineRef.current) {
-        const poolLayers = ['sim-pools-shallow-fill', 'sim-pools-deep-fill'].filter(lid => Boolean(map.getLayer(lid)));
-        const poolHits = poolLayers.length > 0 ? map.queryRenderedFeatures(e.point, { layers: poolLayers }) : [];
-        if (poolHits.length > 0) {
-          openCorridorExplainPopup(map, refs.popupRef, [e.lngLat.lng, e.lngLat.lat], {
+      // Click any terrain point inside Nagari during simulation to inspect terrain-only hydrology readout.
+      if (refs.tabRef.current === 'sim' && refs.cascadeEngineRef.current) {
+        const simPoint: [number, number] = [e.lngLat.lng, e.lngLat.lat];
+        const sample = refs.cascadeEngineRef.current.sampleAtLngLat(simPoint[0], simPoint[1]);
+        if (sample.insideNagari) {
+          openCorridorExplainPopup(map, refs.popupRef, simPoint, sample, {
             lang: refs.langRef.current,
+            viewMode: refs.viewModeRef.current,
             demClient: refs.demRef.current,
-            cascadeEngine: refs.cascadeEngineRef.current,
             cascadeParams: refs.cascadeParamsRef.current
           });
           return;

@@ -1,3 +1,5 @@
+import type { SoilProfileId } from '../data/soilProfiles';
+
 export type Language = 'id' | 'en';
 export type ViewMode = 'simple' | 'detail';
 export type TabId = 'terrain' | 'sim' | 'drainage' | 'editor';
@@ -9,9 +11,14 @@ export type StructureKind = 'culvert' | 'bridge';
 export type StructureSource = 'manual' | 'crossing_promoted' | 'osm';
 export type FeatureCategory = 'drainage' | 'floodmark' | 'landslide' | 'mitigation' | 'evacuation';
 export type SoilMoisture = 'dry' | 'moist' | 'saturated';
-export type RainPattern = 'uniform' | 'upland';
+export type RainPattern = 'uniform' | 'upland' | 'storm_core';
 export type DrainCondition = 'cleared' | 'clogged' | 'surge';
 export type ForestScenario = 'actual' | 'degraded30' | 'degraded50';
+export type HyetographType = 'uniform' | 'convective_front' | 'alternating_block' | 'double_burst';
+export type DebrisCouplingMode = 'clear' | 'coupled' | 'surge';
+export type SimMapViewMode = 'depth' | 'confidence' | 'scour' | 'survey';
+export type DataConfidenceLevel = 'high' | 'medium' | 'low';
+export type CalibrationMarkKind = 'hwm' | 'scour' | 'landslide_scar';
 export type CascadeAlertLevel = 'normal' | 'waspada' | 'siaga' | 'kritis';
 export type ActiveTool =
   | null
@@ -21,7 +28,9 @@ export type ActiveTool =
   | 'drawWaterway'
   | 'redrawWaterway'
   | 'placeStructure'
-  | 'drawJorong';
+  | 'drawJorong'
+  | 'placeStormCore'
+  | 'placeCalibrationMark';
 
 export type GeoProperties = Record<string, string | number | boolean | null | undefined>;
 
@@ -64,15 +73,75 @@ export interface SimAreasHa {
   cleared: { low: number; med: number; high: number };
 }
 
+export interface SimReachNode {
+  id: number;
+  downstreamId: number;
+  lengthM: number;
+  slope: number;
+  upstreamAreaKm2: number;
+  localAreaKm2: number;
+  meanElevM: number;
+  meanSlopePct: number;
+  meanCn: number;
+  forestFrac: number;
+  meanTwi: number;
+  uplandFrac: number;
+  insideNagariFrac: number;
+  headCoord: [number, number];
+  midCoord: [number, number];
+  outletCoord: [number, number];
+  coords: [number, number][];
+  kRef: number[];
+  topW: number[];
+  verifiedWaterwayId: string | null;
+  waterwayName: string | null;
+  waterwayKind: string | null;
+  measuredWidthM: number | null;
+  measuredWidthPreM: number | null;
+  measuredDepthM: number | null;
+  dataConfidence: DataConfidenceLevel;
+}
+
+export interface SimCrossingNode {
+  id: string;
+  name: string;
+  kind: string;
+  status: string;
+  verified: boolean;
+  measuredOpening: boolean;
+  openingWidthM: number | null;
+  openingHeightM: number | null;
+  defaultBlockagePct: number;
+  qCapM3s: number;
+  reachId: number;
+  longFrac: number;
+  coords: [number, number];
+}
+
+export interface SimNetworkData {
+  version: number;
+  srcStagesM: number[];
+  reachCount: number;
+  crossingCount: number;
+  reaches: SimReachNode[];
+  crossings: SimCrossingNode[];
+}
+
 export interface SimFieldsData {
+  version?: number;
   width: number;
   height: number;
   bbox: BBox;
   cellSizeX: number;
   cellSizeY: number;
+  sourceDemResM?: number;
+  hiResWidth?: number;
+  hiResHeight?: number;
+  hiResHandDmBase64?: string;
   minElev: number;
   maxElev: number;
   p90TravelMin: number;
+  elevMBase64?: string;
   handDmBase64: string;
   slopePctBase64: string;
   accNormBase64: string;
@@ -82,11 +151,51 @@ export interface SimFieldsData {
   isForestBase64: string;
   uplandWeightBase64: string;
   uplandAccRatioBase64: string;
+  twiBase64?: string;
+  curvatureBase64?: string;
+  soilDepthCmBase64?: string;
+  geologyFactorBase64?: string;
+  reachIdBase64?: string;
+  reachLongFracBase64?: string;
   bottleneckProxBase64: string;
   soilErodibilityBase64?: string;
   officialLandslideBase64?: string;
+  scourMaskBase64?: string;
   nagariMaskBase64?: string;
   agamSummary?: AgamSummaryStats;
+  network?: SimNetworkData;
+}
+
+export interface CalibrationProfile {
+  manningMult: number;
+  cnOffset: number;
+  cohesionMult: number;
+  rmseM?: number | null;
+  scourCsi?: number | null;
+  landslideAuc?: number | null;
+  updatedBy?: string;
+  updatedAt?: string;
+  notes?: string;
+}
+
+export interface CalibrationMarkFeature {
+  type: 'Feature';
+  properties: {
+    id: string;
+    name: string;
+    kind: CalibrationMarkKind;
+    observed_depth_m: number | null;
+    rain_mm_hr: number;
+    duration_min: number;
+    antecedent_5d_mm: number;
+    notes: string;
+    updated_by: string;
+    updated_at: string;
+  };
+  geometry: {
+    type: 'Point';
+    coordinates: [number, number];
+  };
 }
 
 export interface CascadeSimParams {
@@ -97,23 +206,107 @@ export interface CascadeSimParams {
   rainPattern: RainPattern;
   drainCondition: DrainCondition;
   forestScenario: ForestScenario;
+  hyetograph?: HyetographType;
+  antecedent5dMm?: number;
+  orographicPctPerKm?: number;
+  stormCore?: [number, number] | null;
+  culvertBlockagePct?: number;
+  structureBlockageOverrides?: Record<string, number>;
+  debrisCoupling?: DebrisCouplingMode;
+  soilProfile?: SoilProfileId;
+  calibrationProfile?: CalibrationProfile | null;
+}
+
+export interface EnsembleRange {
+  p10: number;
+  p50: number;
+  p90: number;
+}
+
+export interface InputCoverageStats {
+  insideReaches: number;
+  verifiedReaches: number;
+  measuredReaches: number;
+  totalCrossings: number;
+  verifiedCrossings: number;
+  measuredCrossings: number;
+  hwmCount: number;
+  isCalibrated: boolean;
+}
+
+export interface HydrographPoint {
+  timeMin: number;
+  rainMmHr: number;
+  qP10: number;
+  qP50: number;
+  qP90: number;
+  qBulkP50: number;
+  isRecession: boolean;
+}
+
+export interface ValidationMetrics {
+  scourCsi: number | null;
+  scourPod: number | null;
+  scourFar: number | null;
+  scourSampleCount: number;
+  landslideAuc: number | null;
+  landslidePod: number | null;
+  landslideCsi: number | null;
+  hwmRmseM: number | null;
+  hwmHitRatePct: number | null;
+  hwmCount: number;
+  validationSplit?: 'all' | 'calibration' | 'holdout';
+}
+
+export interface WaterBalanceSummary {
+  rainInputMm: number;
+  interceptionMm: number;
+  totalRunoffMm: number;
+  soilStorageDeltaMm: number;
+  deepPercolationMm: number;
+  closureErrorMm: number;
+  closureErrorPct: number;
 }
 
 export interface CascadeKpis {
   stage: 0 | 1 | 2 | 3 | 4;
   alertLevel: CascadeAlertLevel;
   elapsedMin: number;
+  totalWindowMin: number;
+  isRecession: boolean;
   accumulatedMm: number;
   effectiveRunoffMm: number;
   floodAreaHa: number;
   landslideAreaHa: number;
   affectedBuildingsFlood: number;
+  affectedBuildingsDeep: number;
   affectedBuildingsLandslide: number;
+  representativeStageM: number;
+  representativeStageP10M: number;
+  representativeStageP90M: number;
   chokeCount: number;
   reductionPct: number;
   peakTravelMin: number;
   runoffIndex: number;
   officialLandslideOverlapPct: number;
+  peakDischargeM3s: number;
+  maxStreamPowerWm2: number;
+  meanSedimentCv: number;
+  scourReachCount: number;
+  dataConfidenceScore: number;
+  dataConfidenceLevel: DataConfidenceLevel;
+  inputCoverage?: InputCoverageStats;
+  runoutAreaHa?: number;
+  ensemble: {
+    floodAreaHa: EnsembleRange;
+    landslideAreaHa: EnsembleRange;
+    affectedBuildingsFlood: EnsembleRange;
+    affectedBuildingsLandslide: EnsembleRange;
+    peakDischargeM3s: EnsembleRange;
+  };
+  hydrograph: HydrographPoint[];
+  validation: ValidationMetrics;
+  waterBalance?: WaterBalanceSummary;
 }
 
 export interface LandCoverStats {
@@ -289,6 +482,9 @@ export interface VerifiedStructureFeature {
     source: StructureSource;
     source_ref: string | null;
     size_note: string;
+    opening_width_m?: number | null;
+    opening_height_m?: number | null;
+    default_blockage_pct?: number | null;
     notes: string;
     updated_by: string;
     updated_at: string;
@@ -390,6 +586,8 @@ export interface ExportBundle {
   verifiedWaterways: { type: 'FeatureCollection'; features: VerifiedWaterwayFeature[] };
   verifiedStructures?: { type: 'FeatureCollection'; features: VerifiedStructureFeature[] };
   jorongBoundaries?: { type: 'FeatureCollection'; features: JorongBoundaryFeature[] };
+  calibrationMarks?: { type: 'FeatureCollection'; features: CalibrationMarkFeature[] };
+  calibrationProfile?: CalibrationProfile | null;
   suppressedDem: SuppressedDemSegment[];
   auditLogs: AuditLogEntry[];
   suggestionsCount: number;

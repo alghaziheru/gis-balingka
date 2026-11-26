@@ -1,0 +1,56 @@
+{
+  "generatedAt": "2026-11-26T06:40:50.146Z",
+  "regionId": "desa-sriharjo",
+  "regionName": "Desa Sriharjo",
+  "locationLabel": "Kec. Imogiri, Kab. Bantul, DI Yogyakarta",
+  "dataTrack": "Option A (Automatic Global Open Data: AWS Mapzen Terrarium DEM (Fallback z13) + Default CN fallback + OSM + ERA5-Land)",
+  "soilProfile": "alluvial_clay",
+  "setupTimeSec": 127.23,
+  "artifacts": {
+    "fileCount": 21,
+    "totalSizeMb": 4.72
+  },
+  "terrainAndNetwork": {
+    "demSource": "AWS Mapzen Terrarium DEM (Fallback z13)",
+    "gridDimensions": "160x160",
+    "resolutionMeters": 20.7,
+    "minElevM": 16,
+    "maxElevM": 373,
+    "studyAreaKm2": 10.97,
+    "reachCount": 73,
+    "crossingsDetected": 24,
+    "bridgesDetected": 2,
+    "buildingCount": 3123,
+    "landCoverStats": null
+  },
+  "climate": {
+    "yearsCount": 41,
+    "meanAnnualMm": 1856,
+    "r24T100GumbelMm": 185,
+    "r48T100GumbelMm": 243,
+    "idf3hCapMmHr": 35
+  },
+  "simulationChecks": {
+    "normal2h": {
+      "rainMmHr": 15,
+      "peakDischargeM3s": 7.6,
+      "floodAreaHa": 0,
+      "landslideAreaHa": 0,
+      "closureErrorPct": 0
+    },
+    "intense3h": {
+      "rainMmHr": 35,
+      "peakDischargeM3s": 33.9,
+      "floodAreaHa": 0,
+      "landslideAreaHa": 0,
+      "effectiveRunoffMm": 52.5,
+      "closureErrorPct": 0
+    }
+  },
+  "checks": {
+    "causalHydrograph": true,
+    "maxClosureErrorPct": 0,
+    "zeroBalingkaLeakage": true,
+    "auditRowCount": 9
+  }
+}

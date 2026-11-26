@@ -45,6 +45,9 @@ export function buildCanonicalSeedSnapshots(state) {
         source: String(f.properties.source || 'manual'),
         source_ref: f.properties.source_ref ?? null,
         size_note: String(f.properties.size_note || ''),
+        ...(f.properties.opening_width_m != null ? { opening_width_m: Number(f.properties.opening_width_m) } : {}),
+        ...(f.properties.opening_height_m != null ? { opening_height_m: Number(f.properties.opening_height_m) } : {}),
+        ...(f.properties.default_blockage_pct != null ? { default_blockage_pct: Number(f.properties.default_blockage_pct) } : {}),
         notes: String(f.properties.notes || ''),
         updated_by: String(f.properties.updated_by || 'Editor'),
         updated_at: String(f.properties.updated_at || '')
@@ -65,15 +68,42 @@ export function buildCanonicalSeedSnapshots(state) {
       updated_at: String(s.updated_at || '')
     }));
 
+  const calMarkFeatures = [...(state?.calibrationMarks?.features || [])]
+    .sort((a, b) => String(a?.properties?.id || '').localeCompare(String(b?.properties?.id || '')))
+    .map(f => ({
+      type: 'Feature',
+      properties: {
+        id: String(f.properties.id),
+        name: String(f.properties.name),
+        kind: String(f.properties.kind || 'hwm'),
+        observed_depth_m: f.properties.observed_depth_m != null ? Number(f.properties.observed_depth_m) : null,
+        rain_mm_hr: Number(f.properties.rain_mm_hr || 80),
+        duration_min: Number(f.properties.duration_min || 180),
+        antecedent_5d_mm: Number(f.properties.antecedent_5d_mm ?? 90),
+        notes: String(f.properties.notes || ''),
+        updated_by: String(f.properties.updated_by || 'Editor'),
+        updated_at: String(f.properties.updated_at || '')
+      },
+      geometry: {
+        type: 'Point',
+        coordinates: [Number(f.geometry?.coordinates?.[0]), Number(f.geometry?.coordinates?.[1])]
+      }
+    }));
+
+  const calibrationProfile = state?.calibrationProfile || null;
+
   return {
     waterwaysFC: { type: 'FeatureCollection', features: wwFeatures },
     structuresFC: { type: 'FeatureCollection', features: stFeatures },
+    calibrationMarksFC: { type: 'FeatureCollection', features: calMarkFeatures },
+    calibrationProfile,
     suppressedDem
   };
 }
 
 export function writeVerifiedSeedFiles(state, targetDirs) {
-  const { waterwaysFC, structuresFC, suppressedDem } = buildCanonicalSeedSnapshots(state);
+  const { waterwaysFC, structuresFC, calibrationMarksFC, calibrationProfile, suppressedDem } =
+    buildCanonicalSeedSnapshots(state);
   const uniqueDirs = [];
   const seen = new Set();
 
@@ -99,23 +129,43 @@ export function writeVerifiedSeedFiles(state, targetDirs) {
       path.join(dir, 'suppressed-dem.json'),
       JSON.stringify(suppressedDem, null, 2) + '\n'
     );
+    fs.writeFileSync(
+      path.join(dir, 'calibration-marks.geojson'),
+      JSON.stringify(calibrationMarksFC, null, 2) + '\n'
+    );
+    if (calibrationProfile) {
+      fs.writeFileSync(
+        path.join(dir, 'calibration-profile.json'),
+        JSON.stringify(calibrationProfile, null, 2) + '\n'
+      );
+    }
   }
 
   return {
     dirs: uniqueDirs,
     waterwayCount: waterwaysFC.features.length,
     structureCount: structuresFC.features.length,
+    calibrationMarkCount: calibrationMarksFC.features.length,
     suppressedCount: suppressedDem.length
   };
 }
 
 export function readVerifiedSeedFiles(dataDir) {
   if (!dataDir) {
-    return { hasVerifiedWaterways: false, waterways: [], structures: [], suppressedDem: [] };
+    return {
+      hasVerifiedWaterways: false,
+      waterways: [],
+      structures: [],
+      suppressedDem: [],
+      calibrationMarks: [],
+      calibrationProfile: null
+    };
   }
   const wwPath = path.join(dataDir, 'verified-waterways.geojson');
   const stPath = path.join(dataDir, 'verified-structures.geojson');
   const supPath = path.join(dataDir, 'suppressed-dem.json');
+  const calPath = path.join(dataDir, 'calibration-marks.geojson');
+  const profPath = path.join(dataDir, 'calibration-profile.json');
 
   let waterways = [];
   let hasVerifiedWaterways = false;
@@ -143,5 +193,25 @@ export function readVerifiedSeedFiles(dataDir) {
     }
   }
 
-  return { hasVerifiedWaterways, waterways, structures, suppressedDem };
+  let calibrationMarks = [];
+  if (fs.existsSync(calPath)) {
+    try {
+      const fc = JSON.parse(fs.readFileSync(calPath, 'utf8'));
+      if (Array.isArray(fc?.features)) {
+        calibrationMarks = fc.features.filter(f => f?.geometry?.type === 'Point');
+      }
+    } catch {}
+  }
+
+  let calibrationProfile = null;
+  if (fs.existsSync(profPath)) {
+    try {
+      const prof = JSON.parse(fs.readFileSync(profPath, 'utf8'));
+      if (prof && typeof prof.manningMult === 'number') {
+        calibrationProfile = prof;
+      }
+    } catch {}
+  }
+
+  return { hasVerifiedWaterways, waterways, structures, suppressedDem, calibrationMarks, calibrationProfile };
 }

@@ -112,6 +112,11 @@
       },
       "dataBasePath": "/data",
       "dbFilename": "balingka.db",
+      "hydrology": {
+        "soilProfile": "volcanic_andosol",
+        "climateBiasFactor": 1.073,
+        "climateSourceNote": "41-yr Open-Meteo ERA5-Land scaled x1.073 against BMKG 96165 (Padang Panjang) & 96167 (Sicincin)"
+      },
       "repositoryUrl": "https://github.com/alghaziheru/gis-balingka"
     },
     {
@@ -244,6 +249,11 @@
       },
       "dataBasePath": "/data/regions/malalak-timur-utara",
       "dbFilename": "malalak-timur-utara.db",
+      "hydrology": {
+        "soilProfile": "volcanic_andosol",
+        "climateBiasFactor": 1.0,
+        "climateSourceNote": "Unadjusted 41-yr Open-Meteo ERA5-Land daily reanalysis at Malalak coordinates (no local BMKG station bias factor configured)"
+      },
       "repositoryUrl": "https://github.com/alghaziheru/gis-balingka"
     }
   ]

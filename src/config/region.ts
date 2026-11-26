@@ -1,4 +1,5 @@
 import rawManifest from '../../regions.config.json';
+import type { SoilProfileId } from '../data/soilProfiles';
 
 export interface CameraPresetConfig {
   id: string;
@@ -59,6 +60,11 @@ export interface RegionConfig {
     bigRbiGdbName: string;
     bigDesaGdbName: string;
     bigRbiDasName: string;
+  };
+  hydrology?: {
+    soilProfile?: SoilProfileId;
+    climateBiasFactor?: number;
+    climateSourceNote?: string;
   };
   dataBasePath?: string;
   dbFilename?: string;

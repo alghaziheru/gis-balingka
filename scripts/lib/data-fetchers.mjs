@@ -217,6 +217,8 @@ export async function fetchRealOSM(bbox, regionName) {
 
 export async function fetchLandCover(bbox, demWidth, demHeight, worldcoverTiles, regionName, insideMask = null) {
   for (let attempt = 1; attempt <= 2; attempt++) {
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(new Error('ESA WorldCover COG request timed out after 30s')), 30000);
   try {
     console.log(`Fetching ESA WorldCover 10m v200 COG (${worldcoverTiles.length} tile(s)) for ${regionName} block...`);
     let raw;
@@ -224,7 +226,7 @@ export async function fetchLandCover(bbox, demWidth, demHeight, worldcoverTiles,
     let winH;
 
     if (worldcoverTiles.length === 1) {
-      const tiff = await fromUrl(worldcoverTiles[0].url);
+      const tiff = await fromUrl(worldcoverTiles[0].url, {}, ac.signal);
       const image = await tiff.getImage();
       const imgW = image.getWidth();
       const imgH = image.getHeight();
@@ -237,7 +239,7 @@ export async function fetchLandCover(bbox, demWidth, demHeight, worldcoverTiles,
 
       winW = Math.max(10, c1 - c0);
       winH = Math.max(10, r1 - r0);
-      [raw] = await image.readRasters({ window: [c0, r0, c0 + winW, r0 + winH] });
+      [raw] = await image.readRasters({ window: [c0, r0, c0 + winW, r0 + winH], signal: ac.signal });
     } else {
       const targetMax = 1024;
       const degW = Math.max(1e-6, bbox.east - bbox.west);
@@ -250,7 +252,7 @@ export async function fetchLandCover(bbox, demWidth, demHeight, worldcoverTiles,
       raw = new Uint8Array(winW * winH);
 
       for (const tile of worldcoverTiles) {
-        const tiff = await fromUrl(tile.url);
+        const tiff = await fromUrl(tile.url, {}, ac.signal);
         const image = await tiff.getImage();
         const imgW = image.getWidth();
         const imgH = image.getHeight();
@@ -268,7 +270,7 @@ export async function fetchLandCover(bbox, demWidth, demHeight, worldcoverTiles,
         const r1 = Math.min(imgH, Math.ceil(((maxY - iy0) / (maxY - minY)) * imgH));
         const subW = Math.max(1, c1 - c0);
         const subH = Math.max(1, r1 - r0);
-        const [subRaw] = await image.readRasters({ window: [c0, r0, c0 + subW, r0 + subH] });
+        const [subRaw] = await image.readRasters({ window: [c0, r0, c0 + subW, r0 + subH], signal: ac.signal });
 
         const outC0 = Math.max(0, Math.floor(((ix0 - bbox.west) / degW) * winW));
         const outC1 = Math.min(winW, Math.ceil(((ix1 - bbox.west) / degW) * winW));
@@ -348,6 +350,8 @@ export async function fetchLandCover(bbox, demWidth, demHeight, worldcoverTiles,
     }
     console.warn(`Warning: ESA WorldCover fetch failed (${err.message}); keeping existing landcover files if present.`);
     return null;
+  } finally {
+    clearTimeout(timer);
   }
   }
 }
@@ -565,8 +569,21 @@ export async function fetchSentinel2ScourChange(bbox, hand, gridMeta, insideMask
 
     const pxHa = 0.01; // 10m x 10m = 100 m2 = 0.01 ha
     const png = renderScourChangeRaster(scourGrid, w, h, 1024);
+    const demScourMask = new Uint8Array(gridMeta.width * gridMeta.height);
+    for (let r = 0; r < h; r++) {
+      const demR = Math.min(gridMeta.height - 1, Math.floor((r / h) * gridMeta.height));
+      for (let c = 0; c < w; c++) {
+        const v = scourGrid[r * w + c];
+        if (v > -0.2) continue;
+        const demC = Math.min(gridMeta.width - 1, Math.floor((c / w) * gridMeta.width));
+        const lvl = v <= -0.32 ? 2 : 1;
+        const di = demR * gridMeta.width + demC;
+        if (lvl > demScourMask[di]) demScourMask[di] = lvl;
+      }
+    }
     return {
       png,
+      demScourMask,
       stats: {
         source: 'Copernicus Sentinel-2 L2A (10m)',
         preDate: String(preMeta.properties?.datetime || '2022-12-24').slice(0, 10),

@@ -8,6 +8,7 @@ import type {
   AgamContextData,
   BasemapId,
   BBox,
+  CalibrationMarkFeature,
   CascadeSimParams,
   DrainageStatus,
   GeoFeatureCollection,
@@ -16,6 +17,7 @@ import type {
   LayerToggles,
   ProfileSample,
   RaindropTrace,
+  SimMapViewMode,
   StructureKind,
   TabId,
   VerifiedStructureFeature,
@@ -92,6 +94,7 @@ export interface MapViewProps {
   simProgress: number;
   simScenario: 'clogged' | 'cleared';
   rainAnimEnabled: boolean;
+  simMapViewMode: SimMapViewMode;
   cascadeEngine: CascadeEngine | null;
   cascadeParams: CascadeSimParams;
   drainFilter: 'all' | DrainageStatus;
@@ -101,6 +104,7 @@ export interface MapViewProps {
   verifiedWaterways: VerifiedWaterwayFeature[];
   verifiedStructures: VerifiedStructureFeature[];
   jorongBoundaries: JorongBoundaryFeature[];
+  calibrationMarks: CalibrationMarkFeature[];
   suppressedDemIds: string[];
   dataVersion: number;
   editorHydrated: boolean;
@@ -118,6 +122,7 @@ export interface MapViewProps {
   onOpenUnlock: () => void;
   onSelectWaterway: (feature: VerifiedWaterwayFeature) => void;
   onSelectStructure: (feature: VerifiedStructureFeature) => void;
+  onSetStructureBlockageOverride?: (structureId: string, pct: number | null) => void;
   onVerifyCrossing: (
     draftId: string,
     coords: [number, number],

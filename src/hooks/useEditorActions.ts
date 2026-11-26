@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from 'react';
+import type { ActiveEditingCalibrationMark } from '../components/CalibrationEditorPanel';
 import type { EditorSubTab } from '../components/EditorTab';
 import type { ActiveEditingJorong } from '../components/JorongEditorPanel';
 import type { LoadedDatasets } from '../components/MapView';
@@ -7,9 +8,11 @@ import type { ActiveEditingWaterway } from '../components/WaterwayEditorPanel';
 import { getRegionDataBasePath, REGION, type RegionConfig } from '../config/region';
 import { getTranslations } from '../i18n/translations';
 import {
+  createCalibrationMark,
   createJorongBoundary,
   createStructure,
   createWaterway,
+  deleteCalibrationMark,
   deleteJorongBoundary,
   deleteStructure,
   deleteWaterway,
@@ -22,9 +25,11 @@ import {
   recomputeHydrology,
   restoreDemSegment,
   revertAuditLog,
+  saveCalibrationProfile,
   saveEditorName,
   saveStoredPassphrase,
   suppressDemSegment,
+  updateCalibrationMark,
   updateJorongBoundary,
   updateStructure,
   updateWaterway,
@@ -35,6 +40,8 @@ import { orientCoordinatesDownhill } from '../lib/geometry';
 import type {
   ActiveTool,
   AuditLogEntry,
+  CalibrationMarkFeature,
+  CalibrationProfile,
   HydroStatus,
   JorongBoundaryFeature,
   Language,
@@ -73,10 +80,13 @@ export function useEditorActions(opts: {
   const [verifiedWaterways, setVerifiedWaterways] = useState<VerifiedWaterwayFeature[]>([]);
   const [verifiedStructures, setVerifiedStructures] = useState<VerifiedStructureFeature[]>([]);
   const [jorongBoundaries, setJorongBoundaries] = useState<JorongBoundaryFeature[]>([]);
+  const [calibrationMarks, setCalibrationMarks] = useState<CalibrationMarkFeature[]>([]);
+  const [calibrationProfile, setCalibrationProfile] = useState<CalibrationProfile | null>(null);
   const [suppressedDem, setSuppressedDem] = useState<SuppressedDemSegment[]>([]);
   const [editingWaterway, setEditingWaterway] = useState<ActiveEditingWaterway | null>(null);
   const [editingStructure, setEditingStructure] = useState<ActiveEditingStructure | null>(null);
   const [editingJorong, setEditingJorong] = useState<ActiveEditingJorong | null>(null);
+  const [editingCalibrationMark, setEditingCalibrationMark] = useState<ActiveEditingCalibrationMark | null>(null);
   const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
   const [dataVersion, setDataVersion] = useState(0);
   const [hydroStatus, setHydroStatus] = useState<HydroStatus>({
@@ -136,6 +146,8 @@ export function useEditorActions(opts: {
             setVerifiedWaterways(wwState.waterways);
             setVerifiedStructures(wwState.structures);
             setJorongBoundaries(wwState.jorongBoundaries);
+            setCalibrationMarks(wwState.calibrationMarks);
+            setCalibrationProfile(wwState.calibrationProfile);
             setSuppressedDem(wwState.suppressedDem);
             setHydroStatus(wwState.hydroStatus);
             setAuditLogs(logs);
@@ -146,6 +158,8 @@ export function useEditorActions(opts: {
           if (!cancelled) {
             setVerifiedWaterways(staticSeed.waterways);
             setVerifiedStructures(staticSeed.structures);
+            setCalibrationMarks(staticSeed.calibrationMarks);
+            setCalibrationProfile(staticSeed.calibrationProfile);
             setSuppressedDem(staticSeed.suppressedDem);
           }
         }
@@ -169,6 +183,8 @@ export function useEditorActions(opts: {
     setVerifiedWaterways(wwState.waterways);
     setVerifiedStructures(wwState.structures);
     setJorongBoundaries(wwState.jorongBoundaries);
+    setCalibrationMarks(wwState.calibrationMarks);
+    setCalibrationProfile(wwState.calibrationProfile);
     setSuppressedDem(wwState.suppressedDem);
     setHydroStatus(wwState.hydroStatus);
     setAuditLogs(logs);
@@ -233,7 +249,8 @@ export function useEditorActions(opts: {
     if (editingWaterway) setEditingWaterway(null);
     if (editingStructure) setEditingStructure(null);
     if (editingJorong) setEditingJorong(null);
-  }, [editingWaterway, editingStructure, editingJorong]);
+    if (editingCalibrationMark) setEditingCalibrationMark(null);
+  }, [editingWaterway, editingStructure, editingJorong, editingCalibrationMark]);
 
   const selectWaterwayFromMap = useCallback(
     (feat: VerifiedWaterwayFeature) => {
@@ -270,6 +287,9 @@ export function useEditorActions(opts: {
         source: feat.properties.source,
         sourceRef: feat.properties.source_ref,
         sizeNote: feat.properties.size_note,
+        openingWidthM: feat.properties.opening_width_m ?? null,
+        openingHeightM: feat.properties.opening_height_m ?? null,
+        defaultBlockagePct: feat.properties.default_blockage_pct ?? null,
         notes: feat.properties.notes,
         coordinates: [feat.geometry.coordinates[0], feat.geometry.coordinates[1]]
       });
@@ -590,6 +610,9 @@ export function useEditorActions(opts: {
         source: feat.properties.source,
         sourceRef: feat.properties.source_ref,
         sizeNote: feat.properties.size_note,
+        openingWidthM: feat.properties.opening_width_m ?? null,
+        openingHeightM: feat.properties.opening_height_m ?? null,
+        defaultBlockagePct: feat.properties.default_blockage_pct ?? null,
         notes: feat.properties.notes,
         coordinates: [feat.geometry.coordinates[0], feat.geometry.coordinates[1]]
       });
@@ -609,6 +632,9 @@ export function useEditorActions(opts: {
               kind: draft.kind,
               status: draft.status,
               size_note: draft.sizeNote,
+              opening_width_m: draft.openingWidthM ?? null,
+              opening_height_m: draft.openingHeightM ?? null,
+              default_blockage_pct: draft.defaultBlockagePct ?? null,
               notes: draft.notes,
               coordinates: draft.coordinates,
               actor: actorName,
@@ -625,6 +651,9 @@ export function useEditorActions(opts: {
               source: draft.source,
               source_ref: draft.sourceRef || null,
               size_note: draft.sizeNote,
+              opening_width_m: draft.openingWidthM ?? null,
+              opening_height_m: draft.openingHeightM ?? null,
+              default_blockage_pct: draft.defaultBlockagePct ?? null,
               notes: draft.notes,
               coordinates: draft.coordinates,
               actor: actorName,
@@ -744,6 +773,104 @@ export function useEditorActions(opts: {
       const mid = ring[Math.floor(ring.length / 2)];
       if (mid) opts.flyTo(mid, { zoom: 14.8 });
     },
+    onStartPlaceCalibrationMark: () => {
+      setEditingCalibrationMark(null);
+      opts.setActiveTool(prev => (prev === 'placeCalibrationMark' ? null : 'placeCalibrationMark'));
+    },
+    onStartEditCalibrationMark: (feat: CalibrationMarkFeature) => {
+      setEditingCalibrationMark({
+        id: feat.properties.id,
+        name: feat.properties.name,
+        kind: feat.properties.kind,
+        observedDepthM: feat.properties.observed_depth_m ?? null,
+        rainMmHr: feat.properties.rain_mm_hr,
+        durationMin: feat.properties.duration_min,
+        antecedent5dMm: feat.properties.antecedent_5d_mm,
+        notes: feat.properties.notes,
+        coordinates: [feat.geometry.coordinates[0], feat.geometry.coordinates[1]]
+      });
+      opts.flyTo(feat.geometry.coordinates, { zoom: 16.0 });
+    },
+    onCancelCalibrationMarkEdit: () => {
+      setEditingCalibrationMark(null);
+      if (opts.activeTool === 'placeCalibrationMark') opts.setActiveTool(null);
+    },
+    onSaveCalibrationMark: async (draft: ActiveEditingCalibrationMark, reason: string) => {
+      try {
+        if (draft.id) {
+          await updateCalibrationMark(
+            draft.id,
+            {
+              name: draft.name,
+              kind: draft.kind,
+              observed_depth_m: draft.observedDepthM,
+              rain_mm_hr: draft.rainMmHr,
+              duration_min: draft.durationMin,
+              antecedent_5d_mm: draft.antecedent5dMm,
+              notes: draft.notes,
+              coordinates: draft.coordinates,
+              actor: actorName,
+              reason
+            },
+            regionId
+          );
+        } else {
+          await createCalibrationMark(
+            {
+              name: draft.name,
+              kind: draft.kind,
+              observed_depth_m: draft.observedDepthM,
+              rain_mm_hr: draft.rainMmHr,
+              duration_min: draft.durationMin,
+              antecedent_5d_mm: draft.antecedent5dMm,
+              notes: draft.notes,
+              coordinates: draft.coordinates,
+              actor: actorName,
+              reason
+            },
+            regionId
+          );
+        }
+        setEditingCalibrationMark(null);
+        await refreshSqliteState();
+        opts.notify(
+          opts.lang === 'en' ? 'Benchmark mark saved & logged.' : 'Titik benchmark tersimpan & dicatat.'
+        );
+      } catch (err) {
+        opts.notify(err instanceof Error ? err.message : 'Save failed');
+      }
+    },
+    onDeleteCalibrationMark: async (id: string, reason: string) => {
+      try {
+        await deleteCalibrationMark(id, { actor: actorName, reason }, regionId);
+        setEditingCalibrationMark(null);
+        await refreshSqliteState();
+        opts.notify(opts.lang === 'en' ? 'Benchmark mark removed.' : 'Titik benchmark dihapus.');
+      } catch (err) {
+        opts.notify(err instanceof Error ? err.message : 'Delete failed');
+      }
+    },
+    onFlyToCalibrationMark: (feat: CalibrationMarkFeature) => {
+      opts.flyTo(feat.geometry.coordinates, { zoom: 16.0 });
+    },
+    onSaveCalibrationProfile: async (profile: CalibrationProfile, reason: string) => {
+      try {
+        await saveCalibrationProfile(
+          {
+            ...profile,
+            actor: actorName,
+            reason
+          },
+          regionId
+        );
+        await refreshSqliteState();
+        opts.notify(
+          opts.lang === 'en' ? 'Calibration profile saved & applied.' : 'Profil kalibrasi tersimpan & diterapkan.'
+        );
+      } catch (err) {
+        opts.notify(err instanceof Error ? err.message : 'Save failed');
+      }
+    },
     onRevertAuditLog: async (logId: number) => {
       try {
         await revertAuditLog(
@@ -798,6 +925,8 @@ export function useEditorActions(opts: {
     verifiedWaterways,
     verifiedStructures,
     jorongBoundaries,
+    calibrationMarks,
+    calibrationProfile,
     suppressedDem,
     suppressedDemIds,
     verifiedIssueCount,
@@ -806,6 +935,8 @@ export function useEditorActions(opts: {
     editingStructure,
     setEditingStructure,
     editingJorong,
+    editingCalibrationMark,
+    setEditingCalibrationMark,
     mapEditingWaterway,
     mapEditingStructure,
     auditLogs,

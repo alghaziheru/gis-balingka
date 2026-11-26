@@ -143,7 +143,7 @@ export function downsampleGrid(elev, w, h, maxDim = 520) {
   return { elev: out, width: nw, height: nh };
 }
 
-export async function loadFromGeoTIFF(tiff, bbox, sourceLabel) {
+export async function loadFromGeoTIFF(tiff, bbox, sourceLabel, signal) {
   const image = await tiff.getImage();
   const imgW = image.getWidth();
   const imgH = image.getHeight();
@@ -156,7 +156,7 @@ export async function loadFromGeoTIFF(tiff, bbox, sourceLabel) {
 
   const winW = Math.max(10, c1 - c0);
   const winH = Math.max(10, r1 - r0);
-  const rasters = await image.readRasters({ window: [c0, r0, c0 + winW, r0 + winH] });
+  const rasters = await image.readRasters({ window: [c0, r0, c0 + winW, r0 + winH], signal });
   const raw = rasters[0];
   let validSum = 0;
   let validCount = 0;
@@ -189,20 +189,20 @@ export async function loadFromGeoTIFF(tiff, bbox, sourceLabel) {
   };
 }
 
-async function openCopernicusTiff(tile, rootDir) {
+async function openCopernicusTiff(tile, rootDir, signal) {
   if (rootDir) {
     const cacheFile = path.join(rootDir, 'raw-data', 'copernicus-cache', `${tile.tile}.tif`);
     if (fs.existsSync(cacheFile) && fs.statSync(cacheFile).size > 100000) {
       return fromFile(cacheFile);
     }
   }
-  return fromUrl(tile.url);
+  return fromUrl(tile.url, {}, signal);
 }
 
-export async function loadCopernicusMosaic(tiles, bbox, sourceLabel, rootDir = null) {
+export async function loadCopernicusMosaic(tiles, bbox, sourceLabel, rootDir = null, signal = undefined) {
   if (tiles.length === 1) {
-    const tiff = await openCopernicusTiff(tiles[0], rootDir);
-    return loadFromGeoTIFF(tiff, bbox, sourceLabel);
+    const tiff = await openCopernicusTiff(tiles[0], rootDir, signal);
+    return loadFromGeoTIFF(tiff, bbox, sourceLabel, signal);
   }
   const pxPerDeg = 3600; // Copernicus GLO-30 (~1 arc-second)
   const rawW = Math.max(20, Math.round((bbox.east - bbox.west) * pxPerDeg));
@@ -213,7 +213,7 @@ export async function loadCopernicusMosaic(tiles, bbox, sourceLabel, rootDir = n
   const elev = new Float32Array(width * height).fill(Number.NaN);
 
   for (const tile of tiles) {
-    const tiff = await openCopernicusTiff(tile, rootDir);
+    const tiff = await openCopernicusTiff(tile, rootDir, signal);
     const image = await tiff.getImage();
     const imgW = image.getWidth();
     const imgH = image.getHeight();
@@ -231,7 +231,7 @@ export async function loadCopernicusMosaic(tiles, bbox, sourceLabel, rootDir = n
     const r1 = Math.min(imgH, Math.ceil(((maxY - iy0) / (maxY - minY)) * imgH));
     const winW = Math.max(1, c1 - c0);
     const winH = Math.max(1, r1 - r0);
-    const [raw] = await image.readRasters({ window: [c0, r0, c0 + winW, r0 + winH] });
+    const [raw] = await image.readRasters({ window: [c0, r0, c0 + winW, r0 + winH], signal });
 
     const outC0 = Math.max(0, Math.floor(((ix0 - bbox.west) / (bbox.east - bbox.west)) * width));
     const outC1 = Math.min(width, Math.ceil(((ix1 - bbox.west) / (bbox.east - bbox.west)) * width));
@@ -319,7 +319,7 @@ export async function loadFromTerrariumFallback(bbox) {
   for (const tx of txList) {
     for (const ty of tyList) {
       const url = `https://s3.amazonaws.com/elevation-tiles-prod/terrarium/${z}/${tx}/${ty}.png`;
-      const res = await fetch(url);
+      const res = await fetch(url, { signal: AbortSignal.timeout(15000) });
       if (!res.ok) throw new Error(`Terrarium fetch failed: ${res.status}`);
       tiles.set(`${tx}:${ty}`, decodePngRgb(Buffer.from(await res.arrayBuffer())));
     }
@@ -365,7 +365,6 @@ export async function fetchDEM({ rootDir, regionCfg, bbox, regionName, copernicu
       }
     } catch {}
   }
-
   if (overlapping.length > 0 && bboxFullyCoveredByBoxes(bbox, overlapping.map(o => o.bounds))) {
     const singleCover = overlapping.find(o => bboxFullyCoveredByBoxes(bbox, [o.bounds]));
     if (singleCover) {
@@ -391,16 +390,21 @@ export async function fetchDEM({ rootDir, regionCfg, bbox, regionName, copernicu
     );
   }
 
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(new Error('Copernicus COG request timed out after 20s')), 20000);
   try {
     console.log(`Fetching Copernicus DEM GLO-30 COG (${copernicusTiles.length} tile(s)) for ${regionName} block...`);
     return await loadCopernicusMosaic(
       copernicusTiles,
       bbox,
       'Copernicus DEM GLO-30 (30m, ESA/Airbus Open Data)',
-      rootDir
+      rootDir,
+      ac.signal
     );
   } catch (err) {
     console.warn(`Copernicus COG failed (${err.message}); falling back to AWS Terrarium tiles...`);
     return loadFromTerrariumFallback(bbox);
+  } finally {
+    clearTimeout(timer);
   }
 }

@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Info, MessageSquare, Settings } from 'lucide-react';
 import { useT } from '../context/RegionContext';
-import type { BasemapId, Language, ViewMode } from '../types/gis';
+import type { BasemapId, Language, TabId, ViewMode } from '../types/gis';
 
 interface TopHudProps {
   lang: Language;
   viewMode: ViewMode;
+  tab: TabId;
   is3D: boolean;
   basemap: BasemapId;
   onChangeViewMode: (mode: ViewMode) => void;
@@ -20,6 +21,7 @@ interface TopHudProps {
 export function TopHud({
   lang,
   viewMode,
+  tab,
   is3D,
   basemap,
   onChangeViewMode,
@@ -53,19 +55,31 @@ export function TopHud({
     };
   }, [menuOpen]);
 
-  const surfaceModes: [BasemapId, string][] = isDetail
-    ? [
-        ['sat', t.bmSat],
-        ['elev', t.bmElev],
-        ['relief', t.bmRelief],
-        ['slope', t.bmSlope],
-        ['topo', t.bmTopo],
-        ['osm', t.bmOsm]
-      ]
-    : [
-        ['sat', t.bmSat],
-        ['osm', t.bmOsm]
-      ];
+  const surfaceModes: [BasemapId, string][] =
+    tab === 'sim'
+      ? isDetail
+        ? [
+            ['relief', t.bmRelief],
+            ['elev', t.bmElev],
+            ['slope', t.bmSlope]
+          ]
+        : [
+            ['relief', t.bmRelief],
+            ['elev', t.bmElev]
+          ]
+      : isDetail
+        ? [
+            ['sat', t.bmSat],
+            ['elev', t.bmElev],
+            ['relief', t.bmRelief],
+            ['slope', t.bmSlope],
+            ['topo', t.bmTopo],
+            ['osm', t.bmOsm]
+          ]
+        : [
+            ['sat', t.bmSat],
+            ['osm', t.bmOsm]
+          ];
 
   return (
     <div className="pointer-events-none absolute top-3 right-3 z-25 flex max-w-[calc(100vw-408px)] flex-col items-end gap-2.5 max-md:top-2 max-md:right-2 max-md:left-2 max-md:max-w-none">
@@ -229,7 +243,11 @@ export function TopHud({
         )}
       </div>
       </div>
-      {children}
+      {children && (
+        <div className="sidebar-scroll pointer-events-none flex max-h-[calc(100vh-236px)] flex-col items-end gap-2 overflow-y-auto pb-0.5 max-md:hidden">
+          {children}
+        </div>
+      )}
     </div>
   );
 }

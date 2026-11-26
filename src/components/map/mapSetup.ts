@@ -242,6 +242,7 @@ export function createInitialMapStyle(
       'img-landcover': { type: 'image', url: `${base}/raster-landcover.png`, coordinates: imgCoords },
       'img-scour-change': { type: 'image', url: `${base}/raster-scour-change.png`, coordinates: imgCoords },
       'img-cascade-landslide': { type: 'image', url: TRANSPARENT_1PX_PNG, coordinates: imgCoords },
+      'img-cascade-agreement': { type: 'image', url: TRANSPARENT_1PX_PNG, coordinates: imgCoords },
       'img-hand-clogged-low': { type: 'image', url: `${base}/raster-hand-clogged-low.png`, coordinates: imgCoords },
       'img-hand-clogged-med': { type: 'image', url: `${base}/raster-hand-clogged-med.png`, coordinates: imgCoords },
       'img-hand-clogged-high': { type: 'image', url: `${base}/raster-hand-clogged-high.png`, coordinates: imgCoords },
@@ -355,7 +356,7 @@ export function addDataSourcesAndLayers(map: MapLibreMap, ds: LoadedDatasets, ba
     });
   }
 
-  // Dynamic physical cascade overlays (vector-sharp blue pools + steep-slope landslide risk)
+  // Dynamic physical cascade overlays (vector-sharp blue pools + steep-slope landslide risk + ensemble agreement)
   map.addLayer({
     id: 'cascade-landslide-overlay',
     type: 'raster',
@@ -364,13 +365,48 @@ export function addDataSourcesAndLayers(map: MapLibreMap, ds: LoadedDatasets, ba
     paint: { 'raster-opacity': 0.82, 'raster-fade-duration': 0 }
   });
 
-  map.addSource('src-sim-pools-shallow', { type: 'geojson', data: asGeoInput(EMPTY_FC) });
   map.addLayer({
-    id: 'sim-pools-shallow-fill',
+    id: 'cascade-agreement-overlay',
+    type: 'raster',
+    source: 'img-cascade-agreement',
+    layout: { visibility: 'none' },
+    paint: { 'raster-opacity': 0.85, 'raster-fade-duration': 0 }
+  });
+
+  // 3-tier calm cartographic depth contour bands (~13.8 m DEMNAS riverbank precision):
+  // Tier 1 (0.12-0.30m shallow terrain flow): subtle translucent tint + dashed outline
+  // Tier 2 (0.30-1.00m moderate basin depth): sky-blue + crisp hairline contour
+  // Tier 3 (>1.00m deep channel / bankfull overflow): clear ocean blue (crisp on Relief/Elevasi)
+  map.addSource('src-sim-pools-yard', { type: 'geojson', data: asGeoInput(EMPTY_FC) });
+  map.addLayer({
+    id: 'sim-pools-yard-fill',
     type: 'fill',
-    source: 'src-sim-pools-shallow',
+    source: 'src-sim-pools-yard',
+    layout: { visibility: 'none' },
+    paint: { 'fill-color': '#7dd3fc', 'fill-opacity': 0.22, 'fill-antialias': true }
+  });
+  map.addLayer({
+    id: 'sim-pools-yard-outline',
+    type: 'line',
+    source: 'src-sim-pools-yard',
+    layout: { visibility: 'none', 'line-cap': 'round', 'line-join': 'round' },
+    paint: { 'line-color': '#0284c7', 'line-width': 1.0, 'line-dasharray': [3, 2], 'line-opacity': 0.50 }
+  });
+
+  map.addSource('src-sim-pools-knee', { type: 'geojson', data: asGeoInput(EMPTY_FC) });
+  map.addLayer({
+    id: 'sim-pools-knee-fill',
+    type: 'fill',
+    source: 'src-sim-pools-knee',
     layout: { visibility: 'none' },
     paint: { 'fill-color': '#38bdf8', 'fill-opacity': 0.34, 'fill-antialias': true }
+  });
+  map.addLayer({
+    id: 'sim-pools-knee-outline',
+    type: 'line',
+    source: 'src-sim-pools-knee',
+    layout: { visibility: 'none', 'line-cap': 'round', 'line-join': 'round' },
+    paint: { 'line-color': '#0369a1', 'line-width': 1.05, 'line-opacity': 0.58 }
   });
 
   map.addSource('src-sim-pools-deep', { type: 'geojson', data: asGeoInput(EMPTY_FC) });
@@ -379,17 +415,94 @@ export function addDataSourcesAndLayers(map: MapLibreMap, ds: LoadedDatasets, ba
     type: 'fill',
     source: 'src-sim-pools-deep',
     layout: { visibility: 'none' },
-    paint: { 'fill-color': '#0284c7', 'fill-opacity': 0.34, 'fill-antialias': true }
+    paint: { 'fill-color': '#0369a1', 'fill-opacity': 0.50, 'fill-antialias': true }
   });
 
-  map.addSource('src-sim-affected-buildings', { type: 'geojson', data: asGeoInput(EMPTY_FC) });
+  map.addSource('src-sim-scour-reaches', { type: 'geojson', data: asGeoInput(EMPTY_FC) });
   map.addLayer({
-    id: 'sim-affected-buildings-line',
+    id: 'sim-scour-reaches-line',
     type: 'line',
-    source: 'src-sim-affected-buildings',
-    minzoom: 13.5,
+    source: 'src-sim-scour-reaches',
+    layout: { visibility: 'none', 'line-cap': 'round', 'line-join': 'round' },
+    paint: {
+      'line-color': ['match', ['get', 'severity'], 'severe', '#b91c1c', '#d97706'],
+      'line-width': ['match', ['get', 'severity'], 'severe', 5.2, 3.6],
+      'line-opacity': 0.92
+    }
+  });
+
+  map.addSource('src-sim-survey-reaches', { type: 'geojson', data: asGeoInput(EMPTY_FC) });
+  map.addLayer({
+    id: 'sim-survey-reaches-line',
+    type: 'line',
+    source: 'src-sim-survey-reaches',
+    layout: { visibility: 'none', 'line-cap': 'round', 'line-join': 'round' },
+    paint: {
+      'line-color': [
+        'match',
+        ['get', 'dataConfidence'],
+        'high',
+        '#047857',
+        'medium',
+        '#0369a1',
+        '#b45309'
+      ],
+      'line-width': ['interpolate', ['linear'], ['coalesce', ['get', 'priorityScore'], 40], 15, 2.4, 85, 5.0],
+      'line-opacity': 0.9
+    }
+  });
+
+  map.addSource('src-storm-core', { type: 'geojson', data: asGeoInput(EMPTY_FC) });
+  map.addLayer({
+    id: 'storm-core-fill',
+    type: 'fill',
+    source: 'src-storm-core',
+    filter: ['==', ['get', 'kind'], 'ring'],
     layout: { visibility: 'none' },
-    paint: { 'line-color': '#f59e0b', 'line-width': 1.25, 'line-opacity': 0.78 }
+    paint: { 'fill-color': '#0369a1', 'fill-opacity': 0.08 }
+  });
+  map.addLayer({
+    id: 'storm-core-ring',
+    type: 'line',
+    source: 'src-storm-core',
+    filter: ['==', ['get', 'kind'], 'ring'],
+    layout: { visibility: 'none', 'line-cap': 'round', 'line-join': 'round' },
+    paint: { 'line-color': '#0369a1', 'line-width': 2.2, 'line-dasharray': [3, 2], 'line-opacity': 0.85 }
+  });
+  map.addLayer({
+    id: 'storm-core-dot',
+    type: 'circle',
+    source: 'src-storm-core',
+    filter: ['==', ['get', 'kind'], 'center'],
+    layout: { visibility: 'none' },
+    paint: {
+      'circle-radius': 6,
+      'circle-color': '#0369a1',
+      'circle-stroke-color': '#ffffff',
+      'circle-stroke-width': 2
+    }
+  });
+
+  map.addSource('src-calibration-marks', { type: 'geojson', data: asGeoInput(EMPTY_FC) });
+  map.addLayer({
+    id: 'calibration-marks-circle',
+    type: 'circle',
+    source: 'src-calibration-marks',
+    layout: { visibility: 'none' },
+    paint: {
+      'circle-radius': 6.5,
+      'circle-color': [
+        'match',
+        ['get', 'kind'],
+        'hwm',
+        '#0369a1',
+        'scour',
+        '#d97706',
+        '#b91c1c'
+      ],
+      'circle-stroke-color': '#ffffff',
+      'circle-stroke-width': 2.2
+    }
   });
 
   map.addSource('src-settlements', { type: 'geojson', data: asGeoInput(ds.settlements) });

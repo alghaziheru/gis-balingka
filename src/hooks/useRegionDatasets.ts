@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { LoadedDatasets } from '../components/MapView';
 import { getRegionDataBasePath, REGION, type RegionConfig } from '../config/region';
+import { CLIMATE_BASELINE, type ClimateBaselineData } from '../data/climateBaseline';
 import { DemClient } from '../lib/demClient';
 import type { DatasetMetadata, DemGridData, SimFieldsData } from '../types/gis';
 
@@ -42,6 +43,7 @@ export function useRegionDatasets(region: RegionConfig = REGION) {
   const [metadata, setMetadata] = useState<DatasetMetadata | null>(null);
   const [demClient, setDemClient] = useState<DemClient | null>(null);
   const [simFields, setSimFields] = useState<SimFieldsData | null>(null);
+  const [climateBaseline, setClimateBaseline] = useState<ClimateBaselineData>(CLIMATE_BASELINE);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [initialTelemetry, setInitialTelemetry] = useState<CursorTelemetry | null>(null);
   const [datasetProgress, setDatasetProgress] = useState<DatasetLoadProgress>({
@@ -64,6 +66,7 @@ export function useRegionDatasets(region: RegionConfig = REGION) {
     setMetadata(null);
     setDemClient(null);
     setSimFields(null);
+    setClimateBaseline(CLIMATE_BASELINE);
     setLoadError(null);
     setDatasetProgress({
       loadedFiles: 0,
@@ -131,7 +134,8 @@ export function useRegionDatasets(region: RegionConfig = REGION) {
           drainageDraft,
           sfData,
           agamRbiRivers,
-          agamContext
+          agamContext,
+          climData
         ] = await Promise.all([
           fetchPart<DatasetMetadata>('metadata.json', DATASET_WEIGHTS.metadata, { required: true }),
           fetchPart<DemGridData>('dem-grid.json', DATASET_WEIGHTS.demGrid, { required: true }),
@@ -156,11 +160,17 @@ export function useRegionDatasets(region: RegionConfig = REGION) {
           }),
           fetchPart<LoadedDatasets['agamContext']>('agam-context.json', DATASET_WEIGHTS.agamContext, {
             fallback: null
+          }),
+          fetchPart<ClimateBaselineData | null>('climate-baseline.json', 0, {
+            fallback: null
           })
         ]);
 
         if (cancelled) return;
         const m = meta as DatasetMetadata;
+        if (climData && typeof climData === 'object' && climData.returnPeriodsMm) {
+          setClimateBaseline(climData as ClimateBaselineData);
+        }
         const client = new DemClient(demGrid as DemGridData);
         const matchName = region.shortName.trim().toLowerCase();
         const regionPlace = (
@@ -259,6 +269,7 @@ export function useRegionDatasets(region: RegionConfig = REGION) {
     metadata,
     demClient,
     simFields,
+    climateBaseline,
     loadError,
     datasetProgress,
     retryLoad,
