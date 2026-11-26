@@ -41,6 +41,7 @@
     "import-seed": "node scripts/import-seed.mjs",
     "sensitivity": "node scripts/run-sensitivity.mjs",
     "benchmark": "node scripts/run-benchmarks.mjs",
+    "replicability": "node scripts/run-replicability-benchmark.mjs",
     "test": "node --test tests/hydrology.test.mjs tests/api.test.mjs",
     "verify": "pnpm run typecheck && pnpm test && pnpm run build"
   },

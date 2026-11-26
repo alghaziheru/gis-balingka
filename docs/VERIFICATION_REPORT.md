@@ -80,10 +80,30 @@ Even between two global daily reanalyses (`ERA5-Land` vs `NASA POWER`), 100-year
 
 ---
 
-## 4. Reproducing These Experiments
+## 4. Multi-Village Replicability Case Study (`Option A` — Desa Sriharjo, Kab. Bantul, DI Yogyakarta)
+
+To verify zero-hardcoding portability outside West Sumatra without any local BIG `.gdb`/DEMNAS archives, `pnpm run replicability` spins up an isolated temporary directory configured only with `region.config.json` for **Desa Sriharjo** (`Kec. Imogiri, Kab. Bantul, DI Yogyakarta`, `-7.946, 110.406`, `soilProfile: "alluvial_clay"`), executes `prepare-data.mjs` end-to-end on Option A global open data, and evaluates `CascadeEngine` + `buildModelParameterAudit`. Generated artifact: [`docs/benchmarks/replicability-summary.json`](./benchmarks/replicability-summary.json).
+
+*Fallback resilience verified during run:* Copernicus DEM GLO-30 COG hit the bounded 20 s timeout (`Copernicus COG request timed out after 20s`) and automatically fell back to `AWS Mapzen Terrarium DEM (Fallback z13)`; ESA WorldCover COG returned `fetch failed` and cleanly used the default CN fallback, completing asset generation in **`127.23 s`** (`21` files, `4.72 MB`).
+
+| Metric / Invariant | Nagari Balingka *(Case Study #1, Track B)* | Desa Sriharjo *(Case Study #2, Track A)* |
+|---|---|---|
+| **DEM & Grid** | `BIG DEMNAS 8m` (`542×760`, `13.8 m`) | `AWS Mapzen Terrarium DEM (Fallback z13)` (`160×160`, `20.7 m`) |
+| **Area & Relief** | `29.89 km²` · `1,032–2,869 m` | `10.97 km²` · `16–373 m` |
+| **Hydrologic Network & Exposure** | `54` crossings, `6` bridges, `2,175` buildings | `73` reaches, `24` crossings, `2` bridges, `3,123` OSM buildings |
+| **Soil Profile Preset** | `volcanic_andisol` | `alluvial_clay` |
+| **41-Yr Climate (`1985–2025`)** | `4,203 mm/yr` (`1.073×` BMKG bias), `R24 T100 = 259 mm`, `R48 T100 = 337 mm` | `1,856 mm/yr` (`1.0×` ERA5-Land), `R24 T100 = 185 mm`, `R48 T100 = 243 mm` |
+| **Normal 2h Check (`15 mm/h × 2h`)** | Peak `4.7 m³/s` *(dry)*, closure `0%` | Peak `7.6 m³/s` *(moist)*, flood `0 ha`, landslide `0 ha`, closure `0%` |
+| **Intense 3h Check (`IDF-capped`)** | `40 mm/h × 3h` → Peak `125.8 m³/s`, overflow `2.2 ha`, slope `1.6 ha`, closure `0%` | `35 mm/h × 3h` (local 3h cap `35 mm/h`) → Peak `33.9 m³/s`, runoff `52.5 mm`, flood `0 ha`, landslide `0 ha`, closure `0%` |
+| **Causal Hydrograph & Parameter Hygiene** | Scrubbing `progress` leaves full hydrograph unchanged | `causalHydrograph = true`, `maxClosureErrorPct = 0%`, `zeroBalingkaLeakage = true` across `9` audit rows |
+
+---
+
+## 5. Reproducing These Experiments
 
 ```bash
 pnpm test              # Fast deterministic unit & methodology suite (node --test)
 pnpm run sensitivity   # N=500 LHS + 12x7 Morris sweeps -> docs/benchmarks/sensitivity-*
 pnpm run benchmark     # Analytical checks + latency + NASA POWER -> docs/benchmarks/verification-summary.json
+pnpm run replicability # Isolated Option A second-village portability test -> docs/benchmarks/replicability-summary.json
 ```

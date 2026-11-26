@@ -29,7 +29,7 @@ export function downsampleGrid(elev, w, h, maxDim = 520) {
   return { elev: out, width: nw, height: nh };
 }
 
-export async function loadFromGeoTIFF(tiff, bbox, sourceLabel) {
+export async function loadFromGeoTIFF(tiff, bbox, sourceLabel, signal) {
   const image = await tiff.getImage();
   const imgW = image.getWidth();
   const imgH = image.getHeight();
@@ -42,7 +42,7 @@ export async function loadFromGeoTIFF(tiff, bbox, sourceLabel) {
 
   const winW = Math.max(10, c1 - c0);
   const winH = Math.max(10, r1 - r0);
-  const rasters = await image.readRasters({ window: [c0, r0, c0 + winW, r0 + winH] });
+  const rasters = await image.readRasters({ window: [c0, r0, c0 + winW, r0 + winH], signal });
   const raw = rasters[0];
   let validSum = 0;
   let validCount = 0;
@@ -75,10 +75,10 @@ export async function loadFromGeoTIFF(tiff, bbox, sourceLabel) {
   };
 }
 
-export async function loadCopernicusMosaic(tiles, bbox, sourceLabel) {
+export async function loadCopernicusMosaic(tiles, bbox, sourceLabel, signal) {
   if (tiles.length === 1) {
-    const tiff = await fromUrl(tiles[0].url);
-    return loadFromGeoTIFF(tiff, bbox, sourceLabel);
+    const tiff = await fromUrl(tiles[0].url, {}, signal);
+    return loadFromGeoTIFF(tiff, bbox, sourceLabel, signal);
   }
   const pxPerDeg = 3600; // Copernicus GLO-30 (~1 arc-second)
   const rawW = Math.max(20, Math.round((bbox.east - bbox.west) * pxPerDeg));
@@ -89,7 +89,7 @@ export async function loadCopernicusMosaic(tiles, bbox, sourceLabel) {
   const elev = new Float32Array(width * height).fill(Number.NaN);
 
   for (const tile of tiles) {
-    const tiff = await fromUrl(tile.url);
+    const tiff = await fromUrl(tile.url, {}, signal);
     const image = await tiff.getImage();
     const imgW = image.getWidth();
     const imgH = image.getHeight();
@@ -107,7 +107,7 @@ export async function loadCopernicusMosaic(tiles, bbox, sourceLabel) {
     const r1 = Math.min(imgH, Math.ceil(((maxY - iy0) / (maxY - minY)) * imgH));
     const winW = Math.max(1, c1 - c0);
     const winH = Math.max(1, r1 - r0);
-    const [raw] = await image.readRasters({ window: [c0, r0, c0 + winW, r0 + winH] });
+    const [raw] = await image.readRasters({ window: [c0, r0, c0 + winW, r0 + winH], signal });
 
     const outC0 = Math.max(0, Math.floor(((ix0 - bbox.west) / (bbox.east - bbox.west)) * width));
     const outC1 = Math.min(width, Math.ceil(((ix1 - bbox.west) / (bbox.east - bbox.west)) * width));
@@ -195,7 +195,7 @@ export async function loadFromTerrariumFallback(bbox) {
   for (const tx of txList) {
     for (const ty of tyList) {
       const url = `https://s3.amazonaws.com/elevation-tiles-prod/terrarium/${z}/${tx}/${ty}.png`;
-      const res = await fetch(url);
+      const res = await fetch(url, { signal: AbortSignal.timeout(15000) });
       if (!res.ok) throw new Error(`Terrarium fetch failed: ${res.status}`);
       tiles.set(`${tx}:${ty}`, decodePngRgb(Buffer.from(await res.arrayBuffer())));
     }
@@ -232,11 +232,20 @@ export async function fetchDEM({ rootDir, regionCfg, bbox, regionName, copernicu
         : `Local GeoTIFF (${path.basename(localPath)})`;
     return loadFromGeoTIFF(tiff, bbox, label);
   }
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(new Error('Copernicus COG request timed out after 20s')), 20000);
   try {
     console.log(`Fetching Copernicus DEM GLO-30 COG (${copernicusTiles.length} tile(s)) for ${regionName} block...`);
-    return await loadCopernicusMosaic(copernicusTiles, bbox, 'Copernicus DEM GLO-30 (30m, ESA/Airbus Open Data)');
+    return await loadCopernicusMosaic(
+      copernicusTiles,
+      bbox,
+      'Copernicus DEM GLO-30 (30m, ESA/Airbus Open Data)',
+      ac.signal
+    );
   } catch (err) {
     console.warn(`Copernicus COG failed (${err.message}); falling back to AWS Terrarium tiles...`);
     return loadFromTerrariumFallback(bbox);
+  } finally {
+    clearTimeout(timer);
   }
 }

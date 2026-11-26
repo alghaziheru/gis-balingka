@@ -2026,4 +2026,18 @@ test('Phase 3 paper benchmarks: LHS stratification, nominalOnly parity, sensitiv
   assert.ok(ver.fhwaHds5Orifice.maxRelErrPct < 0.5, `expected HDS-5 error < 0.5%, got ${ver.fhwaHds5Orifice.maxRelErrPct}`);
   assert.ok(ver.muskingumChannel.minQ >= 0 && ver.muskingumChannel.lagMin > 0);
   assert.ok(ver.waterBalanceClosure.maxAbsClosureErrorPct < 0.05);
+
+  // 5. Saved Phase 3 & multi-village replicability benchmark artifact integrity
+  const benchmarkDir = path.join(ROOT_DIR, 'docs', 'benchmarks');
+  const verArtifact = JSON.parse(fs.readFileSync(path.join(benchmarkDir, 'verification-summary.json'), 'utf8'));
+  const sensArtifact = JSON.parse(fs.readFileSync(path.join(benchmarkDir, 'sensitivity-summary.json'), 'utf8'));
+  const repArtifact = JSON.parse(fs.readFileSync(path.join(benchmarkDir, 'replicability-summary.json'), 'utf8'));
+
+  assert.ok(verArtifact.analytical.scsCnAnalytical.r2 > 0.999);
+  assert.ok(verArtifact.analytical.waterBalanceClosure.maxAbsClosureErrorPct < 0.05);
+  assert.ok(sensArtifact.nLhs >= 500 && sensArtifact.scenarios?.upland_3h && sensArtifact.scenarios?.monsoon_48h);
+  assert.equal(repArtifact.checks.causalHydrograph, true);
+  assert.equal(repArtifact.checks.zeroBalingkaLeakage, true);
+  assert.ok(repArtifact.checks.maxClosureErrorPct < 0.05);
+  assert.ok(repArtifact.terrainAndNetwork.reachCount > 0 && repArtifact.terrainAndNetwork.buildingCount > 0);
 });
