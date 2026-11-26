@@ -201,10 +201,18 @@ export function ActiveMapLegend({
             <div className="flex items-center gap-2 text-[#161c1a]">
               <span className="h-3 w-3 shrink-0 rounded-[3px] bg-[#ea580c]" />
               <span className="flex min-w-0 items-center gap-1">
-                <span>{isEn ? 'Steep slope FoS < 1.1 (model)' : 'Lereng curam FoS < 1,1 (model)'}</span>
+                <span>
+                  {viewMode === 'detail'
+                    ? isEn
+                      ? 'Water-saturated steep slope · FoS < 1.1'
+                      : 'Tanah lereng curam jenuh air · FoS < 1,1'
+                    : isEn
+                      ? 'Water-saturated steep slope (model)'
+                      : 'Tanah lereng curam jenuh air (model)'}
+                </span>
                 <InfoTooltip
                   text={t.infoLegendLandslide}
-                  label={isEn ? 'Saturated steep slope (model)' : 'Lereng curam jenuh air'}
+                  label={isEn ? 'Water-saturated steep slope (model)' : 'Tanah lereng curam jenuh air'}
                 />
               </span>
             </div>
@@ -216,7 +224,11 @@ export function ActiveMapLegend({
             <div className="flex items-center gap-2 text-[#161c1a]">
               <span className="h-3 w-3 shrink-0 rounded-[3px] bg-[#f59e0b]/45 border border-[#d97706]/50" />
               <span className="flex min-w-0 items-center gap-1">
-                <span>{isEn ? 'Downslope runout shadow (indicative)' : 'Jalur bawah lereng (~20° indikatif)'}</span>
+                <span>
+                  {isEn
+                    ? 'Downslope zone below saturated slope (~20°)'
+                    : 'Area bawah lereng jenuh (~20° indikatif)'}
+                </span>
               </span>
             </div>
           )

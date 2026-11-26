@@ -195,7 +195,7 @@ export const I18N = {
     infoLegendDeep:
       'Tingkat kedalaman model topografi HAND (Height Above Nearest Drainage) relatif terhadap dasar alur terdekat: >1,0 m alur sungai dalam, 0,3–1,0 m cekungan sedang, dan 0,1–0,3 m aliran dangkal.',
     infoLegendLandslide:
-      'Sel lereng curam (>26%) pada model komputasi dengan nilai indeks kejenuhan tinggi menurut parameter saat ini.',
+      'Tanah lereng curam (>20%) yang jenuh resapan hujan (bukan genangan air) sehingga tahanan gesernya menurun pada perhitungan Infinite-Slope FoS.',
     agamClickHint:
       'Klik titik mana pun di dalam Nagari untuk melihat atribut poligon data terbuka Pemkab Agam (jenis tanah, geologi, peta gerakan tanah & status hutan SK 35).',
     infoExag:
@@ -551,7 +551,7 @@ export const I18N = {
     infoLegendDeep:
       'Modeled water depth tiers in the Height Above Nearest Drainage (HAND) terrain basin: >1.0 m deep river channel, 0.3–1.0 m moderate basin depth, and 0.1–0.3 m shallow terrain flow.',
     infoLegendLandslide:
-      'Steep slope cells (>26%) exceeding the mathematical saturation index threshold under current model parameters.',
+      'Steep hillslope soil (>20%) saturated by infiltrating rainfall (not standing water), lowering modeled shear stability in the Infinite-Slope FoS equation.',
     agamClickHint:
       'Click any point inside the Nagari to view Pemkab Agam open-map polygon attributes (soil, geology, ground-movement map, and SK 35 forest status).',
     infoExag:

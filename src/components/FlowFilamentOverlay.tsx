@@ -2,13 +2,14 @@ import { useEffect, useRef, type MutableRefObject } from 'react';
 import type { Map as MapLibreMap } from 'maplibre-gl';
 import type { CascadeEngine } from '../lib/cascadeEngine';
 import { sampleCorridorAtDistance, type FlowCorridor } from '../lib/flowRibbons';
-import type { DrainCondition, RainPattern, SoilMoisture } from '../types/gis';
+import type { DrainCondition, GeoFeatureCollection, RainPattern, SoilMoisture } from '../types/gis';
 
 interface FlowFilamentOverlayProps {
   active: boolean;
   mapRef: MutableRefObject<MapLibreMap | null>;
   corridors: FlowCorridor[];
   glintPoints: [number, number][];
+  nagariBoundary?: GeoFeatureCollection | null;
   rainMmHr: number;
   durationMin: number;
   progress: number;
@@ -52,6 +53,7 @@ export function FlowFilamentOverlay({
   mapRef,
   corridors,
   glintPoints,
+  nagariBoundary = null,
   rainMmHr,
   durationMin,
   progress,
@@ -65,6 +67,7 @@ export function FlowFilamentOverlay({
     active,
     corridors,
     glintPoints,
+    nagariBoundary,
     rainMmHr,
     durationMin,
     progress,
@@ -77,6 +80,7 @@ export function FlowFilamentOverlay({
     active,
     corridors,
     glintPoints,
+    nagariBoundary,
     rainMmHr,
     durationMin,
     progress,
@@ -137,6 +141,40 @@ export function FlowFilamentOverlay({
       const refTravel = st.cascadeEngine ? Math.max(18, st.cascadeEngine.fields.p90TravelMin) : 75;
       const waveFrontMin = Math.max(st.durationMin * st.progress, st.progress * refTravel * 1.32);
       const isClogged = st.drainCondition !== 'cleared';
+
+      const boundary = st.nagariBoundary;
+      let hasClip = false;
+      if (boundary?.features?.length) {
+        ctx.save();
+        ctx.beginPath();
+        for (const feat of boundary.features) {
+          const geom = feat.geometry as unknown as { type?: string; coordinates?: unknown } | null;
+          if (!geom) continue;
+          const polys: [number, number][][][] =
+            geom.type === 'Polygon'
+              ? [geom.coordinates as [number, number][][]]
+              : geom.type === 'MultiPolygon'
+                ? (geom.coordinates as [number, number][][][])
+                : [];
+          for (const rings of polys) {
+            for (const ring of rings) {
+              if (!ring || ring.length < 3) continue;
+              for (let ri = 0; ri < ring.length; ri++) {
+                const pt = map.project([ring[ri][0], ring[ri][1]]);
+                if (ri === 0) ctx.moveTo(pt.x, pt.y);
+                else ctx.lineTo(pt.x, pt.y);
+              }
+              ctx.closePath();
+              hasClip = true;
+            }
+          }
+        }
+        if (hasClip) {
+          ctx.clip('evenodd');
+        } else {
+          ctx.restore();
+        }
+      }
 
       ctx.lineCap = 'round';
       ctx.lineJoin = 'round';
@@ -298,6 +336,10 @@ export function FlowFilamentOverlay({
           ctx.fillRect(pt.x - 0.75, pt.y - 0.75, 1.5, 1.5);
         }
       }
+
+      if (hasClip) {
+        ctx.restore();
+      }
     };
 
     const onMapRender = () => {
@@ -333,7 +375,7 @@ export function FlowFilamentOverlay({
     <canvas
       ref={canvasRef}
       aria-hidden="true"
-      className="pointer-events-none absolute inset-0 z-10 h-full w-full"
+      className="pointer-events-none absolute inset-0 z-[2] h-full w-full"
     />
   );
 }

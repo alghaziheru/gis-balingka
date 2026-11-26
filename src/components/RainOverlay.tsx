@@ -243,7 +243,7 @@ export function RainOverlay({
     <canvas
       ref={canvasRef}
       aria-hidden="true"
-      className="pointer-events-none absolute inset-0 z-11 h-full w-full"
+      className="pointer-events-none absolute inset-0 z-[3] h-full w-full"
     />
   );
 }

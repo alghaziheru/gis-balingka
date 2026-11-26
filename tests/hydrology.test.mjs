@@ -1012,10 +1012,202 @@ test('buildFlowCorridors orients downhill with multi-point sampling, includes BI
   assert.ok(first.totalLengthM > 35);
   assert.ok(first.strandCount >= 3 && first.strandCount <= 7);
 
+  // When nagariBoundary is provided, outside segments are clipped/dropped cleanly
+  const clippedBox = {
+    type: 'FeatureCollection',
+    features: [
+      {
+        type: 'Feature',
+        properties: { name: 'Uji Batas Nagari' },
+        geometry: {
+          type: 'Polygon',
+          coordinates: [
+            [
+              [100.305, -0.352],
+              [100.320, -0.352],
+              [100.320, -0.340],
+              [100.305, -0.340],
+              [100.305, -0.352]
+            ]
+          ]
+        }
+      }
+    ]
+  };
+  const crossBorderFlows = {
+    type: 'FeatureCollection',
+    features: [
+      {
+        type: 'Feature',
+        properties: { id: 'inside-only', tier: 1, length_m: 600 },
+        geometry: {
+          type: 'LineString',
+          coordinates: [
+            [100.310, -0.342],
+            [100.315, -0.348]
+          ]
+        }
+      },
+      {
+        type: 'Feature',
+        properties: { id: 'cross-boundary', tier: 1, length_m: 1500 },
+        geometry: {
+          type: 'LineString',
+          coordinates: [
+            [100.316, -0.345],
+            [100.328, -0.345] // exits eastern boundary x=100.320
+          ]
+        }
+      },
+      {
+        type: 'Feature',
+        properties: { id: 'outside-only', tier: 1, length_m: 800 },
+        geometry: {
+          type: 'LineString',
+          coordinates: [
+            [100.325, -0.342],
+            [100.332, -0.348]
+          ]
+        }
+      }
+    ]
+  };
+  const boundedCorridors = buildFlowCorridors([], crossBorderFlows, [], getElev, null, {
+    nagariBoundary: clippedBox
+  });
+  assert.equal(boundedCorridors.some(c => c.id.includes('outside-only')), false, 'outside corridor must be dropped');
+  assert.equal(boundedCorridors.some(c => c.id.includes('inside-only')), true, 'inside corridor must be retained');
+  const clipped = boundedCorridors.find(c => c.id.includes('cross-boundary'));
+  assert.ok(clipped, 'crossing corridor should retain its inside-boundary portion');
+  for (const pt of clipped.coords) {
+    assert.ok(pt[0] <= 100.3201, `clipped vertex lng ${pt[0]} must stay inside Nagari boundary`);
+  }
+
   const s0 = sampleCorridorAtDistance(first, 0);
   const sMid = sampleCorridorAtDistance(first, first.totalLengthM * 0.5);
   assert.ok(Number.isFinite(s0.lng) && Number.isFinite(s0.lat) && Number.isFinite(s0.nx) && Number.isFinite(s0.ny));
   assert.ok(Number.isFinite(sMid.lng) && Number.isFinite(sMid.lat));
+});
+
+test('buildFlowCorridors splits merged V-shaped valleys, trims tail bank overshoots, and enforces downhill DEMNAS corridors', t => {
+  // 1. Synthetic V-shaped valley (two converging tributaries stored as one LineString)
+  const vShapeCoords = [
+    [100.3100, -0.3400],
+    [100.3105, -0.3400],
+    [100.3110, -0.3400],
+    [100.3115, -0.3400],
+    [100.3120, -0.3400],
+    [100.3125, -0.3400],
+    [100.3130, -0.3400],
+    [100.3135, -0.3400],
+    [100.3140, -0.3400]
+  ];
+  const vElevs = [1200, 1150, 1100, 1060, 1040, 1080, 1130, 1180, 1210];
+  const synthVElev = (lng, _lat) => {
+    const idx = Math.max(0, Math.min(vElevs.length - 1, Math.round((lng - 100.3100) / 0.0005)));
+    return vElevs[idx];
+  };
+  const vFc = {
+    type: 'FeatureCollection',
+    features: [{ type: 'Feature', properties: { id: 'v-valley', tier: 1, length_m: 445 }, geometry: { type: 'LineString', coordinates: vShapeCoords } }]
+  };
+  const vCorridors = buildFlowCorridors([], vFc, [], synthVElev);
+  assert.equal(vCorridors.length, 2, `Expected V-shaped polyline to split into 2 branches, got ${vCorridors.length}`);
+  for (const branch of vCorridors) {
+    const startE = synthVElev(branch.coords[0][0], branch.coords[0][1]);
+    const endE = synthVElev(branch.coords[branch.coords.length - 1][0], branch.coords[branch.coords.length - 1][1]);
+    assert.ok(startE >= 1190, `Branch start should be uphill (>=1190 m), got ${startE}`);
+    assert.ok(endE <= 1050, `Branch end should meet valley floor (<=1050 m), got ${endE}`);
+    let runningMin = Infinity;
+    for (const pt of branch.coords) {
+      const e = synthVElev(pt[0], pt[1]);
+      if (e < runningMin) runningMin = e;
+      assert.ok(e - runningMin <= 5, `Branch should not climb >5 m after minimum (climbed ${e - runningMin} m)`);
+    }
+  }
+
+  // 2. Synthetic tail-end bank overshoot (+22 m on final vertex)
+  const tailCoords = [
+    [100.3100, -0.3420],
+    [100.3105, -0.3420],
+    [100.3110, -0.3420],
+    [100.3115, -0.3420],
+    [100.3120, -0.3420],
+    [100.3125, -0.3420]
+  ];
+  const tailElevs = [1260, 1220, 1180, 1140, 1110, 1132];
+  const synthTailElev = (lng, _lat) => {
+    const idx = Math.max(0, Math.min(tailElevs.length - 1, Math.round((lng - 100.3100) / 0.0005)));
+    return tailElevs[idx];
+  };
+  const tailFc = {
+    type: 'FeatureCollection',
+    features: [{ type: 'Feature', properties: { id: 'tail-overshoot', tier: 1, length_m: 280 }, geometry: { type: 'LineString', coordinates: tailCoords } }]
+  };
+  const tailCorridors = buildFlowCorridors([], tailFc, [], synthTailElev);
+  assert.equal(tailCorridors.length, 1);
+  const trimmedEnd = tailCorridors[0].coords[tailCorridors[0].coords.length - 1];
+  assert.ok(synthTailElev(trimmedEnd[0], trimmedEnd[1]) <= 1115, `Expected overshooting tail vertex to be trimmed to <=1115 m, got ${synthTailElev(trimmedEnd[0], trimmedEnd[1])}`);
+
+  // 3. Real Nagari Balingka DEMNAS + BIG RBI 50K audit (rbi22-744, rbi22-508, rbi22-116, and all corridors)
+  const demPath = path.join(DATA_DIR, 'dem-grid.json');
+  const rbiPath = path.join(DATA_DIR, 'agam-rbi-rivers.geojson');
+  const boundaryPath = path.join(DATA_DIR, 'nagari-boundary.geojson');
+  if (!IS_BALINGKA || !fs.existsSync(demPath) || !fs.existsSync(rbiPath) || !fs.existsSync(boundaryPath)) {
+    return;
+  }
+
+  const dem = JSON.parse(fs.readFileSync(demPath, 'utf8'));
+  const agamRbi = JSON.parse(fs.readFileSync(rbiPath, 'utf8'));
+  const nagariBoundary = JSON.parse(fs.readFileSync(boundaryPath, 'utf8'));
+  const flowPaths = JSON.parse(fs.readFileSync(path.join(DATA_DIR, 'flow-paths.geojson'), 'utf8'));
+  const verifiedWaterways = JSON.parse(fs.readFileSync(path.join(DATA_DIR, 'verified-waterways.geojson'), 'utf8'));
+  const wwList = verifiedWaterways.features || verifiedWaterways;
+
+  const rawBuf = Buffer.from(dem.elevBase64, 'base64');
+  const elevArr = new Int16Array(rawBuf.buffer, rawBuf.byteOffset, rawBuf.byteLength / 2);
+  const { west, east, south, north } = dem.bbox;
+  const { width, height } = dem;
+  const getDemElev = (lng, lat) => {
+    const fx = ((lng - west) / (east - west)) * (width - 1);
+    const fy = ((north - lat) / (north - south)) * (height - 1);
+    const x0 = Math.max(0, Math.min(width - 2, Math.floor(fx)));
+    const y0 = Math.max(0, Math.min(height - 2, Math.floor(fy)));
+    const tx = Math.max(0, Math.min(1, fx - x0));
+    const ty = Math.max(0, Math.min(1, fy - y0));
+    const v00 = elevArr[y0 * width + x0];
+    const v10 = elevArr[y0 * width + x0 + 1];
+    const v01 = elevArr[(y0 + 1) * width + x0];
+    const v11 = elevArr[(y0 + 1) * width + x0 + 1];
+    return (v00 * (1 - tx) + v10 * tx) * (1 - ty) + (v01 * (1 - tx) + v11 * tx) * ty;
+  };
+
+  const realCorridors = buildFlowCorridors(wwList, flowPaths, [], getDemElev, agamRbi, {
+    includeVerified: true,
+    includeRbi: true,
+    nagariBoundary
+  });
+
+  const rbi744Branches = realCorridors.filter(c => c.id.startsWith('rbi-rbi22-744'));
+  assert.equal(rbi744Branches.length, 2, `Expected rbi22-744 to split into 2 downhill branches, got ${rbi744Branches.length}`);
+  for (const b of rbi744Branches) {
+    const startE = getDemElev(b.coords[0][0], b.coords[0][1]);
+    const endE = getDemElev(b.coords[b.coords.length - 1][0], b.coords[b.coords.length - 1][1]);
+    assert.ok(startE > 1105, `Expected rbi22-744 branch start >1105 m, got ${startE.toFixed(1)}`);
+    assert.ok(endE <= 1070, `Expected rbi22-744 branch end near valley junction <=1070 m, got ${endE.toFixed(1)}`);
+  }
+
+  for (const c of realCorridors) {
+    let runningMin = Infinity;
+    let maxClimb = 0;
+    for (const pt of c.coords) {
+      const e = getDemElev(pt[0], pt[1]);
+      if (e < runningMin) runningMin = e;
+      const climb = e - runningMin;
+      if (climb > maxClimb) maxClimb = climb;
+    }
+    assert.ok(maxClimb <= 10, `Corridor ${c.id} has uphill climb ${maxClimb.toFixed(1)} m (>10 m)`);
+  }
 });
 
 test('CascadeEngine runoffMmGrid and sampleAtLngLat reflect all soil/forest/corridor parameters', () => {

@@ -103,13 +103,15 @@ export function MapView(props: MapViewProps) {
         props.datasets.agamRbiRivers,
         {
           includeVerified: props.layers.verifiedWaterways,
-          includeRbi: props.layers.agamRbiRivers
+          includeRbi: props.layers.agamRbiRivers,
+          nagariBoundary: props.datasets.nagariBoundary
         }
       ),
     [
       props.verifiedWaterways,
       props.datasets.flowPaths,
       props.datasets.agamRbiRivers,
+      props.datasets.nagariBoundary,
       props.suppressedDemIds,
       props.demClient,
       props.layers.verifiedWaterways,
@@ -721,6 +723,7 @@ export function MapView(props: MapViewProps) {
         mapRef={mapRef}
         corridors={corridors}
         glintPoints={poolGlintPoints}
+        nagariBoundary={props.datasets.nagariBoundary}
         rainMmHr={props.simRain}
         durationMin={props.simDurationMin}
         progress={props.simProgress}

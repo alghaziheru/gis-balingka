@@ -578,12 +578,29 @@ export function openCorridorExplainPopup(
           : ''
       }
       ${
-        isDetail && sample.fos < 2.6
-          ? row(
-              isEn ? 'Slope stability (FoS)' : 'Kestabilan lereng (FoS)',
-              `<span style="color:${sample.fos < 1.1 ? '#b91c1c' : sample.fos < 1.35 ? '#b45309' : '#047857'};">${sample.fos.toFixed(2)}</span>`
-            )
-          : ''
+        !isPaused && sample.fos < 1.18
+          ? `${row(
+              isEn ? 'Slope soil condition' : 'Kondisi tanah lereng',
+              `<span style="color:${sample.fos < 1.0 ? '#b91c1c' : '#c2410c'};">${escapeHtml(
+                isDetail
+                  ? isEn
+                    ? `Saturated slope · FoS ${sample.fos.toFixed(2)}`
+                    : `Lereng jenuh air · FoS ${sample.fos.toFixed(2)}`
+                  : isEn
+                    ? 'Water-saturated steep slope'
+                    : 'Lereng curam jenuh air'
+              )}</span>`
+            )}<div style="margin-top:4px;padding:4px 6px;border-radius:6px;background:rgba(234,88,12,0.08);border:1px solid rgba(234,88,12,0.22);font-size:10.5px;line-height:1.35;color:#9a3412;">${escapeHtml(
+              isEn
+                ? 'Orange/red marks rain-saturated steep hillslope soil (not standing water).'
+                : 'Area jingga/merah menandakan tanah lereng terjal jenuh resapan hujan (bukan genangan air).'
+            )}</div>`
+          : isDetail && sample.fos < 2.6
+            ? row(
+                isEn ? 'Slope stability (FoS)' : 'Kestabilan lereng (FoS)',
+                `<span style="color:${sample.fos < 1.35 ? '#b45309' : '#047857'};">${sample.fos.toFixed(2)}</span>`
+              )
+            : ''
       }
       ${
         !isPaused && sample.inRunoutShadow

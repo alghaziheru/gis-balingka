@@ -73,6 +73,14 @@ body,
   border: 1px solid var(--border);
 }
 
+.maplibregl-popup {
+  z-index: 15 !important;
+}
+
+.maplibregl-marker {
+  z-index: 5;
+}
+
 .maplibregl-popup-content {
   background: var(--bg-card) !important;
   color: var(--ink-1);
