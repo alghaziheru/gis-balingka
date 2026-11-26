@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { Crosshair, Lock, MapPinPlus, Pencil, Trash2, Unlock } from 'lucide-react';
-import { I18N } from '../i18n/translations';
+import { useT } from '../context/RegionContext';
 import type {
   DrainageStatus,
   Language,
@@ -63,7 +63,7 @@ export function StructureEditorPanel({
   onDeleteStructure,
   onFlyToStructure
 }: StructureEditorPanelProps) {
-  const t = I18N[lang];
+  const t = useT(lang);
   const isEn = lang === 'en';
   const [name, setName] = useState('');
   const [kind, setKind] = useState<StructureKind>('culvert');

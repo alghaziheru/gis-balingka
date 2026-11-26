@@ -2041,3 +2041,34 @@ test('Phase 3 paper benchmarks: LHS stratification, nominalOnly parity, sensitiv
   assert.ok(repArtifact.checks.maxClosureErrorPct < 0.05);
   assert.ok(repArtifact.terrainAndNetwork.reachCount > 0 && repArtifact.terrainAndNetwork.buildingCount > 0);
 });
+
+test('regions.config.json defines Nagari Balingka and Malalak Timur & Utara with isolated paths and generated spatial assets', () => {
+  const manifestPath = path.join(ROOT_DIR, 'regions.config.json');
+  assert.ok(fs.existsSync(manifestPath), 'regions.config.json must exist');
+  const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+  assert.equal(manifest.defaultRegionId, 'nagari-balingka');
+  assert.equal(manifest.regions.length, 2);
+
+  const ids = new Set();
+  for (const reg of manifest.regions) {
+    assert.ok(reg.id && !ids.has(reg.id), `Duplicate or missing region id: ${reg.id}`);
+    ids.add(reg.id);
+    assert.ok(reg.bbox.west < reg.bbox.east && reg.bbox.south < reg.bbox.north, `Invalid bbox for ${reg.id}`);
+    assert.ok(Array.isArray(reg.cameraPresets) && reg.cameraPresets.length >= 4, `Missing cameraPresets for ${reg.id}`);
+    const rel = String(reg.dataBasePath || '/data').replace(/^\/+/, '');
+    const regDataDir = path.join(ROOT_DIR, 'public', ...rel.split('/'));
+    assert.ok(fs.existsSync(path.join(regDataDir, 'metadata.json')), `Missing metadata.json for ${reg.id}`);
+    assert.ok(fs.existsSync(path.join(regDataDir, 'nagari-boundary.geojson')), `Missing nagari-boundary.geojson for ${reg.id}`);
+    assert.ok(fs.existsSync(path.join(regDataDir, 'sub-boundaries.geojson')), `Missing sub-boundaries.geojson for ${reg.id}`);
+    assert.ok(fs.existsSync(path.join(regDataDir, 'mask.geojson')), `Missing mask.geojson for ${reg.id}`);
+    assert.ok(fs.existsSync(path.join(regDataDir, 'sim-fields.json')), `Missing sim-fields.json for ${reg.id}`);
+    const meta = JSON.parse(fs.readFileSync(path.join(regDataDir, 'metadata.json'), 'utf8'));
+    if (reg.id === 'nagari-balingka') {
+      assert.ok(meta.studyAreaKm2 > 28 && meta.studyAreaKm2 < 32, `Unexpected area for Balingka: ${meta.studyAreaKm2}`);
+    } else if (reg.id === 'malalak-timur-utara') {
+      assert.ok(meta.studyAreaKm2 > 50 && meta.studyAreaKm2 < 60, `Unexpected area for Malalak Timur & Utara: ${meta.studyAreaKm2}`);
+      const subFc = JSON.parse(fs.readFileSync(path.join(regDataDir, 'sub-boundaries.geojson'), 'utf8'));
+      assert.equal(subFc.features.length, 2, 'Malalak Timur & Utara should include both official Nagari sub-boundaries');
+    }
+  }
+});

@@ -14,7 +14,7 @@ import {
   Undo2,
   Unlock
 } from 'lucide-react';
-import { I18N } from '../i18n/translations';
+import { useActiveRegion, useT } from '../context/RegionContext';
 import { fetchExportBundle } from '../lib/api';
 import type { DemClient } from '../lib/demClient';
 import type {
@@ -102,7 +102,8 @@ export function WaterwayEditorPanel({
   onFlyToWaterway,
   onNotify
 }: WaterwayEditorPanelProps) {
-  const t = I18N[lang];
+  const region = useActiveRegion();
+  const t = useT(lang);
   const isEn = lang === 'en';
   const [name, setName] = useState('');
   const [kind, setKind] = useState<WaterwayKind>('stream');
@@ -162,12 +163,12 @@ export function WaterwayEditorPanel({
 
   const handleDownloadBundle = async () => {
     try {
-      const bundle = await fetchExportBundle();
+      const bundle = await fetchExportBundle(region.id);
       const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = 'balingka-waterways-audit-bundle.json';
+      a.download = `${region.id}-waterways-audit-bundle.json`;
       document.body.appendChild(a);
       a.click();
       a.remove();

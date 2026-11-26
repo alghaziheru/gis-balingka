@@ -1,3 +1,4 @@
+import { DEFAULT_REGION_ID, REGION } from '../config/region';
 import type {
   AuditLogEntry,
   CalibrationMarkFeature,
@@ -24,6 +25,13 @@ import type {
 const PASSPHRASE_SESSION_KEY = 'balingka_editor_passphrase_v1';
 const EDITOR_NAME_KEY = 'balingka_editor_name_v1';
 
+function withRegion(url: string, regionId?: string): string {
+  const id = String(regionId || DEFAULT_REGION_ID).trim();
+  if (!id || id === DEFAULT_REGION_ID) return url;
+  const sep = url.includes('?') ? '&' : '?';
+  return `${url}${sep}region=${encodeURIComponent(id)}`;
+}
+
 export function loadStoredPassphrase(): string {
   try {
     return sessionStorage.getItem(PASSPHRASE_SESSION_KEY) || '';
@@ -39,11 +47,11 @@ export function saveStoredPassphrase(passphrase: string): void {
   } catch {}
 }
 
-export function loadEditorName(): string {
+export function loadEditorName(fallbackName = REGION.authorities.defaultEditorName): string {
   try {
-    return localStorage.getItem(EDITOR_NAME_KEY) || 'Relawan Balingka';
+    return localStorage.getItem(EDITOR_NAME_KEY) || fallbackName;
   } catch {
-    return 'Relawan Balingka';
+    return fallbackName;
   }
 }
 
@@ -107,13 +115,17 @@ export function buildStaticSeedWaterways(osmContext: GeoFeatureCollection): Veri
     }));
 }
 
-export async function fetchStaticVerifiedSeed(osmContext: GeoFeatureCollection): Promise<{
+export async function fetchStaticVerifiedSeed(
+  osmContext: GeoFeatureCollection,
+  dataBasePath = '/data'
+): Promise<{
   waterways: VerifiedWaterwayFeature[];
   structures: VerifiedStructureFeature[];
   suppressedDem: SuppressedDemSegment[];
   calibrationMarks: CalibrationMarkFeature[];
   calibrationProfile: CalibrationProfile | null;
 }> {
+  const base = dataBasePath.replace(/\/+$/, '');
   const fetchJson = async <T>(url: string): Promise<T | null> => {
     try {
       const res = await fetch(url);
@@ -125,11 +137,11 @@ export async function fetchStaticVerifiedSeed(osmContext: GeoFeatureCollection):
   };
 
   const [wwFc, stFc, supArr, calFc, calProf] = await Promise.all([
-    fetchJson<{ features?: VerifiedWaterwayFeature[] }>('/data/verified-waterways.geojson'),
-    fetchJson<{ features?: VerifiedStructureFeature[] }>('/data/verified-structures.geojson'),
-    fetchJson<SuppressedDemSegment[]>('/data/suppressed-dem.json'),
-    fetchJson<{ features?: CalibrationMarkFeature[] }>('/data/calibration-marks.geojson'),
-    fetchJson<CalibrationProfile>('/data/calibration-profile.json')
+    fetchJson<{ features?: VerifiedWaterwayFeature[] }>(`${base}/verified-waterways.geojson`),
+    fetchJson<{ features?: VerifiedStructureFeature[] }>(`${base}/verified-structures.geojson`),
+    fetchJson<SuppressedDemSegment[]>(`${base}/suppressed-dem.json`),
+    fetchJson<{ features?: CalibrationMarkFeature[] }>(`${base}/calibration-marks.geojson`),
+    fetchJson<CalibrationProfile>(`${base}/calibration-profile.json`)
   ]);
 
   const waterways =
@@ -170,7 +182,7 @@ export async function verifyEditorPassphrase(passphrase: string): Promise<boolea
   }
 }
 
-export async function fetchWaterwaysState(): Promise<{
+export async function fetchWaterwaysState(regionId?: string): Promise<{
   waterways: VerifiedWaterwayFeature[];
   structures: VerifiedStructureFeature[];
   jorongBoundaries: JorongBoundaryFeature[];
@@ -187,7 +199,7 @@ export async function fetchWaterwaysState(): Promise<{
     calibrationProfile?: CalibrationProfile | null;
     suppressedDem: SuppressedDemSegment[];
     hydroStatus?: HydroStatus;
-  }>('/api/waterways');
+  }>(withRegion('/api/waterways', regionId));
   const waterways = data.waterways?.features || [];
   const structures = data.structures?.features || [];
   const jorongBoundaries = data.jorongBoundaries?.features || [];
@@ -209,10 +221,13 @@ export async function fetchWaterwaysState(): Promise<{
   };
 }
 
-export async function recomputeHydrology(payload: {
-  actor: string;
-  carveDepthM?: number;
-}): Promise<{
+export async function recomputeHydrology(
+  payload: {
+    actor: string;
+    carveDepthM?: number;
+  },
+  regionId?: string
+): Promise<{
   ok: boolean;
   summary: {
     hydroConditioned: boolean;
@@ -230,27 +245,30 @@ export async function recomputeHydrology(payload: {
     suppressedDem: SuppressedDemSegment[];
   };
 }> {
-  return apiFetch('/api/hydrology/recompute', {
+  return apiFetch(withRegion('/api/hydrology/recompute', regionId), {
     method: 'POST',
     body: JSON.stringify(payload)
   });
 }
 
-export async function createWaterway(payload: {
-  name: string;
-  kind: WaterwayKind;
-  status: DrainageStatus;
-  source: WaterwaySource;
-  source_ref?: string | null;
-  notes: string;
-  width_pre_m?: number | null;
-  width_post_m?: number | null;
-  depth_m?: number | null;
-  coordinates: [number, number][];
-  actor: string;
-  reason: string;
-}): Promise<{ feature: VerifiedWaterwayFeature; log: AuditLogEntry }> {
-  return apiFetch('/api/waterways', { method: 'POST', body: JSON.stringify(payload) });
+export async function createWaterway(
+  payload: {
+    name: string;
+    kind: WaterwayKind;
+    status: DrainageStatus;
+    source: WaterwaySource;
+    source_ref?: string | null;
+    notes: string;
+    width_pre_m?: number | null;
+    width_post_m?: number | null;
+    depth_m?: number | null;
+    coordinates: [number, number][];
+    actor: string;
+    reason: string;
+  },
+  regionId?: string
+): Promise<{ feature: VerifiedWaterwayFeature; log: AuditLogEntry }> {
+  return apiFetch(withRegion('/api/waterways', regionId), { method: 'POST', body: JSON.stringify(payload) });
 }
 
 export async function updateWaterway(
@@ -266,34 +284,45 @@ export async function updateWaterway(
     coordinates?: [number, number][];
     actor: string;
     reason: string;
-  }
+  },
+  regionId?: string
 ): Promise<{ feature: VerifiedWaterwayFeature; log: AuditLogEntry }> {
-  return apiFetch(`/api/waterways/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(payload) });
+  return apiFetch(withRegion(`/api/waterways/${encodeURIComponent(id)}`, regionId), {
+    method: 'PUT',
+    body: JSON.stringify(payload)
+  });
 }
 
-export async function deleteWaterway(id: string, payload: { actor: string; reason: string }): Promise<void> {
-  await apiFetch(`/api/waterways/${encodeURIComponent(id)}`, {
+export async function deleteWaterway(
+  id: string,
+  payload: { actor: string; reason: string },
+  regionId?: string
+): Promise<void> {
+  await apiFetch(withRegion(`/api/waterways/${encodeURIComponent(id)}`, regionId), {
     method: 'DELETE',
     body: JSON.stringify(payload)
   });
 }
 
-export async function createStructure(payload: {
-  name: string;
-  kind: StructureKind;
-  status: Exclude<DrainageStatus, 'unverified'>;
-  source: StructureSource;
-  source_ref?: string | null;
-  size_note: string;
-  opening_width_m?: number | null;
-  opening_height_m?: number | null;
-  default_blockage_pct?: number | null;
-  notes: string;
-  coordinates: [number, number];
-  actor: string;
-  reason: string;
-}): Promise<{ feature: VerifiedStructureFeature; log: AuditLogEntry }> {
-  return apiFetch('/api/structures', { method: 'POST', body: JSON.stringify(payload) });
+export async function createStructure(
+  payload: {
+    name: string;
+    kind: StructureKind;
+    status: Exclude<DrainageStatus, 'unverified'>;
+    source: StructureSource;
+    source_ref?: string | null;
+    size_note: string;
+    opening_width_m?: number | null;
+    opening_height_m?: number | null;
+    default_blockage_pct?: number | null;
+    notes: string;
+    coordinates: [number, number];
+    actor: string;
+    reason: string;
+  },
+  regionId?: string
+): Promise<{ feature: VerifiedStructureFeature; log: AuditLogEntry }> {
+  return apiFetch(withRegion('/api/structures', regionId), { method: 'POST', body: JSON.stringify(payload) });
 }
 
 export async function updateStructure(
@@ -310,31 +339,42 @@ export async function updateStructure(
     coordinates?: [number, number];
     actor: string;
     reason: string;
-  }
+  },
+  regionId?: string
 ): Promise<{ feature: VerifiedStructureFeature; log: AuditLogEntry }> {
-  return apiFetch(`/api/structures/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(payload) });
+  return apiFetch(withRegion(`/api/structures/${encodeURIComponent(id)}`, regionId), {
+    method: 'PUT',
+    body: JSON.stringify(payload)
+  });
 }
 
-export async function deleteStructure(id: string, payload: { actor: string; reason: string }): Promise<void> {
-  await apiFetch(`/api/structures/${encodeURIComponent(id)}`, {
+export async function deleteStructure(
+  id: string,
+  payload: { actor: string; reason: string },
+  regionId?: string
+): Promise<void> {
+  await apiFetch(withRegion(`/api/structures/${encodeURIComponent(id)}`, regionId), {
     method: 'DELETE',
     body: JSON.stringify(payload)
   });
 }
 
-export async function createCalibrationMark(payload: {
-  name: string;
-  kind: CalibrationMarkKind;
-  observed_depth_m: number | null;
-  rain_mm_hr: number;
-  duration_min: number;
-  antecedent_5d_mm: number;
-  notes: string;
-  coordinates: [number, number];
-  actor: string;
-  reason: string;
-}): Promise<{ feature: CalibrationMarkFeature; log: AuditLogEntry }> {
-  return apiFetch('/api/calibration-marks', { method: 'POST', body: JSON.stringify(payload) });
+export async function createCalibrationMark(
+  payload: {
+    name: string;
+    kind: CalibrationMarkKind;
+    observed_depth_m: number | null;
+    rain_mm_hr: number;
+    duration_min: number;
+    antecedent_5d_mm: number;
+    notes: string;
+    coordinates: [number, number];
+    actor: string;
+    reason: string;
+  },
+  regionId?: string
+): Promise<{ feature: CalibrationMarkFeature; log: AuditLogEntry }> {
+  return apiFetch(withRegion('/api/calibration-marks', regionId), { method: 'POST', body: JSON.stringify(payload) });
 }
 
 export async function updateCalibrationMark(
@@ -350,41 +390,55 @@ export async function updateCalibrationMark(
     coordinates?: [number, number];
     actor: string;
     reason: string;
-  }
+  },
+  regionId?: string
 ): Promise<{ feature: CalibrationMarkFeature; log: AuditLogEntry }> {
-  return apiFetch(`/api/calibration-marks/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(payload) });
+  return apiFetch(withRegion(`/api/calibration-marks/${encodeURIComponent(id)}`, regionId), {
+    method: 'PUT',
+    body: JSON.stringify(payload)
+  });
 }
 
-export async function deleteCalibrationMark(id: string, payload: { actor: string; reason: string }): Promise<void> {
-  await apiFetch(`/api/calibration-marks/${encodeURIComponent(id)}`, {
+export async function deleteCalibrationMark(
+  id: string,
+  payload: { actor: string; reason: string },
+  regionId?: string
+): Promise<void> {
+  await apiFetch(withRegion(`/api/calibration-marks/${encodeURIComponent(id)}`, regionId), {
     method: 'DELETE',
     body: JSON.stringify(payload)
   });
 }
 
-export async function saveCalibrationProfile(payload: {
-  manningMult: number;
-  cnOffset: number;
-  cohesionMult: number;
-  rmseM?: number | null;
-  scourCsi?: number | null;
-  landslideAuc?: number | null;
-  notes?: string;
-  actor: string;
-  reason: string;
-}): Promise<{ profile: CalibrationProfile; log: AuditLogEntry }> {
-  return apiFetch('/api/calibration-profile', { method: 'PUT', body: JSON.stringify(payload) });
+export async function saveCalibrationProfile(
+  payload: {
+    manningMult: number;
+    cnOffset: number;
+    cohesionMult: number;
+    rmseM?: number | null;
+    scourCsi?: number | null;
+    landslideAuc?: number | null;
+    notes?: string;
+    actor: string;
+    reason: string;
+  },
+  regionId?: string
+): Promise<{ profile: CalibrationProfile; log: AuditLogEntry }> {
+  return apiFetch(withRegion('/api/calibration-profile', regionId), { method: 'PUT', body: JSON.stringify(payload) });
 }
 
-export async function createJorongBoundary(payload: {
-  name: string;
-  status: JorongBoundaryStatus;
-  source_note: string;
-  coordinates: [number, number][];
-  actor: string;
-  reason: string;
-}): Promise<{ feature: JorongBoundaryFeature; log: AuditLogEntry }> {
-  return apiFetch('/api/jorong-boundaries', { method: 'POST', body: JSON.stringify(payload) });
+export async function createJorongBoundary(
+  payload: {
+    name: string;
+    status: JorongBoundaryStatus;
+    source_note: string;
+    coordinates: [number, number][];
+    actor: string;
+    reason: string;
+  },
+  regionId?: string
+): Promise<{ feature: JorongBoundaryFeature; log: AuditLogEntry }> {
+  return apiFetch(withRegion('/api/jorong-boundaries', regionId), { method: 'POST', body: JSON.stringify(payload) });
 }
 
 export async function updateJorongBoundary(
@@ -396,41 +450,60 @@ export async function updateJorongBoundary(
     coordinates?: [number, number][];
     actor: string;
     reason: string;
-  }
+  },
+  regionId?: string
 ): Promise<{ feature: JorongBoundaryFeature; log: AuditLogEntry }> {
-  return apiFetch(`/api/jorong-boundaries/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(payload) });
+  return apiFetch(withRegion(`/api/jorong-boundaries/${encodeURIComponent(id)}`, regionId), {
+    method: 'PUT',
+    body: JSON.stringify(payload)
+  });
 }
 
-export async function deleteJorongBoundary(id: string, payload: { actor: string; reason: string }): Promise<void> {
-  await apiFetch(`/api/jorong-boundaries/${encodeURIComponent(id)}`, {
+export async function deleteJorongBoundary(
+  id: string,
+  payload: { actor: string; reason: string },
+  regionId?: string
+): Promise<void> {
+  await apiFetch(withRegion(`/api/jorong-boundaries/${encodeURIComponent(id)}`, regionId), {
     method: 'DELETE',
     body: JSON.stringify(payload)
   });
 }
 
-export async function suppressDemSegment(payload: {
-  seg_id: string;
-  reason: string;
-  actor: string;
-}): Promise<{ suppressed: SuppressedDemSegment; log: AuditLogEntry }> {
-  return apiFetch('/api/dem-segments/suppress', { method: 'POST', body: JSON.stringify(payload) });
+export async function suppressDemSegment(
+  payload: {
+    seg_id: string;
+    reason: string;
+    actor: string;
+  },
+  regionId?: string
+): Promise<{ suppressed: SuppressedDemSegment; log: AuditLogEntry }> {
+  return apiFetch(withRegion('/api/dem-segments/suppress', regionId), {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  });
 }
 
-export async function restoreDemSegment(segId: string, payload: { actor: string; reason: string }): Promise<void> {
-  await apiFetch(`/api/dem-segments/${encodeURIComponent(segId)}/suppress`, {
+export async function restoreDemSegment(
+  segId: string,
+  payload: { actor: string; reason: string },
+  regionId?: string
+): Promise<void> {
+  await apiFetch(withRegion(`/api/dem-segments/${encodeURIComponent(segId)}/suppress`, regionId), {
     method: 'DELETE',
     body: JSON.stringify(payload)
   });
 }
 
-export async function fetchAuditLogs(limit = 150): Promise<AuditLogEntry[]> {
-  const data = await apiFetch<{ logs: AuditLogEntry[] }>(`/api/audit?limit=${limit}`);
+export async function fetchAuditLogs(limit = 150, regionId?: string): Promise<AuditLogEntry[]> {
+  const data = await apiFetch<{ logs: AuditLogEntry[] }>(withRegion(`/api/audit?limit=${limit}`, regionId));
   return data.logs || [];
 }
 
 export async function revertAuditLog(
   logId: number,
-  payload: { actor: string; reason: string }
+  payload: { actor: string; reason: string },
+  regionId?: string
 ): Promise<{
   log: AuditLogEntry;
   state: {
@@ -439,33 +512,43 @@ export async function revertAuditLog(
     suppressedDem: SuppressedDemSegment[];
   };
 }> {
-  return apiFetch(`/api/audit/${logId}/revert`, { method: 'POST', body: JSON.stringify(payload) });
+  return apiFetch(withRegion(`/api/audit/${logId}/revert`, regionId), {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  });
 }
 
-export async function fetchSuggestions(): Promise<CitizenSuggestion[]> {
-  const data = await apiFetch<{ suggestions: CitizenSuggestion[] }>('/api/suggestions');
+export async function fetchSuggestions(regionId?: string): Promise<CitizenSuggestion[]> {
+  const data = await apiFetch<{ suggestions: CitizenSuggestion[] }>(withRegion('/api/suggestions', regionId));
   return data.suggestions || [];
 }
 
-export async function createSuggestion(payload: {
-  reporter_name: string;
-  contact: string;
-  category: string;
-  location_name: string;
-  message: string;
-  lng: number | null;
-  lat: number | null;
-}): Promise<{ suggestion: CitizenSuggestion }> {
-  return apiFetch('/api/suggestions', { method: 'POST', body: JSON.stringify(payload) });
+export async function createSuggestion(
+  payload: {
+    reporter_name: string;
+    contact: string;
+    category: string;
+    location_name: string;
+    message: string;
+    lng: number | null;
+    lat: number | null;
+  },
+  regionId?: string
+): Promise<{ suggestion: CitizenSuggestion }> {
+  return apiFetch(withRegion('/api/suggestions', regionId), { method: 'POST', body: JSON.stringify(payload) });
 }
 
 export async function updateSuggestionStatus(
   id: number,
-  payload: { status: SuggestionStatus; resolution_note: string; actor: string }
+  payload: { status: SuggestionStatus; resolution_note: string; actor: string },
+  regionId?: string
 ): Promise<{ suggestion: CitizenSuggestion }> {
-  return apiFetch(`/api/suggestions/${id}`, { method: 'PATCH', body: JSON.stringify(payload) });
+  return apiFetch(withRegion(`/api/suggestions/${id}`, regionId), {
+    method: 'PATCH',
+    body: JSON.stringify(payload)
+  });
 }
 
-export async function fetchExportBundle(): Promise<ExportBundle> {
-  return apiFetch<ExportBundle>('/api/export/bundle');
+export async function fetchExportBundle(regionId?: string): Promise<ExportBundle> {
+  return apiFetch<ExportBundle>(withRegion('/api/export/bundle', regionId));
 }

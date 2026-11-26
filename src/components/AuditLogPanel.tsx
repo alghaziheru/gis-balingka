@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Clock, Crosshair, RotateCcw } from 'lucide-react';
-import { I18N } from '../i18n/translations';
+import { useT } from '../context/RegionContext';
 import type { AuditLogEntry, Language } from '../types/gis';
 
 interface AuditLogPanelProps {
@@ -137,7 +137,7 @@ export function AuditLogPanel({
   onRevert,
   onFlyToLog
 }: AuditLogPanelProps) {
-  const t = I18N[lang];
+  const t = useT(lang);
   const isEn = lang === 'en';
   const [confirmId, setConfirmId] = useState<number | null>(null);
   const [busyId, setBusyId] = useState<number | null>(null);

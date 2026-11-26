@@ -1,5 +1,6 @@
 import type { MutableRefObject } from 'react';
 import type { GeoJSONSource } from 'maplibre-gl';
+import type { RegionConfig } from '../../config/region';
 import type { CascadeEngine } from '../../lib/cascadeEngine';
 import type { DemClient } from '../../lib/demClient';
 import type {
@@ -48,12 +49,23 @@ export interface MapControlHandle {
   getCameraAngles?: () => { pitch: number; bearing: number };
 }
 
+export interface MapLoadState {
+  styleReady: boolean;
+  initialTilesReady: boolean;
+  initialTimedOut: boolean;
+  tileProgress: number;
+  basemapSwitching: boolean;
+  basemapTimedOut: boolean;
+  activeBasemap: BasemapId;
+}
+
 export interface LoadedDatasets {
   bbox: BBox;
   center: [number, number];
   mask: GeoFeatureCollection;
   watershed: GeoFeatureCollection;
   nagariBoundary: GeoFeatureCollection;
+  subBoundaries: GeoFeatureCollection;
   settlements: GeoFeatureCollection;
   contours: GeoFeatureCollection;
   flowPaths: GeoFeatureCollection;
@@ -64,6 +76,8 @@ export interface LoadedDatasets {
 }
 
 export interface MapViewProps {
+  region: RegionConfig;
+  dataBasePath: string;
   datasets: LoadedDatasets;
   demClient: DemClient;
   lang: Language;
@@ -93,6 +107,7 @@ export interface MapViewProps {
   calibrationMarks: CalibrationMarkFeature[];
   suppressedDemIds: string[];
   dataVersion: number;
+  editorHydrated: boolean;
   apiAvailable: boolean;
   requiresPassphrase: boolean;
   editorUnlocked: boolean;
@@ -122,6 +137,7 @@ export interface MapViewProps {
   onChangeEditingCoords: (coords: [number, number][]) => void;
   onSnapFeedback?: (msg: string) => void;
   onCursorTelemetry: (t: { lng: number; lat: number; elev: number; slope: number }) => void;
+  onLoadStateChange?: (state: MapLoadState) => void;
 }
 
 export type MapGeoInput = Parameters<GeoJSONSource['setData']>[0];

@@ -1,0 +1,93 @@
+{
+  "regionId": "malalak-timur-utara",
+  "regionName": "Malalak Timur & Utara",
+  "bmkgStations": [],
+  "era5Series": {
+    "targetCoord": [
+      -0.392,
+      100.276
+    ],
+    "gridCoord": [
+      -0.3866,
+      100.2737
+    ],
+    "gridElevM": 845,
+    "period": "1985-01-01 – 2025-12-31",
+    "yearsCount": 41,
+    "daysCount": 14975,
+    "biasFactor": 1,
+    "rawMeanAnnualMm": 4388,
+    "correctedMeanAnnualMm": 4388
+  },
+  "returnPeriodsMm": {
+    "r24": {
+      "max41yr": 334,
+      "t2": 120,
+      "t10Gumbel": 187,
+      "t10Lp3": 183,
+      "t50Gumbel": 245,
+      "t50Lp3": 247,
+      "t100Gumbel": 270,
+      "t100Lp3": 277
+    },
+    "r48": {
+      "max41yr": 347,
+      "t2": 175,
+      "t10Gumbel": 262,
+      "t10Lp3": 263,
+      "t50Gumbel": 338,
+      "t50Lp3": 344,
+      "t100Gumbel": 371,
+      "t100Lp3": 379
+    },
+    "r72": {
+      "max41yr": 376,
+      "t2": 202,
+      "t10Gumbel": 299,
+      "t10Lp3": 301,
+      "t50Gumbel": 385,
+      "t50Lp3": 391,
+      "t100Gumbel": 421,
+      "t100Lp3": 431
+    }
+  },
+  "idfCapsMmHr": {
+    "30": 145,
+    "60": 95,
+    "120": 60,
+    "180": 45,
+    "360": 30,
+    "720": 18,
+    "1440": 12,
+    "2160": 10,
+    "2880": 9,
+    "4320": 7
+  },
+  "bmkgHourlyScale": [
+    {
+      "maxExclusive": 5,
+      "id": "Ringan",
+      "en": "Light"
+    },
+    {
+      "maxExclusive": 10,
+      "id": "Sedang",
+      "en": "Moderate"
+    },
+    {
+      "maxExclusive": 20,
+      "id": "Lebat",
+      "en": "Heavy"
+    },
+    {
+      "maxExclusive": 50.001,
+      "id": "Sangat Lebat",
+      "en": "Very Heavy"
+    },
+    {
+      "maxExclusive": null,
+      "id": "Ekstrem",
+      "en": "Extreme"
+    }
+  ]
+}

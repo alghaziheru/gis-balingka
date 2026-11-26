@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { ExternalLink, MessageSquare, X } from 'lucide-react';
-import { I18N } from '../i18n/translations';
+import { useT } from '../context/RegionContext';
 import type { Language } from '../types/gis';
 
 const GITHUB_ISSUES_URL = 'https://github.com/alghaziheru/gis-balingka/issues/new/choose';
@@ -39,8 +39,8 @@ export function FeedbackModal({ open, lang, apiAvailable, onSubmit, onClose }: F
     return () => window.removeEventListener('keydown', onKey);
   }, [open, onClose]);
 
+  const t = useT(lang);
   if (!open) return null;
-  const t = I18N[lang];
   const isEn = lang === 'en';
   const feedbackFormUrl = getSafeExternalUrl(import.meta.env.VITE_FEEDBACK_URL);
 

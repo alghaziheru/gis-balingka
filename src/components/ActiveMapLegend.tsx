@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from 'react';
 import { ChevronDown, ChevronUp, Layers } from 'lucide-react';
-import { I18N } from '../i18n/translations';
+import { useT } from '../context/RegionContext';
 import type {
   BasemapId,
   DrainageStatus,
@@ -59,7 +59,7 @@ export function ActiveMapLegend({
     if (onToggleCollapsed) onToggleCollapsed(next);
     else setInternalCollapsed(next);
   };
-  const t = I18N[lang];
+  const t = useT(lang);
   const isEn = lang === 'en';
   const isRaining = tab === 'sim' && simProgress > 0.02;
 

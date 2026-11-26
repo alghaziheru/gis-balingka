@@ -303,10 +303,15 @@ async function fetchEra5ArchiveDaily(lat, lng) {
  * Loads cached climate baseline or fetches 41-year Open-Meteo ERA5-Land daily precipitation
  * for the region's `dataCenter`, computing SNI 2415:2016 return periods & Mononobe IDF envelope.
  */
-export async function fetchOrBuildClimateBaseline({ rootDir, regionCfg, refresh = false }) {
+export async function fetchOrBuildClimateBaseline({
+  rootDir,
+  outDir = path.join(rootDir, 'public', 'data'),
+  regionCfg,
+  refresh = false
+}) {
   const regionId = String(regionCfg?.id || 'custom-region');
   const regionName = String(regionCfg?.name || regionId);
-  const existingPath = path.join(rootDir, 'public', 'data', 'climate-baseline.json');
+  const existingPath = path.join(outDir, 'climate-baseline.json');
 
   if (!refresh && regionId === 'nagari-balingka' && fs.existsSync(existingPath)) {
     try {
@@ -322,7 +327,7 @@ export async function fetchOrBuildClimateBaseline({ rootDir, regionCfg, refresh 
   const targetLng = Number(center[0]);
   const targetLat = Number(center[1]);
   const biasFactor = Number(regionCfg?.hydrology?.climateBiasFactor || 1.0);
-  const cachePath = path.join(rootDir, 'raw-data', 'era5-climate-cache.json');
+  const cachePath = path.join(rootDir, 'raw-data', `era5-climate-${regionId}.json`);
 
   let rawSeries = null;
   if (!refresh && fs.existsSync(cachePath)) {

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { I18N } from '../i18n/translations';
+import { useT } from '../context/RegionContext';
 import type { ElevationProfileResult, Language, ProfileSample } from '../types/gis';
 
 interface ElevationProfileModalProps {
@@ -18,9 +18,8 @@ export function ElevationProfileModal({
   onClose
 }: ElevationProfileModalProps) {
   const [hoverInfo, setHoverInfo] = useState<{ x: number; y: number; dist: number; elev: number } | null>(null);
+  const t = useT(lang);
   if (!profile) return null;
-
-  const t = I18N[lang];
   const { samples, totalDistM, minElev, maxElev, maxSlopePct } = profile;
 
   const W = 600;

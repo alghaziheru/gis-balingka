@@ -27,16 +27,38 @@ export const S2_POST_SCENE_ID = 'S2B_47MPV_20240711_0_L2A';
 
 export async function fetchRealOSM(bbox, regionName) {
   console.log(`Fetching real OpenStreetMap features for ${regionName} block...`);
-  const url = `https://api.openstreetmap.org/api/0.6/map.json?bbox=${bbox.west.toFixed(5)},${bbox.south.toFixed(5)},${bbox.east.toFixed(5)},${bbox.north.toFixed(5)}`;
-  const res = await fetch(url, { headers: { 'User-Agent': 'nagari-balingka-gis/1.0 (open-source community flood tool)' } });
-  if (!res.ok) throw new Error(`OSM API returned HTTP ${res.status}`);
-  const json = await res.json();
+  const fetchOsmBlock = async b => {
+    const url = `https://api.openstreetmap.org/api/0.6/map.json?bbox=${b.west.toFixed(5)},${b.south.toFixed(5)},${b.east.toFixed(5)},${b.north.toFixed(5)}`;
+    const res = await fetch(url, { headers: { 'User-Agent': 'nagari-balingka-gis/1.0 (open-source community flood tool)' } });
+    if (!res.ok) throw new Error(`OSM API returned HTTP ${res.status}`);
+    return res.json();
+  };
 
   const nodes = new Map();
   const ways = new Map();
-  for (const el of json.elements || []) {
-    if (el.type === 'node') nodes.set(el.id, el);
-    else if (el.type === 'way') ways.set(el.id, el);
+  try {
+    const json = await fetchOsmBlock(bbox);
+    for (const el of json.elements || []) {
+      if (el.type === 'node') nodes.set(el.id, el);
+      else if (el.type === 'way') ways.set(el.id, el);
+    }
+  } catch (err) {
+    console.warn(`OSM single-bbox fetch failed (${err.message}); splitting into 2x2 tiles...`);
+    const midLng = (bbox.west + bbox.east) / 2;
+    const midLat = (bbox.south + bbox.north) / 2;
+    const quadrants = [
+      { west: bbox.west, south: midLat, east: midLng, north: bbox.north },
+      { west: midLng, south: midLat, east: bbox.east, north: bbox.north },
+      { west: bbox.west, south: bbox.south, east: midLng, north: midLat },
+      { west: midLng, south: bbox.south, east: bbox.east, north: midLat }
+    ];
+    for (const q of quadrants) {
+      const json = await fetchOsmBlock(q);
+      for (const el of json.elements || []) {
+        if (el.type === 'node') nodes.set(el.id, el);
+        else if (el.type === 'way') ways.set(el.id, el);
+      }
+    }
   }
 
   const inBox = (lon, lat) =>
@@ -194,6 +216,7 @@ export async function fetchRealOSM(bbox, regionName) {
 }
 
 export async function fetchLandCover(bbox, demWidth, demHeight, worldcoverTiles, regionName, insideMask = null) {
+  for (let attempt = 1; attempt <= 2; attempt++) {
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(new Error('ESA WorldCover COG request timed out after 30s')), 30000);
   try {
@@ -301,7 +324,7 @@ export async function fetchLandCover(bbox, demWidth, demHeight, worldcoverTiles,
       waterPct: Number(((counts.water / total) * 100).toFixed(1))
     };
 
-    const lcPng = renderLandCoverRaster(raw, winW, winH, 1024);
+    const lcPng = renderLandCoverRaster(raw, winW, winH, 1024, insideMask, demWidth, demHeight);
     const dsClasses = new Uint8Array(demWidth * demHeight);
     for (let r = 0; r < demHeight; r++) {
       const sr = Math.min(winH - 1, Math.floor(((r + 0.5) / demHeight) * winH));
@@ -320,30 +343,36 @@ export async function fetchLandCover(bbox, demWidth, demHeight, worldcoverTiles,
 
     return { stats, lcPng, lcGridJson, dsClasses };
   } catch (err) {
+    if (attempt < 2) {
+      console.warn(`ESA WorldCover attempt ${attempt} failed (${err.message}); retrying...`);
+      await new Promise(r => setTimeout(r, 1500));
+      continue;
+    }
     console.warn(`Warning: ESA WorldCover fetch failed (${err.message}); keeping existing landcover files if present.`);
     return null;
   } finally {
     clearTimeout(timer);
   }
+  }
 }
 
-export async function fetchNagariBoundary(rootDir, regionCfg) {
-  const localCustom = path.join(rootDir, 'raw-data', 'region-boundary.geojson');
+export async function fetchNagariBoundary(rootDir, regionCfg, rawDir = path.join(rootDir, 'raw-data')) {
+  const localCustom = path.join(rawDir, 'region-boundary.geojson');
   if (fs.existsSync(localCustom)) {
     try {
       const gj = JSON.parse(fs.readFileSync(localCustom, 'utf8'));
       if (gj?.features?.length > 0) {
-        console.log(`Loaded custom region boundary (raw-data/region-boundary.geojson) for ${regionCfg.name}.`);
+        console.log(`Loaded custom region boundary (${path.relative(rootDir, localCustom)}) for ${regionCfg.name}.`);
         return gj;
       }
     } catch {}
   }
-  const localBig2026 = path.join(rootDir, 'raw-data', 'big-nagari-2026.geojson');
+  const localBig2026 = path.join(rawDir, 'big-nagari-2026.geojson');
   if (fs.existsSync(localBig2026)) {
     try {
       const gj = JSON.parse(fs.readFileSync(localBig2026, 'utf8'));
       if (gj?.features?.length > 0) {
-        console.log(`Loaded official BIG boundary (raw-data/big-nagari-2026.geojson) for ${regionCfg.name}.`);
+        console.log(`Loaded official BIG boundary (${path.relative(rootDir, localBig2026)}) for ${regionCfg.name}.`);
         return gj;
       }
     } catch {}
@@ -353,7 +382,8 @@ export async function fetchNagariBoundary(rootDir, regionCfg) {
     return null;
   }
   try {
-    console.log('Fetching official Nagari Balingka boundary (Pemkab Agam)...');
+    const nameMatch = String(regionCfg.officialBoundaryNameMatch || 'BALINGKA').toUpperCase();
+    console.log(`Fetching official ${regionCfg.name} boundary (Pemkab Agam)...`);
     const res = await fetch(AGAM_ADMIN_WEBMAP_URL, {
       headers: { 'User-Agent': 'nagari-balingka-gis/1.0' },
       signal: AbortSignal.timeout(12000)
@@ -362,9 +392,9 @@ export async function fetchNagariBoundary(rootDir, regionCfg) {
     const j = await res.json();
     const op = (j.operationalLayers || []).find(l => l.title === 'Batas Administrasi Nagari');
     const feats = op?.featureCollection?.layers?.[0]?.featureSet?.features || [];
-    const balingka = feats.find(f => String(f.attributes?.NAGARI || '').toUpperCase() === 'BALINGKA');
-    if (!balingka?.geometry?.rings?.length) {
-      throw new Error('BALINGKA polygon not found in Pemkab Agam layer');
+    const matched = feats.find(f => String(f.attributes?.NAGARI || '').toUpperCase() === nameMatch);
+    if (!matched?.geometry?.rings?.length) {
+      throw new Error(`${nameMatch} polygon not found in Pemkab Agam layer`);
     }
 
     const R = 6378137;
@@ -372,7 +402,7 @@ export async function fetchNagariBoundary(rootDir, regionCfg) {
       Number(((x / R) * (180 / Math.PI)).toFixed(6)),
       Number(((2 * Math.atan(Math.exp(y / R)) - Math.PI / 2) * (180 / Math.PI)).toFixed(6))
     ];
-    const coordinates = balingka.geometry.rings.map(ring => {
+    const coordinates = matched.geometry.rings.map(ring => {
       const wgs = ring.map(toLonLat);
       if (wgs.length >= 3) {
         const f = wgs[0];
@@ -388,14 +418,14 @@ export async function fetchNagariBoundary(rootDir, regionCfg) {
         {
           type: 'Feature',
           properties: {
-            name_id: 'Batas Administrasi Nagari Balingka',
-            name_en: 'Nagari Balingka Administrative Boundary',
-            code: '13.06.05.2003',
-            kecamatan: String(balingka.attributes?.KECAMATAN || 'IV KOTO'),
+            name_id: `Batas Administrasi ${regionCfg.name}`,
+            name_en: `${regionCfg.name} Administrative Boundary`,
+            code: regionCfg.officialBoundaryCode || '',
+            kecamatan: String(matched.attributes?.KECAMATAN || regionCfg.district || ''),
             kabupaten: 'Agam',
             source: 'Pemkab Agam (ArcGIS Batas Administrasi Nagari)',
             official: true,
-            area_ha: Math.round(Number(balingka.attributes?.AREA || 0))
+            area_ha: Math.round(Number(matched.attributes?.AREA || 0))
           },
           geometry: { type: 'Polygon', coordinates }
         }
@@ -648,34 +678,74 @@ export function getArcgisLayerFeatures(webmapJson, titles) {
   return out;
 }
 
-export async function fetchGoogleOpenBuildings(rootDir, bbox) {
+function filterFeaturesToBbox(features, bbox) {
+  return features.filter(f => {
+    const ring = f.geometry?.coordinates?.[0];
+    if (!ring?.length) return false;
+    return ring.some(([lng, lat]) => lng >= bbox.west && lng <= bbox.east && lat >= bbox.south && lat <= bbox.north);
+  });
+}
+
+export async function fetchGoogleOpenBuildings(rootDir, bbox, rawDir = path.join(rootDir, 'raw-data')) {
   if (!isInsideOpenBuildings2fd(bbox)) {
     console.log('Skipping Sumatra-specific Google Open Buildings tile (2fd) for region outside its extent; using OSM buildings.');
     return [];
   }
-  const rawDir = path.join(rootDir, 'raw-data');
-  const cachePath = path.join(rawDir, 'open-buildings-balingka.geojson');
-  if (fs.existsSync(cachePath)) {
+  const cachePath = path.join(rawDir, 'open-buildings.geojson');
+  const legacyBalingkaCache = path.join(rootDir, 'raw-data', 'open-buildings-balingka.geojson');
+  const sharedAgamCache = path.join(rootDir, 'raw-data', 'open-buildings-agam-cache.geojson');
+
+  for (const candidate of [
+    cachePath,
+    ...(path.resolve(rawDir) === path.resolve(rootDir, 'raw-data') ? [legacyBalingkaCache] : [])
+  ]) {
+    if (fs.existsSync(candidate)) {
+      try {
+        const cached = JSON.parse(fs.readFileSync(candidate, 'utf8'));
+        if (Array.isArray(cached?.features)) {
+          console.log(`Loaded ${cached.features.length} cached Google Open Buildings features from ${path.relative(rootDir, candidate)}`);
+          return cached.features;
+        }
+      } catch {}
+    }
+  }
+
+  if (fs.existsSync(sharedAgamCache)) {
     try {
-      const cached = JSON.parse(fs.readFileSync(cachePath, 'utf8'));
+      const cached = JSON.parse(fs.readFileSync(sharedAgamCache, 'utf8'));
       if (Array.isArray(cached?.features)) {
-        console.log(`Loaded ${cached.features.length} cached Google Open Buildings features from raw-data/`);
-        return cached.features;
+        const sliced = filterFeaturesToBbox(cached.features, bbox);
+        fs.mkdirSync(rawDir, { recursive: true });
+        fs.writeFileSync(cachePath, JSON.stringify({ type: 'FeatureCollection', features: sliced }));
+        console.log(`Sliced ${sliced.length} Google Open Buildings features from shared Agam cache.`);
+        return sliced;
       }
     } catch {}
   }
 
+  const agamSuperset = { west: 100.18, south: -0.50, east: 100.36, north: -0.30 };
+  const streamBox =
+    bbox.west >= agamSuperset.west &&
+    bbox.east <= agamSuperset.east &&
+    bbox.south >= agamSuperset.south &&
+    bbox.north <= agamSuperset.north
+      ? agamSuperset
+      : bbox;
+
   try {
-    console.log('Streaming Google Open Buildings v3 tile (2fd, CC-BY-4.0) for Balingka...');
+    console.log('Streaming Google Open Buildings v3 tile (2fd, CC-BY-4.0)...');
     const res = await fetch(OPEN_BUILDINGS_2FD_URL, {
       headers: { 'User-Agent': 'nagari-balingka-gis/1.0' },
-      signal: AbortSignal.timeout(120000)
+      signal: AbortSignal.timeout(600000)
     });
     if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
 
+    const webReadable = Readable.fromWeb(res.body);
     const gunzip = zlib.createGunzip();
+    webReadable.on('error', () => gunzip.destroy());
+    gunzip.on('error', () => {});
     const rl = readline.createInterface({
-      input: Readable.fromWeb(res.body).pipe(gunzip),
+      input: webReadable.pipe(gunzip),
       crlfDelay: Infinity
     });
 
@@ -692,7 +762,7 @@ export async function fetchGoogleOpenBuildings(rootDir, bbox) {
       if (prefix.length < 4) continue;
       const lat = Number(prefix[0]);
       const lng = Number(prefix[1]);
-      if (lat < bbox.south || lat > bbox.north || lng < bbox.west || lng > bbox.east) continue;
+      if (lat < streamBox.south || lat > streamBox.north || lng < streamBox.west || lng > streamBox.east) continue;
 
       const areaM2 = Number(prefix[2]);
       const confidence = Number(prefix[3]);
@@ -730,9 +800,14 @@ export async function fetchGoogleOpenBuildings(rootDir, bbox) {
     }
 
     fs.mkdirSync(rawDir, { recursive: true });
-    fs.writeFileSync(cachePath, JSON.stringify({ type: 'FeatureCollection', features }));
-    console.log(`Extracted ${features.length} Google Open Buildings v3 footprints (conf >= 0.75) into raw-data/`);
-    return features;
+    if (streamBox === agamSuperset) {
+      fs.mkdirSync(path.dirname(sharedAgamCache), { recursive: true });
+      fs.writeFileSync(sharedAgamCache, JSON.stringify({ type: 'FeatureCollection', features }));
+    }
+    const regionFeatures = streamBox === bbox ? features : filterFeaturesToBbox(features, bbox);
+    fs.writeFileSync(cachePath, JSON.stringify({ type: 'FeatureCollection', features: regionFeatures }));
+    console.log(`Extracted ${regionFeatures.length} Google Open Buildings v3 footprints (conf >= 0.75) into ${path.relative(rootDir, cachePath)}`);
+    return regionFeatures;
   } catch (err) {
     console.warn(`Warning: Google Open Buildings v3 stream failed (${err.message}); keeping OSM buildings only.`);
     return [];
@@ -823,9 +898,15 @@ export function mergeBuildingsWithDedupe(osmBuildings, googleBuildings) {
   };
 }
 
-export async function fetchAgamOfficialGis(rootDir, outDir, bbox) {
-  const rawDir = path.join(rootDir, 'raw-data');
+export async function fetchAgamOfficialGis(
+  rootDir,
+  outDir,
+  bbox,
+  rawDir = path.join(rootDir, 'raw-data'),
+  dasName = 'MASANG KIRI'
+) {
   const cachePath = path.join(rawDir, 'agam-gis-cache.json');
+  const sharedWebmapCachePath = path.join(rootDir, 'raw-data', 'agam-webmaps-raw-cache.json');
   const rbiOut = path.join(outDir, 'agam-rbi-rivers.geojson');
   const ctxOut = path.join(outDir, 'agam-context.json');
 
@@ -833,27 +914,49 @@ export async function fetchAgamOfficialGis(rootDir, outDir, bbox) {
     try {
       const cached = JSON.parse(fs.readFileSync(cachePath, 'utf8'));
       if (cached?.rbiRivers?.features && cached?.agamContext?.landslideHazard) {
-        console.log('Loaded cached Pemkab Agam official GIS layers from raw-data/agam-gis-cache.json');
+        console.log(`Loaded cached Pemkab Agam official GIS layers from ${path.relative(rootDir, cachePath)}`);
         return cached;
       }
     } catch {}
   }
 
   try {
-    console.log('Fetching official Pemkab Agam GIS Web Maps (rivers, landslide, soil, geology, forest)...');
-    const fetchJson = url =>
-      fetch(url, { headers: { 'User-Agent': 'nagari-balingka-gis/1.0' }, signal: AbortSignal.timeout(15000) }).then(r => {
-        if (!r.ok) throw new Error(`HTTP ${r.status} for ${url}`);
-        return r.json();
-      });
+    let riversWm;
+    let hazardWm;
+    let soilWm;
+    let geologyWm;
+    let forestWm;
 
-    const [riversWm, hazardWm, soilWm, geologyWm, forestWm] = await Promise.all([
-      fetchJson(AGAM_WEBMAP_URLS.rivers),
-      fetchJson(AGAM_WEBMAP_URLS.hazard),
-      fetchJson(AGAM_WEBMAP_URLS.soil),
-      fetchJson(AGAM_WEBMAP_URLS.geology),
-      fetchJson(AGAM_WEBMAP_URLS.forest)
-    ]);
+    if (fs.existsSync(sharedWebmapCachePath)) {
+      try {
+        const rawWm = JSON.parse(fs.readFileSync(sharedWebmapCachePath, 'utf8'));
+        if (rawWm?.riversWm && rawWm?.hazardWm && rawWm?.soilWm && rawWm?.geologyWm && rawWm?.forestWm) {
+          ({ riversWm, hazardWm, soilWm, geologyWm, forestWm } = rawWm);
+          console.log('Using cached Pemkab Agam raw WebMap JSONs...');
+        }
+      } catch {}
+    }
+
+    if (!riversWm) {
+      console.log('Fetching official Pemkab Agam GIS Web Maps (rivers, landslide, soil, geology, forest)...');
+      const fetchJson = url =>
+        fetch(url, { headers: { 'User-Agent': 'nagari-balingka-gis/1.0' }, signal: AbortSignal.timeout(15000) }).then(r => {
+          if (!r.ok) throw new Error(`HTTP ${r.status} for ${url}`);
+          return r.json();
+        });
+
+      [riversWm, hazardWm, soilWm, geologyWm, forestWm] = await Promise.all([
+        fetchJson(AGAM_WEBMAP_URLS.rivers),
+        fetchJson(AGAM_WEBMAP_URLS.hazard),
+        fetchJson(AGAM_WEBMAP_URLS.soil),
+        fetchJson(AGAM_WEBMAP_URLS.geology),
+        fetchJson(AGAM_WEBMAP_URLS.forest)
+      ]);
+      try {
+        fs.mkdirSync(path.dirname(sharedWebmapCachePath), { recursive: true });
+        fs.writeFileSync(sharedWebmapCachePath, JSON.stringify({ riversWm, hazardWm, soilWm, geologyWm, forestWm }));
+      } catch {}
+    }
 
     const padBbox = {
       west: bbox.west - 0.002,
@@ -878,7 +981,7 @@ export async function fetchAgamOfficialGis(rootDir, outDir, bbox) {
             id: `rbi-${fid}${paths.length > 1 ? `-${pi + 1}` : ''}`,
             name: rawName || `Anak Sungai RBI #${fid}`,
             kind: feat._layerTitle === 'Sungai Utama' ? 'river' : 'stream',
-            das: 'MASANG KIRI',
+            das: dasName || 'MASANG KIRI',
             source: 'Pemkab Agam — Peta RBI 1:50.000'
           },
           geometry: { type: 'LineString', coordinates: wgs }

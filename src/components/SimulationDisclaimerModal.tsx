@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { BookOpen, Database, Droplets, ShieldAlert, X } from 'lucide-react';
-import { REGION } from '../config/region';
+import { useActiveRegion } from '../context/RegionContext';
 import { CLIMATE_BASELINE, type ClimateBaselineData } from '../data/climateBaseline';
 import type { Language } from '../types/gis';
 
@@ -21,6 +21,7 @@ export function SimulationDisclaimerModal({
   onCancel,
   onOpenSources
 }: SimulationDisclaimerModalProps) {
+  const region = useActiveRegion();
   const [dontShowAgain, setDontShowAgain] = useState(false);
 
   useEffect(() => {
@@ -61,8 +62,8 @@ export function SimulationDisclaimerModal({
               </h2>
               <p className="mt-0.5 mb-0 text-[12.5px] text-[#434d49]">
                 {isEn
-                  ? `Open-data educational visualization for ${REGION.name} — read scope & limits`
-                  : `Visualisasi edukatif data terbuka ${REGION.name} — kenali cakupan & batasnya`}
+                  ? `Open-data educational visualization for ${region.name} — read scope & limits`
+                  : `Visualisasi edukatif data terbuka ${region.name} — kenali cakupan & batasnya`}
               </p>
             </div>
           </div>
@@ -102,12 +103,12 @@ export function SimulationDisclaimerModal({
                 const years = activeClim.era5Series.yearsCount || 41;
                 if (isEn) {
                   return hasBmkg
-                    ? `Built from open topography, ESA WorldCover 10m, and ${years}-year ERA5-Land daily rainfall (${activeClim.era5Series.period}) bias-corrected (×${activeClim.era5Series.biasFactor}) to BMKG ${stationNames} monthly data. Because ${REGION.name} has no live stream gauges (AWLR) or soil boreholes yet, readiness stays capped at Screening (≤44/100).`
-                    : `Built from open topography, ESA WorldCover 10m, and ${years}-year ERA5-Land daily rainfall (${activeClim.era5Series.period}, bias ×${activeClim.era5Series.biasFactor}) for ${REGION.name}. Because no live stream gauges (AWLR) or soil boreholes are configured yet, readiness stays capped at Screening (≤44/100).`;
+                    ? `Built from open topography, ESA WorldCover 10m, and ${years}-year ERA5-Land daily rainfall (${activeClim.era5Series.period}) bias-corrected (×${activeClim.era5Series.biasFactor}) to BMKG ${stationNames} monthly data. Because ${region.name} has no live stream gauges (AWLR) or soil boreholes yet, readiness stays capped at Screening (≤44/100).`
+                    : `Built from open topography, ESA WorldCover 10m, and ${years}-year ERA5-Land daily rainfall (${activeClim.era5Series.period}, bias ×${activeClim.era5Series.biasFactor}) for ${region.name}. Because no live stream gauges (AWLR) or soil boreholes are configured yet, readiness stays capped at Screening (≤44/100).`;
                 }
                 return hasBmkg
-                  ? `Dihitung dari topografi terbuka, tutupan lahan ESA WorldCover 10 m, dan hujan harian ERA5-Land ${years} tahun (${activeClim.era5Series.period}) yang dikoreksi bias (×${activeClim.era5Series.biasFactor}) terhadap data bulanan BMKG ${stationNames}. Karena ${REGION.name} belum memiliki pos AWLR atau uji bor tanah lapangan, status data dikunci pada Skrining Awal (≤44/100).`
-                  : `Dihitung dari topografi terbuka, tutupan lahan ESA WorldCover 10 m, dan seri hujan harian ERA5-Land ${years} tahun (${activeClim.era5Series.period}, faktor bias ×${activeClim.era5Series.biasFactor}) untuk ${REGION.name}. Karena belum ada pos AWLR atau uji bor tanah lapangan, status data dikunci pada Skrining Awal (≤44/100).`;
+                  ? `Dihitung dari topografi terbuka, tutupan lahan ESA WorldCover 10 m, dan hujan harian ERA5-Land ${years} tahun (${activeClim.era5Series.period}) yang dikoreksi bias (×${activeClim.era5Series.biasFactor}) terhadap data bulanan BMKG ${stationNames}. Karena ${region.name} belum memiliki pos AWLR atau uji bor tanah lapangan, status data dikunci pada Skrining Awal (≤44/100).`
+                  : `Dihitung dari topografi terbuka, tutupan lahan ESA WorldCover 10 m, dan seri hujan harian ERA5-Land ${years} tahun (${activeClim.era5Series.period}, faktor bias ×${activeClim.era5Series.biasFactor}) untuk ${region.name}. Karena belum ada pos AWLR atau uji bor tanah lapangan, status data dikunci pada Skrining Awal (≤44/100).`;
               })()}
             </p>
           </div>
@@ -119,8 +120,8 @@ export function SimulationDisclaimerModal({
             </div>
             <p className="m-0 text-[12.5px] text-[#78350f]">
               {isEn
-                ? `This is NOT an official weather forecast, disaster alert, or house-level flood depth measurement. Official hazard warnings and emergency instructions belong solely to BNPB, ${REGION.authorities.bpbdLabel}, BMKG, PVMBG, and ${REGION.authorities.localAuthorityShort}.`
-                : `Bukan prakiraan cuaca resmi, bukan peringatan dini bencana, dan bukan ukuran tinggi air per rumah. Pernyataan status bahaya dan evakuasi resmi hanya berasal dari BNPB, ${REGION.authorities.bpbdLabel}, BMKG, PVMBG, serta ${REGION.authorities.localAuthorityShort}.`}
+                ? `This is NOT an official weather forecast, disaster alert, or house-level flood depth measurement. Official hazard warnings and emergency instructions belong solely to BNPB, ${region.authorities.bpbdLabel}, BMKG, PVMBG, and ${region.authorities.localAuthorityShort}.`
+                : `Bukan prakiraan cuaca resmi, bukan peringatan dini bencana, dan bukan ukuran tinggi air per rumah. Pernyataan status bahaya dan evakuasi resmi hanya berasal dari BNPB, ${region.authorities.bpbdLabel}, BMKG, PVMBG, serta ${region.authorities.localAuthorityShort}.`}
             </p>
           </div>
 

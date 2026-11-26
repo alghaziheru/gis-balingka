@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type SetStateAction } from 'react';
 import {
+  ChevronDown,
   ChevronLeft,
   CloudRain,
   Droplets,
@@ -15,18 +16,28 @@ import { EditorUnlockModal } from './components/EditorUnlockModal';
 import { ElevationProfileModal } from './components/ElevationProfileModal';
 import { FeedbackModal } from './components/FeedbackModal';
 import { InfoDataModal, type InfoModalTab } from './components/InfoDataModal';
-import { MapView, type FlyRequest, type MapCameraState, type MapControlHandle } from './components/MapView';
+import { MapLoadingOverlay } from './components/MapLoadingOverlay';
+import { MapView, type FlyRequest, type MapCameraState, type MapControlHandle, type MapLoadState } from './components/MapView';
 import { RainOverlay } from './components/RainOverlay';
 import { SimulationDisclaimerModal } from './components/SimulationDisclaimerModal';
+import { SidebarSkeleton } from './components/SidebarSkeleton';
 import { SimulationTab } from './components/SimulationTab';
 import { TelemetryDock } from './components/TelemetryDock';
 import { TerrainTab } from './components/TerrainTab';
 import { TopHud } from './components/TopHud';
-import { REGION } from './config/region';
+import {
+  DEFAULT_REGION_ID,
+  getRegionById,
+  getRegionDataBasePath,
+  groupRegionsByDistrict,
+  isValidRegionId,
+  REGIONS
+} from './config/region';
+import { RegionContext } from './context/RegionContext';
 import { useEditorActions } from './hooks/useEditorActions';
 import { useRegionDatasets, type CursorTelemetry } from './hooks/useRegionDatasets';
 import { useSimulationController } from './hooks/useSimulationController';
-import { I18N } from './i18n/translations';
+import { getTranslations } from './i18n/translations';
 import { createSuggestion, saveEditorName, saveStoredPassphrase } from './lib/api';
 import { haversineMeters } from './lib/geometry';
 import type {
@@ -63,10 +74,28 @@ const DEFAULT_LAYERS: LayerToggles = {
 };
 
 const DEFAULT_FLOW_DENSITY = 1;
-const DEFAULT_VIEW_CENTER: [number, number] = REGION.defaultView.center;
-const DEFAULT_VIEW_ZOOM = REGION.defaultView.zoom;
 const SIM_DISCLAIMER_SESSION_KEY = 'balingka_sim_disclaimer_session_v1';
 const SIM_DISCLAIMER_HIDE_KEY = 'balingka_sim_disclaimer_hide_v1';
+
+function makeInitialMapLoadState(basemap: BasemapId): MapLoadState {
+  return {
+    styleReady: false,
+    initialTilesReady: false,
+    initialTimedOut: false,
+    tileProgress: 0,
+    basemapSwitching: false,
+    basemapTimedOut: false,
+    activeBasemap: basemap
+  };
+}
+
+function getInitialRegionIdFromUrl(): string {
+  if (typeof window === 'undefined') return DEFAULT_REGION_ID;
+  const param = new URLSearchParams(window.location.search).get('region');
+  return isValidRegionId(param) ? param! : DEFAULT_REGION_ID;
+}
+
+const REGION_GROUPS = groupRegionsByDistrict(REGIONS);
 
 const MAP_LAYER_KEYS: (keyof LayerToggles)[] = [
   'verifiedWaterways',
@@ -87,6 +116,10 @@ const MAP_LAYER_KEYS: (keyof LayerToggles)[] = [
 ];
 
 export function App() {
+  const [activeRegionId, setActiveRegionId] = useState<string>(() => getInitialRegionIdFromUrl());
+  const activeRegion = useMemo(() => getRegionById(activeRegionId), [activeRegionId]);
+  const dataBasePath = useMemo(() => getRegionDataBasePath(activeRegion), [activeRegion]);
+
   const [lang, setLang] = useState<Language>('id');
   const [viewMode, setViewMode] = useState<ViewMode>('simple');
   const [tab, setTab] = useState<TabId>('terrain');
@@ -121,22 +154,35 @@ export function App() {
   const flyCounter = useRef(0);
   const mapControlRef = useRef<MapControlHandle | null>(null);
   const [mapCamera, setMapCamera] = useState<MapCameraState>({
-    zoom: DEFAULT_VIEW_ZOOM,
-    bearing: -12,
-    pitch: 36,
+    zoom: activeRegion.defaultView.zoom,
+    bearing: activeRegion.cameraPresets[0]?.bearing3D ?? -12,
+    pitch: activeRegion.cameraPresets[0]?.pitch3D ?? 36,
     metersPerPixel: 3.15
   });
   const [cursorTelemetry, setCursorTelemetry] = useState<CursorTelemetry>({
-    lng: DEFAULT_VIEW_CENTER[0],
-    lat: DEFAULT_VIEW_CENTER[1],
+    lng: activeRegion.defaultView.center[0],
+    lat: activeRegion.defaultView.center[1],
     elev: 1089,
     slope: 8
   });
 
   const [toast, setToast] = useState<string | null>(null);
   const toastTimerRef = useRef<number | null>(null);
+  const [mapLoad, setMapLoad] = useState<MapLoadState>(() => makeInitialMapLoadState(basemap));
 
-  const t = I18N[lang];
+  const t = useMemo(() => getTranslations(activeRegion)[lang], [activeRegion, lang]);
+
+  useEffect(() => {
+    document.title = `${t.appTitle} — Portal Data Spasial Topografi & Drainase`;
+  }, [t.appTitle]);
+
+  useEffect(() => {
+    const onPopState = () => {
+      setActiveRegionId(getInitialRegionIdFromUrl());
+    };
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, []);
 
   const notify = useCallback((msg: string) => {
     setToast(msg);
@@ -152,8 +198,27 @@ export function App() {
     []
   );
 
-  const { datasets, metadata, demClient, simFields, climateBaseline, loadError, initialTelemetry, reloadHydrologyData } =
-    useRegionDatasets();
+  const {
+    datasets,
+    metadata,
+    demClient,
+    simFields,
+    climateBaseline,
+    loadError,
+    datasetProgress,
+    retryLoad,
+    initialTelemetry,
+    reloadHydrologyData
+  } = useRegionDatasets(activeRegion);
+
+  useEffect(() => {
+    setMapLoad(makeInitialMapLoadState(basemapRef.current));
+  }, [activeRegionId]);
+
+  const handleRetryLoad = useCallback(() => {
+    setMapLoad(makeInitialMapLoadState(basemapRef.current));
+    retryLoad();
+  }, [retryLoad]);
 
   useEffect(() => {
     if (initialTelemetry) {
@@ -192,6 +257,7 @@ export function App() {
   );
 
   const editor = useEditorActions({
+    region: activeRegion,
     datasets,
     demClient,
     lang,
@@ -210,10 +276,42 @@ export function App() {
     settlements: datasets?.settlements,
     metadata,
     climateBaseline,
+    region: activeRegion,
     calibrationMarks: editor.calibrationMarks,
     calibrationProfile: editor.calibrationProfile
   });
   simPauseRef.current = () => sim.setSimPlaying(false);
+
+  const handleSelectRegion = useCallback(
+    (nextId: string) => {
+      if (nextId === activeRegionId || !isValidRegionId(nextId)) return;
+      const nextRegion = getRegionById(nextId);
+      const url = new URL(window.location.href);
+      if (nextId === DEFAULT_REGION_ID) url.searchParams.delete('region');
+      else url.searchParams.set('region', nextId);
+      window.history.pushState(null, '', url.toString());
+
+      setActiveRegionId(nextId);
+      setCameraPreset('center');
+      setRaindrop(null);
+      setProfilePts([]);
+      setProfileResult(null);
+      setProfileHover(null);
+      setActiveTool(null);
+      setDrawVertices([]);
+      setDrainFilter('all');
+      setSimDisclaimerOpen(false);
+      sim.resetSim();
+      const preset0 = nextRegion.cameraPresets[0];
+      setMapCamera(prev => ({
+        ...prev,
+        zoom: nextRegion.defaultView.zoom,
+        pitch: is3D ? (preset0?.pitch3D ?? 36) : 0,
+        bearing: is3D ? (preset0?.bearing3D ?? -12) : 0
+      }));
+    },
+    [activeRegionId, is3D, sim]
+  );
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -363,7 +461,7 @@ export function App() {
 
   const handleCameraPreset = (preset: string) => {
     setCameraPreset(preset);
-    const match = REGION.cameraPresets.find(p => p.id === preset);
+    const match = activeRegion.cameraPresets.find(p => p.id === preset);
     if (match) {
       flyTo(match.center, {
         zoom: match.zoom,
@@ -423,10 +521,14 @@ export function App() {
       : 'max-md:h-[126px]';
 
   return (
-    <div className={`relative h-screen w-screen overflow-hidden ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
-      {datasets && demClient ? (
-        <MapView
-          datasets={datasets}
+    <RegionContext.Provider value={activeRegion}>
+      <div className={`relative h-screen w-screen overflow-hidden ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
+        {datasets && demClient ? (
+          <MapView
+            key={activeRegion.id}
+            region={activeRegion}
+            dataBasePath={dataBasePath}
+            datasets={datasets}
           demClient={demClient}
           lang={lang}
           viewMode={viewMode}
@@ -455,6 +557,7 @@ export function App() {
           calibrationMarks={editor.calibrationMarks}
           suppressedDemIds={editor.suppressedDemIds}
           dataVersion={editor.dataVersion}
+          editorHydrated={editor.editorHydrated}
           apiAvailable={editor.apiAvailable}
           requiresPassphrase={editor.requiresPassphrase}
           editorUnlocked={editor.editorUnlocked}
@@ -483,15 +586,10 @@ export function App() {
           }}
           onSnapFeedback={notify}
           onCursorTelemetry={setCursorTelemetry}
+          onLoadStateChange={setMapLoad}
         />
       ) : (
-        <div className="flex h-full w-full items-center justify-center bg-[#e8ebe7] p-4">
-          <div className="surface-panel rounded-2xl px-6 py-4 text-center">
-            <div className="text-[14px] font-bold text-[#161c1a]">
-              {loadError ? `Error: ${loadError}` : t.loadingData}
-            </div>
-          </div>
-        </div>
+        <div className="h-full w-full bg-[#e8ebe7]" />
       )}
 
       {/* Falling Rain Animation Overlay during Simulation */}
@@ -534,14 +632,31 @@ export function App() {
 
         <header className="shrink-0 border-b border-[#161c1a]/12 bg-white px-4 py-3 max-md:px-3.5 max-md:py-1.5">
           <div className="flex items-center justify-between gap-2">
-            <div className="flex min-w-0 items-center gap-2.5">
+            <div className="flex min-w-0 flex-1 items-center gap-2.5">
               <div className="grid h-8.5 w-8.5 shrink-0 place-items-center rounded-[10px] bg-[#0369a1] text-white max-md:h-7 max-md:w-7">
                 <Droplets className="h-4.5 w-4.5 max-md:h-4 max-md:w-4" />
               </div>
-              <div className="min-w-0">
-                <h1 className="m-0 truncate text-[16px] leading-tight font-extrabold tracking-tight text-[#161c1a] max-md:text-[14.5px]">
-                  {t.appTitle}
-                </h1>
+              <div className="min-w-0 flex-1">
+                <div className="relative inline-flex max-w-full items-center">
+                  <select
+                    data-testid="region-select"
+                    aria-label={lang === 'en' ? 'Select Nagari region' : 'Pilih wilayah Nagari'}
+                    value={activeRegionId}
+                    onChange={e => handleSelectRegion(e.target.value)}
+                    className="w-full max-w-full cursor-pointer appearance-none rounded-lg border border-transparent bg-transparent py-0.5 pr-6 pl-0 text-[16px] leading-tight font-extrabold tracking-tight text-[#161c1a] transition hover:border-[#161c1a]/15 hover:bg-[#fafaf8] hover:pl-1.5 focus:border-[#0369a1] focus:bg-white focus:pl-1.5 focus:outline-none max-md:text-[14.5px]"
+                  >
+                    {REGION_GROUPS.map(grp => (
+                      <optgroup key={`${grp.district}-${grp.regency}`} label={`${grp.district}, ${grp.regency}`}>
+                        {grp.regions.map(r => (
+                          <option key={r.id} value={r.id}>
+                            {lang === 'en' ? r.appTitle.en : r.appTitle.id}
+                          </option>
+                        ))}
+                      </optgroup>
+                    ))}
+                  </select>
+                  <ChevronDown className="pointer-events-none absolute right-1 h-4 w-4 text-[#0369a1]" />
+                </div>
                 <div className="mt-0.5 truncate text-[12px] font-medium text-[#636f6a] max-md:hidden">
                   {t.subtitle}
                 </div>
@@ -606,6 +721,10 @@ export function App() {
             mobileSheetMode === 'peek' ? 'max-md:hidden' : ''
           }`}
         >
+          {!datasets || !demClient ? (
+            <SidebarSkeleton lang={lang} loadError={loadError} onRetry={handleRetryLoad} />
+          ) : (
+            <>
           {tab === 'terrain' && (
             <TerrainTab
               lang={lang}
@@ -615,7 +734,7 @@ export function App() {
               flowDensity={flowDensity}
               activeTool={activeTool}
               raindrop={raindrop}
-              studyAreaKm2={metadata?.studyAreaKm2 || 29.9}
+              studyAreaKm2={metadata?.studyAreaKm2 || activeRegion.areaKm2}
               buildingCount={metadata?.buildingCount}
               agamStats={metadata?.agamStats}
               cameraPreset={cameraPreset}
@@ -742,17 +861,17 @@ export function App() {
               onFocusHulu={() => {
                 setLayers(prev => ({ ...prev, slope: true }));
                 setIs3D(true);
-                const v = REGION.drainageFocus.upland;
+                const v = activeRegion.drainageFocus.upland;
                 flyTo(v.center, { zoom: v.zoom, pitch: v.pitch, bearing: v.bearing });
               }}
               onFocusDrainage={() => {
                 setDrainFilter('all');
-                const v = REGION.drainageFocus.culverts;
+                const v = activeRegion.drainageFocus.culverts;
                 flyTo(v.center, { zoom: v.zoom, pitch: v.pitch, bearing: v.bearing });
               }}
               onFocusEvac={() => {
                 setLayers(prev => ({ ...prev, evac: true }));
-                const v = REGION.drainageFocus.facilities;
+                const v = activeRegion.drainageFocus.facilities;
                 flyTo(v.center, { zoom: v.zoom, pitch: v.pitch, bearing: v.bearing });
               }}
             />
@@ -787,6 +906,8 @@ export function App() {
               auditLogs={editor.auditLogs}
               {...editor.editorTabActions}
             />
+          )}
+            </>
           )}
         </div>
 
@@ -924,15 +1045,18 @@ export function App() {
         apiAvailable={editor.apiAvailable}
         onSubmit={async payload => {
           try {
-            await createSuggestion({
-              reporter_name: payload.name || (lang === 'en' ? 'Anonymous' : 'Anonim'),
-              contact: '',
-              category: payload.topic,
-              location_name: 'General Web Feedback',
-              message: payload.message,
-              lng: null,
-              lat: null
-            });
+            await createSuggestion(
+              {
+                reporter_name: payload.name || (lang === 'en' ? 'Anonymous' : 'Anonim'),
+                contact: '',
+                category: payload.topic,
+                location_name: `General Web Feedback (${activeRegion.name})`,
+                message: payload.message,
+                lng: null,
+                lat: null
+              },
+              activeRegionId
+            );
             notify(t.feedbackSentToast);
           } catch (err) {
             notify(err instanceof Error ? err.message : 'Failed to send feedback');
@@ -994,6 +1118,30 @@ export function App() {
         }}
       />
 
+      <MapLoadingOverlay
+        lang={lang}
+        regionName={activeRegion.name}
+        sidebarCollapsed={sidebarCollapsed}
+        datasetProgress={datasetProgress}
+        loadError={loadError}
+        editorHydrated={editor.editorHydrated}
+        mapLoad={mapLoad}
+        basemapLabel={
+          basemap === 'sat'
+            ? t.bmSat
+            : basemap === 'osm'
+            ? t.bmOsm
+            : basemap === 'topo'
+            ? t.bmTopo
+            : basemap === 'elev'
+            ? t.bmElev
+            : basemap === 'relief'
+            ? t.bmRelief
+            : t.bmSlope
+        }
+        onRetry={handleRetryLoad}
+      />
+
       {toast && (
         <div
           role="status"
@@ -1006,6 +1154,7 @@ export function App() {
         </div>
       )}
     </div>
+    </RegionContext.Provider>
   );
 }
 export default App;

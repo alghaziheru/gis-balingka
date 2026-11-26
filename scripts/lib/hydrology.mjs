@@ -708,7 +708,7 @@ function lerpColorRamp(stops, val) {
  * Renders smooth CutSheetRX-style Terrain PNGs (Relief, Color Elevation + Shading, Smooth Slope)
  * by gently smoothing the raw DEM, upsampling to outSize x outSize, and computing per-pixel hillshade.
  */
-export function renderSmoothTerrainRasters(rawElev, slopeGrid, gridMeta, outSize = 1024) {
+export function renderSmoothTerrainRasters(rawElev, slopeGrid, gridMeta, outSize = 1024, insideMask = null) {
   const { width, height, cellSizeX, cellSizeY } = gridMeta;
   const smoothElev = smoothGrid(rawElev, width, height, 2);
   const smoothSlope = smoothGrid(slopeGrid, width, height, 2);
@@ -762,7 +762,12 @@ export function renderSmoothTerrainRasters(rawElev, slopeGrid, gridMeta, outSize
   for (let y = 0; y < outSize; y++) {
     const y0 = Math.max(0, y - 1), y1 = Math.min(outSize - 1, y + 1);
     const yf = (y / (outSize - 1)) * (height - 1);
+    const mr = Math.min(height - 1, Math.floor((y / outSize) * height));
     for (let x = 0; x < outSize; x++) {
+      if (insideMask) {
+        const mc = Math.min(width - 1, Math.floor((x / outSize) * width));
+        if (insideMask[mr * width + mc] === 0) continue;
+      }
       const x0 = Math.max(0, x - 1), x1 = Math.min(outSize - 1, x + 1);
       const xf = (x / (outSize - 1)) * (width - 1);
 
@@ -1248,7 +1253,7 @@ export function snapFlowPathsToWaterways(
  * Renders discrete ESA WorldCover 10m land-cover classes into a crisp translucent
  * RGBA PNG overlay suitable for daylight satellite/topographic basemaps.
  */
-export function renderLandCoverRaster(lcGrid, lcW, lcH, outSize = 1024) {
+export function renderLandCoverRaster(lcGrid, lcW, lcH, outSize = 1024, insideMask = null, maskW = 0, maskH = 0) {
   const palette = {
     10: [21, 128, 61, 145],   // Tree cover / Forest
     20: [101, 163, 13, 125],  // Shrubland
@@ -1263,7 +1268,12 @@ export function renderLandCoverRaster(lcGrid, lcW, lcH, outSize = 1024) {
   const rgba = new Uint8Array(outSize * outSize * 4);
   for (let y = 0; y < outSize; y++) {
     const sr = Math.min(lcH - 1, Math.floor((y / outSize) * lcH));
+    const mr = insideMask && maskH > 0 ? Math.min(maskH - 1, Math.floor((y / outSize) * maskH)) : 0;
     for (let x = 0; x < outSize; x++) {
+      if (insideMask && maskW > 0) {
+        const mc = Math.min(maskW - 1, Math.floor((x / outSize) * maskW));
+        if (insideMask[mr * maskW + mc] === 0) continue;
+      }
       const sc = Math.min(lcW - 1, Math.floor((x / outSize) * lcW));
       const code = lcGrid[sr * lcW + sc];
       const col = palette[code];

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { REGION } from '../config/region';
+import { REGION, type RegionConfig } from '../config/region';
 import type { ClimateBaselineData } from '../data/climateBaseline';
 import { CascadeEngine, extractBuildingCentroids, RECESSION_MULTIPLIER } from '../lib/cascadeEngine';
 import { getMaxRealisticRainMmHr } from '../lib/reachRouter';
@@ -27,6 +27,7 @@ export function useSimulationController(opts: {
   settlements: GeoFeatureCollection | undefined;
   metadata: DatasetMetadata | null;
   climateBaseline?: ClimateBaselineData;
+  region?: RegionConfig;
   calibrationMarks?: CalibrationMarkFeature[];
   calibrationProfile?: CalibrationProfile | null;
 }) {
@@ -162,7 +163,7 @@ export function useSimulationController(opts: {
       culvertBlockagePct,
       structureBlockageOverrides,
       debrisCoupling,
-      soilProfile: REGION.hydrology?.soilProfile,
+      soilProfile: (opts.region ?? REGION).hydrology?.soilProfile,
       calibrationProfile: opts.calibrationProfile || null
     }),
     [
@@ -180,6 +181,7 @@ export function useSimulationController(opts: {
       culvertBlockagePct,
       structureBlockageOverrides,
       debrisCoupling,
+      opts.region,
       opts.calibrationProfile
     ]
   );

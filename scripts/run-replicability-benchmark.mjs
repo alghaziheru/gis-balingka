@@ -69,6 +69,8 @@ try {
   fs.symlinkSync(path.join(ROOT, 'node_modules'), path.join(tmpDir, 'node_modules'), 'dir');
   fs.cpSync(path.join(ROOT, 'scripts'), path.join(tmpDir, 'scripts'), { recursive: true });
   fs.cpSync(path.join(ROOT, 'src'), path.join(tmpDir, 'src'), { recursive: true });
+  fs.mkdirSync(path.join(tmpDir, 'server'), { recursive: true });
+  fs.copyFileSync(path.join(ROOT, 'server', 'regions.mjs'), path.join(tmpDir, 'server', 'regions.mjs'));
   fs.copyFileSync(path.join(ROOT, 'package.json'), path.join(tmpDir, 'package.json'));
   fs.writeFileSync(path.join(tmpDir, 'region.config.json'), JSON.stringify(CASE_STUDY_CONFIG, null, 2));
 

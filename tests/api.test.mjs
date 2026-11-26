@@ -1002,3 +1002,185 @@ test('Structured culvert dimensions, field calibration marks, and calibration pr
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('Multi-region API isolates SQLite waterways and suggestions per ?region=<id>', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'balingka-multi-region-'));
+  const dataDir = path.join(dir, 'sqlite-data');
+  const publicDir = path.join(dir, 'public');
+
+  const mkRegion = (id, dataBasePath, dbFilename, riverName, coords) => {
+    const rel = dataBasePath.replace(/^\/+/, '');
+    const rPub = path.join(publicDir, ...rel.split('/'));
+    fs.mkdirSync(rPub, { recursive: true });
+    fs.writeFileSync(
+      path.join(rPub, 'osm-context.geojson'),
+      JSON.stringify({
+        type: 'FeatureCollection',
+        features: [
+          {
+            type: 'Feature',
+            properties: { id: `osm-${id}`, kind: 'waterway', waterway: 'river', name: riverName },
+            geometry: { type: 'LineString', coordinates: coords }
+          }
+        ]
+      })
+    );
+    return {
+      id,
+      name: id,
+      shortName: id,
+      district: 'Kec. Test',
+      regency: 'Kab. Agam',
+      areaKm2: 20,
+      bbox: { west: 100.2, south: -0.5, east: 100.4, north: -0.3 },
+      dataBasePath,
+      dbFilename
+    };
+  };
+
+  const regionsManifest = {
+    defaultRegionId: 'nagari-balingka',
+    regions: [
+      mkRegion('nagari-balingka', '/data', 'balingka.db', 'Batang Ngalai', [[100.318, -0.345], [100.318, -0.334]]),
+      mkRegion(
+        'malalak-timur-utara',
+        '/data/regions/malalak-timur-utara',
+        'malalak-timur-utara.db',
+        'Batang Malalak',
+        [[100.280, -0.400], [100.282, -0.390]]
+      )
+    ]
+  };
+
+  const { server } = createAppServer({
+    dataDir,
+    publicDir,
+    distDir: null,
+    regionsManifest,
+    adminPassphrase: ''
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const addr = server.address();
+  const base = `http://127.0.0.1:${addr.port}`;
+
+  try {
+    const regList = await (await fetch(`${base}/api/regions`)).json();
+    assert.equal(regList.defaultRegionId, 'nagari-balingka');
+    assert.equal(regList.regions.length, 2);
+
+    const balingkaInit = await (await fetch(`${base}/api/waterways`)).json();
+    assert.equal(balingkaInit.waterways.features.length, 1);
+    assert.equal(balingkaInit.waterways.features[0].properties.name, 'Batang Ngalai');
+
+    const malalakInit = await (await fetch(`${base}/api/waterways?region=malalak-timur-utara`)).json();
+    assert.equal(malalakInit.waterways.features.length, 1);
+    assert.equal(malalakInit.waterways.features[0].properties.name, 'Batang Malalak');
+
+    const createRes = await fetch(`${base}/api/waterways?region=malalak-timur-utara`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: 'Parit Toboh',
+        kind: 'canal',
+        status: 'normal',
+        source: 'manual',
+        notes: 'Uji isolasi',
+        coordinates: [[100.281, -0.398], [100.282, -0.395]],
+        actor: 'Relawan Malalak',
+        reason: 'Tambah saluran Malalak Timur & Utara'
+      })
+    });
+    assert.equal(createRes.status, 201);
+
+    const balingkaAfter = await (await fetch(`${base}/api/waterways`)).json();
+    const malalakAfter = await (await fetch(`${base}/api/waterways?region=malalak-timur-utara`)).json();
+    assert.equal(balingkaAfter.waterways.features.length, 1, 'Balingka must remain isolated from Malalak edits');
+    assert.equal(malalakAfter.waterways.features.length, 2, 'Malalak Timur & Utara should persist its own new waterway');
+
+    const badRegion = await fetch(`${base}/api/waterways?region=unknown-nagari`);
+    assert.equal(badRegion.status, 400);
+
+    // Verify calibration marks are also strictly isolated per region
+    const malCalCreate = await fetch(`${base}/api/calibration-marks?region=malalak-timur-utara`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: 'Tanda Muka Air Malalak',
+        kind: 'hwm',
+        observed_depth_m: 0.9,
+        rain_mm_hr: 50,
+        duration_min: 180,
+        antecedent_5d_mm: 80,
+        notes: 'Uji isolasi kalibrasi',
+        coordinates: [100.281, -0.396],
+        actor: 'Relawan Malalak',
+        reason: 'Catat benchmark Malalak'
+      })
+    });
+    assert.equal(malCalCreate.status, 201);
+    const balCalAfter = await (await fetch(`${base}/api/calibration`)).json();
+    const malCalAfter = await (await fetch(`${base}/api/calibration?region=malalak-timur-utara`)).json();
+    assert.equal(balCalAfter.calibrationMarks.features.length, 0);
+    assert.equal(malCalAfter.calibrationMarks.features.length, 1);
+  } finally {
+    await new Promise(resolve => server.close(resolve));
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('Static file server emits strict Cache-Control headers for HTML, hashed assets, data, and HEAD requests', async () => {
+  const { dir, dbPath } = makeTempDb('balingka-cache-headers-');
+  const { dataDir, osmPath } = makeSyntheticPublicData(dir);
+  const fakeDistDir = path.join(dir, 'dist');
+  fs.mkdirSync(path.join(fakeDistDir, 'assets'), { recursive: true });
+  fs.mkdirSync(path.join(fakeDistDir, 'data'), { recursive: true });
+  fs.writeFileSync(path.join(fakeDistDir, 'index.html'), '<!doctype html><html><body>ok</body></html>');
+  fs.writeFileSync(path.join(fakeDistDir, 'assets', 'index-abc123.js'), 'console.log("ok");');
+  fs.writeFileSync(path.join(fakeDistDir, 'data', 'metadata.json'), '{"ok":true}');
+  fs.writeFileSync(path.join(fakeDistDir, 'favicon.ico'), 'ico');
+
+  const { server } = createAppServer({
+    dbPath,
+    publicDataDir: dataDir,
+    seedGeoJsonPath: osmPath,
+    distDir: fakeDistDir,
+    adminPassphrase: ''
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const { port } = server.address();
+  const base = `http://127.0.0.1:${port}`;
+
+  try {
+    const rootRes = await fetch(`${base}/`);
+    assert.equal(rootRes.status, 200);
+    assert.equal(rootRes.headers.get('cache-control'), 'no-cache, must-revalidate');
+
+    const indexRes = await fetch(`${base}/index.html`);
+    assert.equal(indexRes.status, 200);
+    assert.equal(indexRes.headers.get('cache-control'), 'no-cache, must-revalidate');
+
+    const spaRes = await fetch(`${base}/some-client-route`);
+    assert.equal(spaRes.status, 200);
+    assert.equal(spaRes.headers.get('cache-control'), 'no-cache, must-revalidate');
+
+    const assetRes = await fetch(`${base}/assets/index-abc123.js`);
+    assert.equal(assetRes.status, 200);
+    assert.equal(assetRes.headers.get('cache-control'), 'public, max-age=31536000, immutable');
+
+    const dataRes = await fetch(`${base}/data/metadata.json`);
+    assert.equal(dataRes.status, 200);
+    assert.equal(dataRes.headers.get('cache-control'), 'public, max-age=300, must-revalidate');
+
+    const icoRes = await fetch(`${base}/favicon.ico`);
+    assert.equal(icoRes.status, 200);
+    assert.equal(icoRes.headers.get('cache-control'), 'public, max-age=3600');
+
+    const headRes = await fetch(`${base}/`, { method: 'HEAD' });
+    assert.equal(headRes.status, 200);
+    assert.equal(headRes.headers.get('cache-control'), 'no-cache, must-revalidate');
+    assert.equal(await headRes.text(), '');
+  } finally {
+    await new Promise(resolve => server.close(resolve));
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

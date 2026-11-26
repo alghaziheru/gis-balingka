@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Info, Layers, Minus, Plus, X } from 'lucide-react';
-import { I18N } from '../i18n/translations';
+import { useT } from '../context/RegionContext';
 import type {
   BasemapId,
   DrainageStatus,
@@ -116,7 +116,7 @@ export function TelemetryDock({
   const [mobileOpen, setMobileOpen] = useState(false);
   const [attribOpen, setAttribOpen] = useState(false);
   const attribRef = useRef<HTMLDivElement | null>(null);
-  const t = I18N[lang];
+  const t = useT(lang);
   const isEn = lang === 'en';
   const isDetail = viewMode === 'detail';
   const scale = computeMetricScale(mapCamera.metersPerPixel);
