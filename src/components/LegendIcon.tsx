@@ -1,5 +1,6 @@
 export type LegendIconKind =
   | 'waterway'
+  | 'simWaterways'
   | 'canal'
   | 'bridge'
   | 'culvert'
@@ -48,6 +49,15 @@ export function LegendIcon({ kind, size = 18, simPalette = false }: LegendIconPr
           strokeLinecap="round"
           strokeLinejoin="round"
         />
+      </svg>
+    );
+  }
+  if (kind === 'simWaterways') {
+    return (
+      <svg width={18} height={14} viewBox="0 0 18 14" className="shrink-0" aria-hidden="true">
+        <path d="M1 8.5 Q7 8.5 17 7.5" fill="none" stroke="#1b5270" strokeWidth="2.8" strokeLinecap="round" />
+        <path d="M4.5 2.5 Q7 5.5 9.5 8" fill="none" stroke="#3a7a99" strokeWidth="1.4" strokeLinecap="round" />
+        <path d="M11 2 Q12.5 5 13.5 7.8" fill="none" stroke="#538ca6" strokeWidth="0.95" strokeLinecap="round" />
       </svg>
     );
   }

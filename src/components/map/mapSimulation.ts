@@ -303,56 +303,34 @@ export function syncWaterwaySimStyling(map: MapLibreMap, tab: TabId, isRaining: 
     return;
   }
 
-  // In Simulation, use Deep-to-Soft Hydro Blue hierarchy at normal crisp opacity with subtle wet deepening
-  map.setPaintProperty('verified-waterways-casing', 'line-color', [
-    'case',
-    ['==', ['get', 'kind'], 'culvert'],
-    '#334155',
-    '#0f2d42'
-  ]);
-  map.setPaintProperty(
-    'verified-waterways-casing',
-    'line-width',
-    isRaining
-      ? ['match', ['get', 'kind'], 'river', 5.4, 'stream', 3.6, 'culvert', 4.4, 3.0]
-      : ['match', ['get', 'kind'], 'river', 4.8, 'stream', 3.2, 'culvert', 4.4, 2.8]
-  );
-  map.setPaintProperty('verified-waterways-casing', 'line-opacity', 0.55);
-  map.setPaintProperty('verified-waterways-line', 'line-color', [
-    'case',
-    ['==', ['get', 'status'], 'clogged'],
-    '#9a5815',
-    ['==', ['get', 'status'], 'damaged'],
-    '#a84824',
-    ['==', ['get', 'status'], 'critical'],
-    '#992727',
-    [
-      'match',
-      ['get', 'kind'],
-      'river',
-      isRaining ? '#133b56' : '#1b4d6e',
-      'stream',
-      isRaining ? '#295b78' : '#356d8c',
-      'canal',
-      '#2c7a7b',
-      'drain',
-      '#2c7a7b',
-      isRaining ? '#295b78' : '#356d8c'
-    ]
-  ]);
-  map.setPaintProperty(
-    'verified-waterways-line',
-    'line-width',
-    isRaining
-      ? ['match', ['get', 'kind'], 'river', 3.6, 'stream', 2.2, 1.8]
-      : ['match', ['get', 'kind'], 'river', 3.0, 'stream', 2.0, 1.7]
-  );
-  map.setPaintProperty(
-    'verified-waterways-line',
-    'line-opacity',
-    ['match', ['get', 'kind'], 'river', 0.94, 0.9]
-  );
-  map.setPaintProperty('verified-culverts-line', 'line-opacity', 0.92);
+  // In Simulation, style the single unified solid hydro-blue watershed hierarchy with subtle wet deepening
+  if (map.getLayer('sim-waterways-halo')) {
+    map.setPaintProperty('sim-waterways-halo', 'line-width', isRaining ? 4.8 : 4.4);
+    map.setPaintProperty('sim-waterways-halo', 'line-opacity', isRaining ? 0.36 : 0.28);
+  }
+  if (map.getLayer('sim-waterways-line')) {
+    map.setPaintProperty(
+      'sim-waterways-line',
+      'line-color',
+      isRaining
+        ? ['match', ['get', 'order'], 1, '#154663', 2, '#225c7a', 3, '#33708e', '#4b849e']
+        : ['match', ['get', 'order'], 1, '#1b5270', 2, '#286787', 3, '#3a7a99', '#538ca6']
+    );
+    map.setPaintProperty(
+      'sim-waterways-line',
+      'line-width',
+      isRaining
+        ? ['match', ['get', 'order'], 1, 3.2, 2, 1.9, 3, 1.3, 0.9]
+        : ['match', ['get', 'order'], 1, 2.9, 2, 1.75, 3, 1.2, 0.85]
+    );
+    map.setPaintProperty(
+      'sim-waterways-line',
+      'line-opacity',
+      isRaining
+        ? ['match', ['get', 'order'], 1, 0.96, 2, 0.90, 3, 0.82, 0.62]
+        : ['match', ['get', 'order'], 1, 0.94, 2, 0.88, 3, 0.80, 0.56]
+    );
+  }
 }
 
 export function syncSimulationOverlays(opts: {

@@ -467,38 +467,52 @@ export function ActiveMapLegend({
   }
 
   const mapRows: LegendRow[] = [];
-  if (layers.verifiedWaterways) {
-    mapRows.push({
-      key: 'map-ww',
-      node: (
-        <div className="flex items-center gap-2 text-[#161c1a]">
-          <LegendIcon kind="waterway" simPalette={tab === 'sim'} />
-          <span>{t.lblVerifiedWaterways}</span>
-        </div>
-      )
-    });
-  }
-  if (layers.agamRbiRivers) {
-    mapRows.push({
-      key: 'map-rbi',
-      node: (
-        <div className="flex items-center gap-2 text-[#161c1a]">
-          <LegendIcon kind="agamRbi" simPalette={tab === 'sim'} />
-          <span>{t.lblAgamRbiRivers}</span>
-        </div>
-      )
-    });
-  }
-  if (flowDensity > 0) {
-    mapRows.push({
-      key: 'map-flow',
-      node: (
-        <div className="flex items-center gap-2 text-[#161c1a]">
-          <LegendIcon kind="flow" />
-          <span>{viewMode === 'detail' ? t.lblFlowDetail : t.lblFlowSimple}</span>
-        </div>
-      )
-    });
+  if (tab === 'sim') {
+    if (layers.verifiedWaterways) {
+      mapRows.push({
+        key: 'map-sim-ww',
+        node: (
+          <div className="flex items-center gap-2 text-[#161c1a]">
+            <LegendIcon kind="simWaterways" />
+            <span>{t.lblSimUnifiedWaterways}</span>
+          </div>
+        )
+      });
+    }
+  } else {
+    if (layers.verifiedWaterways) {
+      mapRows.push({
+        key: 'map-ww',
+        node: (
+          <div className="flex items-center gap-2 text-[#161c1a]">
+            <LegendIcon kind="waterway" />
+            <span>{t.lblVerifiedWaterways}</span>
+          </div>
+        )
+      });
+    }
+    if (layers.agamRbiRivers) {
+      mapRows.push({
+        key: 'map-rbi',
+        node: (
+          <div className="flex items-center gap-2 text-[#161c1a]">
+            <LegendIcon kind="agamRbi" />
+            <span>{t.lblAgamRbiRivers}</span>
+          </div>
+        )
+      });
+    }
+    if (flowDensity > 0) {
+      mapRows.push({
+        key: 'map-flow',
+        node: (
+          <div className="flex items-center gap-2 text-[#161c1a]">
+            <LegendIcon kind="flow" />
+            <span>{viewMode === 'detail' ? t.lblFlowDetail : t.lblFlowSimple}</span>
+          </div>
+        )
+      });
+    }
   }
 
   const showStructures = tab === 'drainage' || tab === 'editor' || layers.structures;

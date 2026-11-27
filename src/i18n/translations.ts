@@ -42,6 +42,9 @@ function buildTranslations(region: RegionConfig) {
       legendSecOverlays: 'Permukaan & Lapisan Aktif',
       legendSecMap: 'Unsur Peta Aktif',
       simRiversTitle: 'Lapisan Sungai di Simulasi',
+      lblSimUnifiedWaterways: 'Jaringan alur air',
+      infoSimUnifiedWaterways:
+        'Menyatukan sungai terverifikasi, anak sungai BIG RBI 1:50.000, dan alur limpasan hulu (DEM) menjadi satu tampilan jaringan air yang selaras khusus di Simulasi.',
       infoSimRbiRivers:
         'Menampilkan ruas sungai & anak sungai resmi BIG RBI 1:50.000 agar arah aliran limpasan menuju saluran terlihat jelas.',
       uplandRainPill: `Hujan terkonsentrasi di hulu ${region.uplandLandmark.id}`,
@@ -410,6 +413,9 @@ function buildTranslations(region: RegionConfig) {
       legendSecOverlays: 'Active Surface & Overlays',
       legendSecMap: 'Active Map Layers',
       simRiversTitle: 'River Layers in Simulation',
+      lblSimUnifiedWaterways: 'Waterway network',
+      infoSimUnifiedWaterways:
+        'Unifies verified rivers, BIG RBI 1:50,000 tributaries, and upland DEM runoff gullies into one cohesive watershed layer exclusively in Simulation.',
       infoSimRbiRivers:
         'Displays official BIG RBI 1:50,000 river & tributary reaches so you can see which channels receive runoff.',
       uplandRainPill: `Rain focused on upper ${region.uplandLandmark.en} slopes`,

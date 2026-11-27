@@ -525,15 +525,15 @@ export function App() {
       tab === 'sim'
         ? {
             ...layers,
-            verifiedWaterways: sim.simShowVerifiedWaterways,
-            agamRbiRivers: sim.simShowRbiRivers,
+            verifiedWaterways: sim.simShowWaterways,
+            agamRbiRivers: sim.simShowWaterways,
             osmContext: sim.simShowOsmRoads
           }
         : layers,
-    [tab, layers, sim.simShowVerifiedWaterways, sim.simShowRbiRivers, sim.simShowOsmRoads]
+    [tab, layers, sim.simShowWaterways, sim.simShowOsmRoads]
   );
 
-  const effectiveFlowDensity = tab === 'sim' ? (sim.simShowDemFlows ? 1 : 0) : flowDensity;
+  const effectiveFlowDensity = tab === 'sim' ? 0 : flowDensity;
 
   const mobileHeightClass =
     mobileSheetMode === 'full'
@@ -851,10 +851,8 @@ export function App() {
               isPlacingStormCore={activeTool === 'placeStormCore'}
               forestActualPct={metadata?.landCoverStats?.forestPct ?? 74}
               rainAnimEnabled={sim.rainAnimEnabled}
-              showVerifiedWaterways={sim.simShowVerifiedWaterways}
-              showRbiRivers={sim.simShowRbiRivers}
+              showWaterways={sim.simShowWaterways}
               showOsmRoads={sim.simShowOsmRoads}
-              showDemFlows={sim.simShowDemFlows}
               verifiedIssueCount={editor.verifiedIssueCount}
               verifiedWaterways={editor.verifiedWaterways}
               simNetwork={simFields?.network ?? null}
@@ -891,10 +889,8 @@ export function App() {
               onChangeSimMapViewMode={sim.setSimMapViewMode}
               onApplyPreset={preset => sim.applyPreset(preset, viewMode)}
               onToggleRainAnim={sim.setRainAnimEnabled}
-              onToggleVerifiedWaterways={sim.setSimShowVerifiedWaterways}
-              onToggleRbiRivers={sim.setSimShowRbiRivers}
+              onToggleWaterways={sim.setSimShowWaterways}
               onToggleOsmRoads={sim.setSimShowOsmRoads}
-              onToggleDemFlows={sim.setSimShowDemFlows}
               onOpenMethodology={() => setInfoModalTab('method')}
             />
           )}
@@ -1095,10 +1091,8 @@ export function App() {
         cursorTelemetry={cursorTelemetry}
         mapCamera={mapCamera}
         onToggleLayer={(key, val) => setLayers(prev => ({ ...prev, [key]: val }))}
-        onToggleSimVerifiedWaterways={sim.setSimShowVerifiedWaterways}
-        onToggleSimRbiRivers={sim.setSimShowRbiRivers}
+        onToggleSimWaterways={sim.setSimShowWaterways}
         onToggleSimOsmRoads={sim.setSimShowOsmRoads}
-        onToggleSimDemFlows={sim.setSimShowDemFlows}
         onChangeFlowDensity={setFlowDensity}
         onZoomIn={() => mapControlRef.current?.zoomIn()}
         onZoomOut={() => mapControlRef.current?.zoomOut()}

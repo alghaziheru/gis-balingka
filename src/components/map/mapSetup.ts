@@ -448,6 +448,28 @@ export function addDataSourcesAndLayers(
     paint: { 'fill-color': '#0369a1', 'fill-opacity': 0.30, 'fill-antialias': true }
   });
 
+  // Simulation-only unified, deduplicated solid watershed hierarchy (Verified + BIG RBI 50K + DEM tier-1)
+  map.addSource('src-sim-waterways', { type: 'geojson', data: asGeoInput(EMPTY_FC) });
+  map.addLayer({
+    id: 'sim-waterways-halo',
+    type: 'line',
+    source: 'src-sim-waterways',
+    filter: ['==', ['get', 'order'], 1],
+    layout: { visibility: 'none', 'line-cap': 'round', 'line-join': 'round' },
+    paint: { 'line-color': '#0f2d42', 'line-width': 4.4, 'line-opacity': 0.28 }
+  });
+  map.addLayer({
+    id: 'sim-waterways-line',
+    type: 'line',
+    source: 'src-sim-waterways',
+    layout: { visibility: 'none', 'line-cap': 'round', 'line-join': 'round' },
+    paint: {
+      'line-color': ['match', ['get', 'order'], 1, '#1b5270', 2, '#286787', 3, '#3a7a99', '#538ca6'],
+      'line-width': ['match', ['get', 'order'], 1, 2.9, 2, 1.75, 3, 1.2, 0.85],
+      'line-opacity': ['match', ['get', 'order'], 1, 0.94, 2, 0.88, 3, 0.80, 0.56]
+    }
+  });
+
   map.addSource('src-sim-scour-reaches', { type: 'geojson', data: asGeoInput(EMPTY_FC) });
   map.addLayer({
     id: 'sim-scour-reaches-line',

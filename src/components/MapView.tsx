@@ -38,6 +38,7 @@ import {
   syncWaterwaySimStyling,
   type CanvasMorphMap
 } from './map/mapSimulation';
+import { buildUnifiedSimWaterways } from './map/simWaterways';
 import {
   asGeoInput,
   buildImageCoords,
@@ -164,6 +165,17 @@ export function MapView(props: MapViewProps) {
       props.layers.verifiedWaterways,
       props.layers.agamRbiRivers
     ]
+  );
+
+  const unifiedSimWaterways = useMemo(
+    () =>
+      buildUnifiedSimWaterways(
+        props.verifiedWaterways,
+        props.datasets.agamRbiRivers,
+        props.datasets.flowPaths,
+        props.suppressedDemIds
+      ),
+    [props.verifiedWaterways, props.datasets.agamRbiRivers, props.datasets.flowPaths, props.suppressedDemIds]
   );
 
   const editorUnlockedRef = useRef(props.editorUnlocked);
@@ -638,8 +650,16 @@ export function MapView(props: MapViewProps) {
     map.setLayoutProperty('agam-soil-fill', 'visibility', vis(props.layers.agamSoilGeology));
     map.setLayoutProperty('agam-soil-casing', 'visibility', vis(props.layers.agamSoilGeology));
     map.setLayoutProperty('agam-soil-line', 'visibility', vis(props.layers.agamSoilGeology));
-    map.setLayoutProperty('agam-rbi-casing', 'visibility', vis(props.layers.agamRbiRivers));
-    map.setLayoutProperty('agam-rbi-line', 'visibility', vis(props.layers.agamRbiRivers));
+    const isSim = props.tab === 'sim';
+    const showSimUnified = isSim && props.layers.verifiedWaterways;
+    if (map.getLayer('sim-waterways-halo')) {
+      map.setLayoutProperty('sim-waterways-halo', 'visibility', vis(showSimUnified));
+    }
+    if (map.getLayer('sim-waterways-line')) {
+      map.setLayoutProperty('sim-waterways-line', 'visibility', vis(showSimUnified));
+    }
+    map.setLayoutProperty('agam-rbi-casing', 'visibility', vis(!isSim && props.layers.agamRbiRivers));
+    map.setLayoutProperty('agam-rbi-line', 'visibility', vis(!isSim && props.layers.agamRbiRivers));
     map.setLayoutProperty('contours-casing', 'visibility', vis(props.layers.contours));
     map.setLayoutProperty('contours-line', 'visibility', vis(props.layers.contours));
 
@@ -658,10 +678,10 @@ export function MapView(props: MapViewProps) {
     map.setLayoutProperty('slope-overlay', 'visibility', vis(props.layers.slope && props.basemap !== 'slope'));
     map.setLayoutProperty('osm-roads-casing', 'visibility', vis(props.layers.osmContext));
     map.setLayoutProperty('osm-roads', 'visibility', vis(props.layers.osmContext));
-    map.setLayoutProperty('verified-waterways-casing', 'visibility', vis(props.layers.verifiedWaterways));
-    map.setLayoutProperty('verified-waterways-line', 'visibility', vis(props.layers.verifiedWaterways));
-    map.setLayoutProperty('verified-culverts-line', 'visibility', vis(props.layers.verifiedWaterways));
-    map.setLayoutProperty('verified-waterways-arrows', 'visibility', vis(props.layers.verifiedWaterways && props.tab !== 'sim'));
+    map.setLayoutProperty('verified-waterways-casing', 'visibility', vis(!isSim && props.layers.verifiedWaterways));
+    map.setLayoutProperty('verified-waterways-line', 'visibility', vis(!isSim && props.layers.verifiedWaterways));
+    map.setLayoutProperty('verified-culverts-line', 'visibility', vis(!isSim && props.layers.verifiedWaterways));
+    map.setLayoutProperty('verified-waterways-arrows', 'visibility', vis(!isSim && props.layers.verifiedWaterways));
     syncWaterwaySimStyling(map, props.tab, isRaining);
 
     const wwSrc = map.getSource('src-verified-waterways') as GeoJSONSource | undefined;
@@ -704,8 +724,8 @@ export function MapView(props: MapViewProps) {
     }
 
     const maxTier = props.flowDensity;
-    const flowVis = maxTier > 0;
-    const flowAnimActive = props.tab !== 'sim' && props.flowDensity > 0;
+    const flowVis = !isSim && maxTier > 0;
+    const flowAnimActive = !isSim && props.flowDensity > 0;
     flowAnimActiveRef.current = flowAnimActive;
 
     map.setLayoutProperty('flows-glow', 'visibility', vis(flowVis));
@@ -900,6 +920,13 @@ export function MapView(props: MapViewProps) {
   const overlaySimProgress = props.cascadeEngine
     ? props.cascadeParams.progress
     : Math.round(props.simProgress * 20) / 20;
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapLoadedRef.current || !mapReady) return;
+    const src = map.getSource('src-sim-waterways') as GeoJSONSource | undefined;
+    if (src) src.setData(asGeoInput(unifiedSimWaterways));
+  }, [mapReady, unifiedSimWaterways]);
 
   useEffect(() => {
     const map = mapRef.current;

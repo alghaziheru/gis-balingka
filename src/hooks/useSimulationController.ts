@@ -124,10 +124,8 @@ export function useSimulationController(opts: {
   const [debrisCoupling, setDebrisCoupling] = useState<DebrisCouplingMode>('clear');
   const [simMapViewMode, setSimMapViewMode] = useState<SimMapViewMode>('depth');
   const [rainAnimEnabled, setRainAnimEnabled] = useState(true);
-  const [simShowVerifiedWaterways, setSimShowVerifiedWaterways] = useState(true);
-  const [simShowRbiRivers, setSimShowRbiRivers] = useState(true);
+  const [simShowWaterways, setSimShowWaterways] = useState(true);
   const [simShowOsmRoads, setSimShowOsmRoads] = useState(true);
-  const [simShowDemFlows, setSimShowDemFlows] = useState(false);
 
   const setRainSafe = useCallback(
     (rain: number) => {
@@ -633,14 +631,10 @@ export function useSimulationController(opts: {
     setSimMapViewMode,
     rainAnimEnabled,
     setRainAnimEnabled,
-    simShowVerifiedWaterways,
-    setSimShowVerifiedWaterways,
-    simShowRbiRivers,
-    setSimShowRbiRivers,
+    simShowWaterways,
+    setSimShowWaterways,
     simShowOsmRoads,
     setSimShowOsmRoads,
-    simShowDemFlows,
-    setSimShowDemFlows,
     cascadeEngine,
     playbackGridsRef,
     uplandBbox,

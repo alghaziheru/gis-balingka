@@ -70,10 +70,8 @@ interface SimulationTabProps {
   isPlacingStormCore: boolean;
   forestActualPct: number;
   rainAnimEnabled: boolean;
-  showVerifiedWaterways: boolean;
-  showRbiRivers: boolean;
+  showWaterways: boolean;
   showOsmRoads: boolean;
-  showDemFlows: boolean;
   verifiedIssueCount?: number;
   verifiedWaterways?: VerifiedWaterwayFeature[];
   simNetwork?: SimNetworkData | null;
@@ -105,10 +103,8 @@ interface SimulationTabProps {
   onChangeSimMapViewMode: (mode: SimMapViewMode) => void;
   onApplyPreset: (preset: 'normal' | 'upland' | 'extreme') => void;
   onToggleRainAnim: (enabled: boolean) => void;
-  onToggleVerifiedWaterways: (enabled: boolean) => void;
-  onToggleRbiRivers: (enabled: boolean) => void;
+  onToggleWaterways: (enabled: boolean) => void;
   onToggleOsmRoads: (enabled: boolean) => void;
-  onToggleDemFlows: (enabled: boolean) => void;
   onOpenMethodology: () => void;
 }
 
@@ -337,10 +333,8 @@ export function SimulationTab({
   isPlacingStormCore,
   forestActualPct,
   rainAnimEnabled,
-  showVerifiedWaterways,
-  showRbiRivers,
+  showWaterways,
   showOsmRoads,
-  showDemFlows,
   verifiedIssueCount = 0,
   verifiedWaterways = [],
   simNetwork = null,
@@ -372,10 +366,8 @@ export function SimulationTab({
   onChangeSimMapViewMode,
   onApplyPreset,
   onToggleRainAnim,
-  onToggleVerifiedWaterways,
-  onToggleRbiRivers,
+  onToggleWaterways,
   onToggleOsmRoads,
-  onToggleDemFlows,
   onOpenMethodology
 }: SimulationTabProps) {
   const uid = useId();
@@ -512,7 +504,7 @@ export function SimulationTab({
 
   const isAtEnd = !playing && progress >= 0.99;
   const showRanges = progress > 0.02;
-  const activeLayerCount = [showVerifiedWaterways, showRbiRivers, showOsmRoads, showDemFlows].filter(Boolean).length;
+  const activeLayerCount = [showWaterways, showOsmRoads].filter(Boolean).length;
 
   const presets: { id: 'normal' | 'upland' | 'extreme'; title: string; meta: string }[] = [
     {
@@ -926,7 +918,7 @@ export function SimulationTab({
           </span>
           <span className="flex items-center gap-1.5">
             <span className="font-mono-num text-[11.5px] font-semibold text-[#636f6a]">
-              {activeLayerCount}/4 {t.layersActiveCount}
+              {activeLayerCount}/2 {t.layersActiveCount}
             </span>
             {layersOpen ? (
               <ChevronUp className="h-4 w-4 text-[#636f6a]" />
@@ -939,40 +931,22 @@ export function SimulationTab({
         {layersOpen && (
           <div className="mt-2 divide-y divide-[#161c1a]/10 border-t border-[#161c1a]/10 pt-1">
             <div className="flex min-h-[40px] items-center justify-between gap-2.5 py-1">
-              <label
-                htmlFor={`${uid}-sim-ww`}
-                className="flex min-w-0 flex-1 cursor-pointer items-center gap-2.5 text-[13px] font-medium text-[#161c1a]"
-              >
-                <LegendIcon kind="waterway" />
-                <span className="leading-snug">{t.lblVerifiedWaterways}</span>
-              </label>
-              <input
-                id={`${uid}-sim-ww`}
-                data-testid="sim-toggle-verified-waterways"
-                type="checkbox"
-                checked={showVerifiedWaterways}
-                onChange={e => onToggleVerifiedWaterways(e.target.checked)}
-                className="h-4.5 w-4.5 shrink-0 cursor-pointer accent-[#0369a1]"
-              />
-            </div>
-
-            <div className="flex min-h-[40px] items-center justify-between gap-2.5 py-1">
               <div className="flex min-w-0 flex-1 items-center gap-1.5">
                 <label
-                  htmlFor={`${uid}-sim-rbi`}
+                  htmlFor={`${uid}-sim-ww`}
                   className="flex min-w-0 cursor-pointer items-center gap-2.5 text-[13px] font-medium text-[#161c1a]"
                 >
-                  <LegendIcon kind="agamRbi" />
-                  <span className="leading-snug">{t.lblAgamRbiRivers}</span>
+                  <LegendIcon kind="simWaterways" />
+                  <span className="leading-snug">{t.lblSimUnifiedWaterways}</span>
                 </label>
-                <InfoTooltip text={t.infoSimRbiRivers} label={t.lblAgamRbiRivers} />
+                <InfoTooltip text={t.infoSimUnifiedWaterways} label={t.lblSimUnifiedWaterways} />
               </div>
               <input
-                id={`${uid}-sim-rbi`}
-                data-testid="sim-toggle-rbi-rivers"
+                id={`${uid}-sim-ww`}
+                data-testid="sim-toggle-waterways"
                 type="checkbox"
-                checked={showRbiRivers}
-                onChange={e => onToggleRbiRivers(e.target.checked)}
+                checked={showWaterways}
+                onChange={e => onToggleWaterways(e.target.checked)}
                 className="h-4.5 w-4.5 shrink-0 cursor-pointer accent-[#0369a1]"
               />
             </div>
@@ -982,7 +956,7 @@ export function SimulationTab({
                 htmlFor={`${uid}-sim-osm`}
                 className="flex min-w-0 flex-1 cursor-pointer items-center gap-2.5 text-[13px] font-medium text-[#161c1a]"
               >
-                <LegendIcon kind="osm" />
+                <LegendIcon kind="osm" simPalette />
                 <span className="leading-snug">{t.lblOsmContext}</span>
               </label>
               <input
@@ -991,27 +965,6 @@ export function SimulationTab({
                 type="checkbox"
                 checked={showOsmRoads}
                 onChange={e => onToggleOsmRoads(e.target.checked)}
-                className="h-4.5 w-4.5 shrink-0 cursor-pointer accent-[#0369a1]"
-              />
-            </div>
-
-            <div className="flex min-h-[40px] items-center justify-between gap-2.5 py-1">
-              <div className="flex min-w-0 flex-1 items-center gap-1.5">
-                <label
-                  htmlFor={`${uid}-sim-flow`}
-                  className="flex min-w-0 cursor-pointer items-center gap-2.5 text-[13px] font-medium text-[#161c1a]"
-                >
-                  <LegendIcon kind="flow" />
-                  <span className="leading-snug">{isDetail ? t.lblFlowDetail : t.lblFlowSimple}</span>
-                </label>
-                <InfoTooltip text={t.infoFlowSimple} label={isDetail ? t.lblFlowDetail : t.lblFlowSimple} />
-              </div>
-              <input
-                id={`${uid}-sim-flow`}
-                data-testid="sim-toggle-dem-flows"
-                type="checkbox"
-                checked={showDemFlows}
-                onChange={e => onToggleDemFlows(e.target.checked)}
                 className="h-4.5 w-4.5 shrink-0 cursor-pointer accent-[#0369a1]"
               />
             </div>
