@@ -22,6 +22,7 @@ import { MapView, type FlyRequest, type MapCameraState, type MapControlHandle, t
 import { RainOverlay } from './components/RainOverlay';
 import { SimulationDisclaimerModal } from './components/SimulationDisclaimerModal';
 import { SidebarSkeleton } from './components/SidebarSkeleton';
+import { SimTimelineDock } from './components/SimTimelineDock';
 import { SimulationTab } from './components/SimulationTab';
 import { TelemetryDock } from './components/TelemetryDock';
 import { TerrainTab } from './components/TerrainTab';
@@ -248,7 +249,7 @@ export function App() {
       if (nextTab === prevTab) return;
       if (prevTab !== 'sim' && nextTab === 'sim') {
         preSimBasemapRef.current = basemapRef.current;
-        setBasemap('relief');
+        setBasemap('elev');
         let seen = false;
         try {
           seen =
@@ -293,7 +294,8 @@ export function App() {
     climateBaseline,
     region: activeRegion,
     calibrationMarks: editor.calibrationMarks,
-    calibrationProfile: editor.calibrationProfile
+    calibrationProfile: editor.calibrationProfile,
+    verifiedWaterways: editor.verifiedWaterways
   });
   simPauseRef.current = () => sim.setSimPlaying(false);
 
@@ -389,7 +391,7 @@ export function App() {
     if (next === 'simple') {
       if (tab === 'sim') {
         if (basemap !== 'relief' && basemap !== 'elev') {
-          setBasemap('relief');
+          setBasemap('elev');
         }
       } else if (basemap !== 'sat' && basemap !== 'osm') {
         setBasemap('sat');
@@ -412,7 +414,7 @@ export function App() {
   );
 
   const effectiveBasemap: BasemapId =
-    tab === 'sim' ? (allowedSimBasemaps.includes(basemap) ? basemap : 'relief') : basemap;
+    tab === 'sim' ? (allowedSimBasemaps.includes(basemap) ? basemap : 'elev') : basemap;
 
   const handleChangeBasemap = useCallback(
     (next: BasemapId) => {
@@ -562,10 +564,17 @@ export function App() {
           simRain={sim.simRain}
           simDurationMin={sim.simDurationMin}
           simProgress={sim.simProgress}
+          simPlaying={sim.simPlaying}
+          playbackSpeed={sim.playbackSpeed}
+          uplandBbox={sim.uplandBbox}
+          liveRainMmHr={sim.liveRainMmHr}
+          meanSedimentCv={sim.cascadeKpis.meanSedimentCv}
+          isRecession={sim.liveIsRecession}
           simScenario={sim.drainCondition === 'cleared' ? 'cleared' : 'clogged'}
           rainAnimEnabled={sim.rainAnimEnabled}
           simMapViewMode={sim.simMapViewMode}
           cascadeEngine={sim.cascadeEngine}
+          playbackGridsRef={sim.playbackGridsRef}
           cascadeParams={sim.cascadeParams}
           drainFilter={drainFilter}
           raindrop={raindrop}
@@ -615,11 +624,15 @@ export function App() {
       {/* Falling Rain Animation Overlay during Simulation */}
       <RainOverlay
         active={tab === 'sim' && sim.rainAnimEnabled && sim.simProgress > 0.02}
+        playing={sim.simPlaying}
+        playbackSpeed={sim.playbackSpeed}
         intensityMmHr={sim.simRain}
+        liveRainMmHr={sim.liveRainMmHr}
+        basemap={effectiveBasemap}
         rainPattern={sim.rainPattern}
         uplandBbox={sim.uplandBbox}
         stormCore={sim.stormCore}
-        isRecession={sim.cascadeKpis.isRecession}
+        isRecession={sim.liveIsRecession}
         mapControlRef={mapControlRef}
       />
 
@@ -816,9 +829,13 @@ export function App() {
               lang={lang}
               viewMode={viewMode}
               playing={sim.simPlaying}
+              playbackSpeed={sim.playbackSpeed}
               rainMm={sim.simRain}
               durationMin={sim.simDurationMin}
               progress={sim.simProgress}
+              liveElapsedMin={sim.liveElapsedMin}
+              liveRainMmHr={sim.liveRainMmHr}
+              isRecession={sim.liveIsRecession}
               soilMoisture={sim.soilMoisture}
               antecedent5dMm={sim.antecedent5dMm}
               rainPattern={sim.rainPattern}
@@ -851,6 +868,7 @@ export function App() {
               onTogglePlay={sim.togglePlay}
               onResetSim={sim.resetSim}
               onChangeProgress={sim.changeProgress}
+              onChangeSpeed={sim.setPlaybackSpeed}
               onChangeRain={sim.setSimRain}
               onChangeDuration={sim.setSimDurationMin}
               onChangeSoilMoisture={sim.setSoilMoisture}
@@ -994,12 +1012,29 @@ export function App() {
           flowDensity={effectiveFlowDensity}
           simProgress={sim.simProgress}
           simMapViewMode={sim.simMapViewMode}
+          rainPattern={sim.rainPattern}
+          stormCore={sim.stormCore}
           drainFilter={drainFilter}
           elevRange={metadata ? [metadata.minElevM, metadata.maxElevM] : undefined}
           landCoverStats={metadata?.landCoverStats}
           scourStats={metadata?.scourStats}
         />
       </TopHud>
+
+      {tab === 'sim' && datasets && demClient && (
+        <SimTimelineDock
+          lang={lang}
+          playing={sim.simPlaying}
+          playbackSpeed={sim.playbackSpeed}
+          progress={sim.simProgress}
+          liveElapsedMin={sim.liveElapsedMin}
+          mobileSheetMode={mobileSheetMode}
+          onTogglePlay={sim.togglePlay}
+          onResetSim={sim.resetSim}
+          onChangeProgress={sim.changeProgress}
+          onChangeSpeed={sim.setPlaybackSpeed}
+        />
+      )}
 
       {activeTool && (
         <div

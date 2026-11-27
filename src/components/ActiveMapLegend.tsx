@@ -7,6 +7,7 @@ import type {
   LandCoverStats,
   Language,
   LayerToggles,
+  RainPattern,
   ScourStats,
   SimMapViewMode,
   TabId,
@@ -14,6 +15,7 @@ import type {
 } from '../types/gis';
 import { InfoTooltip } from './InfoTooltip';
 import { LegendIcon } from './LegendIcon';
+import { SIM_ELEV_MAX_M } from './map/elevRaster';
 
 export interface ActiveMapLegendProps {
   lang: Language;
@@ -24,6 +26,8 @@ export interface ActiveMapLegendProps {
   flowDensity: number;
   simProgress: number;
   simMapViewMode?: SimMapViewMode;
+  rainPattern?: RainPattern;
+  stormCore?: [number, number] | null;
   drainFilter: 'all' | DrainageStatus;
   elevRange?: [number, number];
   landCoverStats?: LandCoverStats;
@@ -46,6 +50,8 @@ export function ActiveMapLegend({
   flowDensity,
   simProgress,
   simMapViewMode = 'depth',
+  rainPattern = 'uniform',
+  stormCore = null,
   drainFilter,
   elevRange,
   landCoverStats,
@@ -64,6 +70,25 @@ export function ActiveMapLegend({
   const isRaining = tab === 'sim' && simProgress > 0.02;
 
   const modelRows: LegendRow[] = [];
+  if (tab === 'sim' && (rainPattern === 'upland' || (rainPattern === 'storm_core' && Boolean(stormCore)))) {
+    modelRows.push({
+      key: 'model-storm-footprint',
+      node: (
+        <div className="flex items-center gap-2 text-[#161c1a]">
+          <span className="h-3 w-3 shrink-0 rounded-full border border-dashed border-[#0369a1] bg-[#0369a1]/10" />
+          <span>
+            {rainPattern === 'storm_core'
+              ? isEn
+                ? 'Localized storm core (~2.4 km)'
+                : 'Pusat badai lokal (~2,4 km)'
+              : isEn
+                ? 'Upland rain focus zone'
+                : 'Zona fokus hujan hulu'}
+          </span>
+        </div>
+      )
+    });
+  }
   if (isRaining) {
     if (simMapViewMode === 'confidence') {
       modelRows.push(
@@ -148,9 +173,11 @@ export function ActiveMapLegend({
                 aria-hidden="true"
               >
                 <svg viewBox="0 0 24 12" className="h-3 w-5">
-                  <path d="M2 3.5 C8 2.5, 16 4.5, 22 3.5" stroke="#075985" strokeWidth="1.35" fill="none" strokeLinecap="round" />
-                  <path d="M2 6.5 C8 5.5, 16 7.5, 22 6.5" stroke="#0284c7" strokeWidth="1.2" fill="none" strokeLinecap="round" />
-                  <path d="M2 9.5 C8 8.5, 16 10.5, 22 9.5" stroke="#0e7490" strokeWidth="1.1" fill="none" strokeLinecap="round" />
+                  <path d="M2 3.5 C8 2.5, 13 4.2, 22 3.5" stroke="#075985" strokeWidth="1.4" strokeOpacity="0.45" fill="none" strokeLinecap="round" />
+                  <path d="M10 3.5 C14 3.9, 18 3.7, 22 3.5" stroke="#075985" strokeWidth="1.75" fill="none" strokeLinecap="round" />
+                  <path d="M2 6.5 C8 5.5, 13 7.2, 22 6.5" stroke="#0284c7" strokeWidth="1.15" strokeOpacity="0.45" fill="none" strokeLinecap="round" />
+                  <path d="M11 6.5 C15 6.9, 18 6.7, 22 6.5" stroke="#0284c7" strokeWidth="1.5" fill="none" strokeLinecap="round" />
+                  <path d="M2 9.5 C8 8.5, 14 10.2, 22 9.5" stroke="#0e7490" strokeWidth="1.1" fill="none" strokeLinecap="round" />
                 </svg>
               </span>
               <span>{isEn ? 'Simulated runoff flow' : 'Aliran limpasan simulasi'}</span>
@@ -241,6 +268,7 @@ export function ActiveMapLegend({
   if (basemap === 'elev') {
     const [minE, maxE] = elevRange ?? [1032, 2869];
     const fmt = (n: number) => Math.round(n).toLocaleString(isEn ? 'en-US' : 'id-ID');
+    const isValleyCapped = tab === 'sim' && maxE > SIM_ELEV_MAX_M;
     overlayRows.push({
       key: 'surf-elev',
       node: (
@@ -248,12 +276,14 @@ export function ActiveMapLegend({
           <div className="flex items-center justify-between gap-2 font-semibold text-[#161c1a]">
             <span>{t.bmElev}</span>
             <span className="font-mono-num text-[10.5px] font-semibold text-[#636f6a]">
-              {fmt(minE)} → {fmt(maxE)} mdpl
+              {isValleyCapped
+                ? `${fmt(minE)} → ≥${fmt(SIM_ELEV_MAX_M)} mdpl`
+                : `${fmt(minE)} → ${fmt(maxE)} mdpl`}
             </span>
           </div>
           <span
             className="block h-2 w-full rounded-[3px] border border-black/12"
-            style={{ background: 'linear-gradient(90deg,#84b860,#eab308,#92400e)' }}
+            style={{ background: 'linear-gradient(90deg,#3a7a58,#82a866,#c6b476,#b67e56,#e0dbd1)' }}
             aria-hidden="true"
           />
         </div>
@@ -442,7 +472,7 @@ export function ActiveMapLegend({
       key: 'map-ww',
       node: (
         <div className="flex items-center gap-2 text-[#161c1a]">
-          <LegendIcon kind="waterway" />
+          <LegendIcon kind="waterway" simPalette={tab === 'sim'} />
           <span>{t.lblVerifiedWaterways}</span>
         </div>
       )
@@ -453,7 +483,7 @@ export function ActiveMapLegend({
       key: 'map-rbi',
       node: (
         <div className="flex items-center gap-2 text-[#161c1a]">
-          <LegendIcon kind="agamRbi" />
+          <LegendIcon kind="agamRbi" simPalette={tab === 'sim'} />
           <span>{t.lblAgamRbiRivers}</span>
         </div>
       )
@@ -586,7 +616,7 @@ export function ActiveMapLegend({
       key: 'map-osm',
       node: (
         <div className="flex items-center gap-2 text-[#161c1a]">
-          <LegendIcon kind="osm" />
+          <LegendIcon kind="osm" simPalette={tab === 'sim'} />
           <span>{t.lblOsmContext}</span>
         </div>
       )

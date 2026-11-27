@@ -1,6 +1,7 @@
 import type { MutableRefObject } from 'react';
 import type { GeoJSONSource } from 'maplibre-gl';
 import type { RegionConfig } from '../../config/region';
+import type { PlaybackHydroGrids } from '../../hooks/useSimulationController';
 import type { CascadeEngine } from '../../lib/cascadeEngine';
 import type { DemClient } from '../../lib/demClient';
 import type {
@@ -92,10 +93,17 @@ export interface MapViewProps {
   simRain: number;
   simDurationMin: number;
   simProgress: number;
+  simPlaying: boolean;
+  playbackSpeed: number;
+  uplandBbox: BBox | null;
+  liveRainMmHr: number;
+  meanSedimentCv: number;
+  isRecession: boolean;
   simScenario: 'clogged' | 'cleared';
   rainAnimEnabled: boolean;
   simMapViewMode: SimMapViewMode;
   cascadeEngine: CascadeEngine | null;
+  playbackGridsRef?: MutableRefObject<PlaybackHydroGrids>;
   cascadeParams: CascadeSimParams;
   drainFilter: 'all' | DrainageStatus;
   raindrop: RaindropTrace | null;

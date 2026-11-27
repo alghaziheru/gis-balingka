@@ -24,10 +24,19 @@ export type LegendIconKind =
 interface LegendIconProps {
   kind: LegendIconKind;
   size?: number;
+  simPalette?: boolean;
 }
 
-export function LegendIcon({ kind, size = 18 }: LegendIconProps) {
+export function LegendIcon({ kind, size = 18, simPalette = false }: LegendIconProps) {
   if (kind === 'waterway') {
+    if (simPalette) {
+      return (
+        <svg width={18} height={14} viewBox="0 0 18 14" className="shrink-0" aria-hidden="true">
+          <line x1="1" y1="7" x2="17" y2="7" stroke="#0f2d42" strokeOpacity="0.5" strokeWidth="5" strokeLinecap="round" />
+          <line x1="1" y1="7" x2="17" y2="7" stroke="#1b4d6e" strokeWidth="3.6" strokeLinecap="round" />
+        </svg>
+      );
+    }
     return (
       <svg width={18} height={14} viewBox="0 0 18 14" className="shrink-0" aria-hidden="true">
         <line x1="1" y1="7" x2="17" y2="7" stroke="#0369a1" strokeWidth="4" strokeLinecap="round" />
@@ -119,6 +128,15 @@ export function LegendIcon({ kind, size = 18 }: LegendIconProps) {
     );
   }
   if (kind === 'osm') {
+    if (simPalette) {
+      return (
+        <svg width={18} height={14} viewBox="0 0 18 14" className="shrink-0" aria-hidden="true">
+          <line x1="1" y1="7" x2="17" y2="7" stroke="#4a4843" strokeWidth="4.4" strokeLinecap="round" />
+          <line x1="2" y1="7" x2="10" y2="7" stroke="#d8c79e" strokeWidth="2.2" strokeLinecap="round" />
+          <line x1="10" y1="7" x2="16" y2="7" stroke="#cfc9be" strokeWidth="1.8" strokeLinecap="round" />
+        </svg>
+      );
+    }
     return (
       <svg width={18} height={14} viewBox="0 0 18 14" className="shrink-0" aria-hidden="true">
         <line x1="1" y1="7" x2="17" y2="7" stroke="#161c1a" strokeWidth="5.4" strokeLinecap="round" />
@@ -235,6 +253,22 @@ export function LegendIcon({ kind, size = 18 }: LegendIconProps) {
   }
 
   if (kind === 'agamRbi') {
+    if (simPalette) {
+      return (
+        <svg width={18} height={14} viewBox="0 0 18 14" className="shrink-0" aria-hidden="true">
+          <line
+            x1="1.5"
+            y1="7"
+            x2="16.5"
+            y2="7"
+            stroke="#5b7f95"
+            strokeWidth="2.0"
+            strokeDasharray="3.5 2.2"
+            strokeLinecap="round"
+          />
+        </svg>
+      );
+    }
     return (
       <svg width={18} height={14} viewBox="0 0 18 14" className="shrink-0" aria-hidden="true">
         <line
