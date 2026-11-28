@@ -148,6 +148,22 @@ export const SIGMA_ENSEMBLE_MEMBERS: EnsembleMemberConfig[] = [
 export const RECESSION_MULTIPLIER = 1.28;
 
 /**
+ * Post-storm drainage recession duration (minutes):
+ * Minimum 4 hours (240 min) so short storms (30m–6h) complete a full rise → peak → recession
+ * hydrograph past Nagari Balingka's ~87 min valley travel lag, scaling up to a bounded
+ * 6-hour (360 min) drainage tail for multi-day monsoons.
+ */
+export function computeRecessionDurationMin(durationMin: number, minRecessionMin = 0): number {
+  const safeDur = Math.max(15, durationMin);
+  const baseRec =
+    safeDur >= 720
+      ? Math.round(Math.min(safeDur * (RECESSION_MULTIPLIER - 1), 360))
+      : Math.max(1, Math.round(safeDur * (RECESSION_MULTIPLIER - 1)));
+  const floorRec = Math.max(0, Math.min(360, Math.round(minRecessionMin)));
+  return Math.max(baseRec, floorRec);
+}
+
+/**
  * Physical upper-bound rainfall intensity envelope (mm/hr) by duration, using region-specific
  * SNI 2415:2016 + Mononobe IDF caps when available (preventing non-physical extreme multi-day totals).
  */
@@ -178,6 +194,9 @@ export function getMaxRealisticRainMmHr(
  * incised hydraulic-geometry scaling (~0.60..1.18 m above DEM thalweg floor).
  */
 export function estimateReachBankfullDepthM(reach: SimReachNode): number {
+  if (reach.bankfullDepthM != null && Number.isFinite(reach.bankfullDepthM) && reach.bankfullDepthM > 0.2) {
+    return reach.bankfullDepthM;
+  }
   if (reach.measuredDepthM != null && Number.isFinite(reach.measuredDepthM) && reach.measuredDepthM > 0.2) {
     return Math.min(2.2, reach.measuredDepthM * 0.85);
   }
@@ -244,14 +263,11 @@ export function buildHyetograph(
   rainMmHr: number,
   durationMin: number,
   hyetograph: HyetographType,
-  totalSteps = 28
+  totalSteps = 28,
+  minRecessionMin = 0
 ): { steps: HyetographStep[]; totalWindowMin: number; dtMin: number; stormSteps: number } {
   const safeDur = Math.max(15, durationMin);
-  // Multi-day monsoon events use a bounded 6-hour drainage recession instead of scaling linearly
-  const recessionMin =
-    safeDur >= 720
-      ? Math.round(Math.min(safeDur * 0.28, 360))
-      : Math.max(1, Math.round(safeDur * (RECESSION_MULTIPLIER - 1)));
+  const recessionMin = computeRecessionDurationMin(safeDur, minRecessionMin);
   const totalWindowMin = safeDur + recessionMin;
   const dtMin = totalWindowMin / totalSteps;
   const stormSteps = Math.max(4, Math.min(totalSteps - 2, Math.round(safeDur / dtMin)));
@@ -363,19 +379,23 @@ export function invertSrcStage(
   const reqK = qM3s * Math.max(0.018, manningN);
   const kArr = reach.kRef;
   const wArr = reach.topW;
+  const aArr = Array.isArray(reach.areaM2) && reach.areaM2.length === kArr.length ? reach.areaM2 : null;
   const lastIdx = kArr.length - 1;
 
   let stageM: number;
   let topWidthM: number;
+  let areaM2: number | null = null;
 
   if (reqK <= kArr[0]) {
     const f = reqK / Math.max(1e-5, kArr[0]);
     stageM = stagesM[0] * Math.pow(Math.max(0, f), 0.62);
     topWidthM = wArr[0];
+    if (aArr) areaM2 = aArr[0] * Math.pow(Math.max(0, f), 0.62);
   } else if (reqK >= kArr[lastIdx]) {
     const extraRatio = reqK / Math.max(1e-5, kArr[lastIdx]);
     stageM = Math.min(7.5, stagesM[lastIdx] * Math.pow(extraRatio, 0.36));
     topWidthM = wArr[lastIdx] * Math.pow(extraRatio, 0.2);
+    if (aArr) areaM2 = aArr[lastIdx] * Math.pow(extraRatio, 0.56);
   } else {
     let hi = 1;
     while (hi < lastIdx && kArr[hi] < reqK) hi++;
@@ -384,9 +404,10 @@ export function invertSrcStage(
     const t = Math.max(0, Math.min(1, (reqK - kArr[lo]) / span));
     stageM = stagesM[lo] + (stagesM[hi] - stagesM[lo]) * t;
     topWidthM = wArr[lo] + (wArr[hi] - wArr[lo]) * t;
+    if (aArr) areaM2 = aArr[lo] + (aArr[hi] - aArr[lo]) * t;
   }
 
-  const estArea = Math.max(0.25, topWidthM * stageM * 0.68);
+  const estArea = Math.max(0.25, areaM2 != null && Number.isFinite(areaM2) ? areaM2 : topWidthM * stageM * 0.68);
   const velocityMs = Math.max(0.15, Math.min(8.5, qM3s / estArea));
   return { stageM, topWidthM: Math.max(1.2, topWidthM), velocityMs };
 }
@@ -414,11 +435,17 @@ export interface RoutedReachState {
   outletHydrographQ: Float32Array;
   outletHydrographBulkQ: Float32Array;
   peakOutletQ: number;
+  peakLagMin: number | null;
   meanRunoffMm: number;
   waterBalance: WaterBalanceSummary;
+  peakStageNormal?: Float32Array;
+  peakBackwaterHead?: Float32Array;
+  peakBackwaterStartLong?: Float32Array;
+  peakBackwaterLenFrac?: Float32Array;
+  peakStreamPowerWm2?: Float32Array;
 }
 
-interface PreparedReachHydroParams {
+export interface PreparedReachHydroParams {
   reachSpatialMult: Float32Array;
   reachS: Float32Array;
   reachSoilFill: Float32Array;
@@ -512,7 +539,7 @@ function prepareReachHydroParams(
   };
 }
 
-interface StepSmaResult {
+export interface StepSmaResult {
   dRainLocal: number;
   iaTaken: number;
   totalSurfaceRunoffMm: number;
@@ -526,7 +553,7 @@ interface StepSmaResult {
  * Advances continuous Soil Moisture Accounting (SCS-CN) by one timestep with exact mass closure:
  * dRainLocal === iaTaken + (totalSurfaceRunoffMm + returnFlowMm) + (F_after - F_before) + (drainMm - returnFlowMm).
  */
-function stepReachSma(
+export function stepReachSma(
   r: number,
   dRainLocal: number,
   isRecession: boolean,
@@ -655,6 +682,7 @@ export function routeReachNetwork(opts: {
   reachSedimentSeries?: ReachSedimentSeries | null;
   reachSedimentSupplyM3?: Float32Array | null;
   forceClearedCrossings?: boolean;
+  trackPeakEnvelope?: boolean;
 }): RoutedReachState {
   const {
     network,
@@ -666,7 +694,8 @@ export function routeReachNetwork(opts: {
     targetStepIdx,
     reachSedimentSeries = null,
     reachSedimentSupplyM3 = null,
-    forceClearedCrossings = false
+    forceClearedCrossings = false,
+    trackPeakEnvelope = false
   } = opts;
 
   const R = network.reachCount;
@@ -719,6 +748,13 @@ export function routeReachNetwork(opts: {
   const backwaterLenFracSnap = new Float32Array(R);
   const sedimentCvSnap = new Float32Array(R);
   const streamPowerSnap = new Float32Array(R);
+
+  // Optional full-storm peak envelope (max_t across all timesteps) for High-Water Mark scoring
+  const peakStageNormal = trackPeakEnvelope ? new Float32Array(R) : null;
+  const peakBackwaterHead = trackPeakEnvelope ? new Float32Array(R) : null;
+  const peakBackwaterStartLong = trackPeakEnvelope ? new Float32Array(R).fill(1.0) : null;
+  const peakBackwaterLenFrac = trackPeakEnvelope ? new Float32Array(R) : null;
+  const peakStreamPowerWm2 = trackPeakEnvelope ? new Float32Array(R) : null;
 
   // Track catchment outlet hydrograph (largest upstreamAreaKm2 reach inside/touching Nagari)
   let monitorReachId = R - 1;
@@ -864,8 +900,10 @@ export function routeReachNetwork(opts: {
       }
 
       const rCross = crossingsByReach[r];
-      const needCrossingCheck = t === safeTargetStep || (debrisMode === 'surge' && rCross.length > 0);
-      const needFullReach = t === safeTargetStep || r === monitorReachId || needCrossingCheck;
+      const needCrossingCheck =
+        t === safeTargetStep || trackPeakEnvelope || (debrisMode === 'surge' && rCross.length > 0);
+      const needFullReach =
+        t === safeTargetStep || trackPeakEnvelope || r === monitorReachId || needCrossingCheck;
 
       if (needFullReach) {
         const surgeMult = debrisMode === 'surge' ? 1 + surgeDownBoost[r] : 1;
@@ -882,14 +920,21 @@ export function routeReachNetwork(opts: {
           // Hyperconcentrated / debris flow increases effective flow resistance
           const nEff = reachManning[r] * (1 + 2.2 * cv);
           const { stageM, topWidthM } = invertSrcStage(qBulk, nEff, reach, stagesM);
+          const omega =
+            t === safeTargetStep || trackPeakEnvelope
+              ? (rhoMix * 9.81 * qBulk * reach.slope) / Math.max(1.5, topWidthM)
+              : 0;
 
           if (t === safeTargetStep) {
-            const omega = (rhoMix * 9.81 * qBulk * reach.slope) / Math.max(1.5, topWidthM);
             qWaterSnap[r] = qOut;
             qBulkSnap[r] = qBulk;
             stageNormalSnap[r] = stageM;
             sedimentCvSnap[r] = cv;
             streamPowerSnap[r] = omega;
+          }
+          if (trackPeakEnvelope && peakStageNormal && peakStreamPowerWm2) {
+            if (stageM > peakStageNormal[r]) peakStageNormal[r] = stageM;
+            if (omega > peakStreamPowerWm2[r]) peakStreamPowerWm2[r] = omega;
           }
 
           if (rCross.length > 0) {
@@ -927,20 +972,34 @@ export function routeReachNetwork(opts: {
               const qCapEff = Math.max(0.4, cr.qCapM3s * reliefBoost * (1 - blkFrac) * capScale);
 
               if (qBulk > qCapEff) {
-                if (t === safeTargetStep) {
-                  chokedNow++;
-                  chokedIdsNow.push(cr.id);
+                if (t === safeTargetStep || trackPeakEnvelope) {
                   const qExcess = qBulk - qCapEff;
                   const roadWeirW = Math.max(3.5, topWidthM * 1.4);
                   const dh = Math.min(
                     2.6,
                     0.42 * Math.pow(qExcess / roadWeirW, 2 / 3) + 0.32 * blkFrac * Math.min(1.6, stageM)
                   );
-                  if (dh > backwaterHeadSnap[r]) {
-                    backwaterHeadSnap[r] = dh;
-                    backwaterStartLongSnap[r] = cr.longFrac;
-                    const lBwM = Math.max(85, (0.72 * dh) / Math.max(0.008, reach.slope));
-                    backwaterLenFracSnap[r] = Math.min(1.5, lBwM / Math.max(40, reach.lengthM));
+                  const lBwM = Math.max(85, (0.72 * dh) / Math.max(0.008, reach.slope));
+                  const lBwFrac = Math.min(1.5, lBwM / Math.max(40, reach.lengthM));
+                  if (t === safeTargetStep) {
+                    chokedNow++;
+                    chokedIdsNow.push(cr.id);
+                    if (dh > backwaterHeadSnap[r]) {
+                      backwaterHeadSnap[r] = dh;
+                      backwaterStartLongSnap[r] = cr.longFrac;
+                      backwaterLenFracSnap[r] = lBwFrac;
+                    }
+                  }
+                  if (
+                    trackPeakEnvelope &&
+                    peakBackwaterHead &&
+                    peakBackwaterStartLong &&
+                    peakBackwaterLenFrac &&
+                    dh > peakBackwaterHead[r]
+                  ) {
+                    peakBackwaterHead[r] = dh;
+                    peakBackwaterStartLong[r] = cr.longFrac;
+                    peakBackwaterLenFrac[r] = lBwFrac;
                   }
                 }
                 if (debrisMode === 'surge' && (cv >= 0.05 || blkFrac >= 0.65) && d >= 0 && d < R) {
@@ -988,6 +1047,59 @@ export function routeReachNetwork(opts: {
     }
   }
 
+  // Propagate directional M1 backwater spillover into upstream tributaries on the peak envelope as well
+  if (trackPeakEnvelope && peakBackwaterHead && peakBackwaterStartLong && peakBackwaterLenFrac) {
+    for (let r = R - 1; r >= 0; r--) {
+      const bw = peakBackwaterHead[r];
+      if (bw <= 0.15) continue;
+      const reachHeadSpan = 1 - peakBackwaterStartLong[r];
+      if (peakBackwaterLenFrac[r] > reachHeadSpan) {
+        const residualFrac = Math.max(0, 1 - reachHeadSpan / Math.max(0.05, peakBackwaterLenFrac[r]));
+        const spillHead = bw * residualFrac * 0.72;
+        if (spillHead <= 0.12) continue;
+        const ups = upstreamOf[r];
+        for (let ui = 0; ui < ups.length; ui++) {
+          const u = ups[ui];
+          if (spillHead > peakBackwaterHead[u]) {
+            peakBackwaterHead[u] = spillHead;
+            peakBackwaterStartLong[u] = 0;
+            const lBwU = Math.max(60, (0.7 * spillHead) / Math.max(0.008, network.reaches[u].slope));
+            peakBackwaterLenFrac[u] = Math.min(1.0, lBwU / Math.max(40, network.reaches[u].lengthM));
+          }
+        }
+      }
+    }
+  }
+
+  // Dynamic basin lag time: outlet peak discharge time minus storm rainfall peak/centroid time
+  let peakLagMin: number | null = null;
+  if (peakOutletQ > 0.1 && T > 1) {
+    let maxQIdx = 0;
+    let maxRainIdx = 0;
+    let rainWeightedTimeSum = 0;
+    let rainSum = 0;
+    let activeRainSteps = 0;
+    for (let t = 0; t < T; t++) {
+      if (outletHydrographBulkQ[t] > outletHydrographBulkQ[maxQIdx]) maxQIdx = t;
+      const rRate = hyetographSteps[t].rainMmHr;
+      if (rRate > hyetographSteps[maxRainIdx].rainMmHr) maxRainIdx = t;
+      if (rRate > 0) {
+        rainWeightedTimeSum += hyetographSteps[t].timeMin * rRate;
+        rainSum += rRate;
+        activeRainSteps++;
+      }
+    }
+    if (rainSum > 0 && activeRainSteps > 0) {
+      const meanStormRate = rainSum / activeRainSteps;
+      const hasDistinctRainPeak = hyetographSteps[maxRainIdx].rainMmHr > meanStormRate * 1.35;
+      const refRainMin = hasDistinctRainPeak
+        ? hyetographSteps[maxRainIdx].timeMin
+        : rainWeightedTimeSum / rainSum;
+      const rawLag = hyetographSteps[maxQIdx].timeMin - refRainMin;
+      peakLagMin = Number(Math.max(5, rawLag).toFixed(1));
+    }
+  }
+
   const denomArea = wbAreaWeight > 0 ? wbAreaWeight : 1;
   const rainInputMm = wbRainAreaSum / denomArea;
   const interceptionMm = wbIaAreaSum / denomArea;
@@ -1011,6 +1123,7 @@ export function routeReachNetwork(opts: {
     outletHydrographQ,
     outletHydrographBulkQ,
     peakOutletQ,
+    peakLagMin,
     meanRunoffMm: meanRunoffMmSnap,
     waterBalance: {
       rainInputMm: Number(rainInputMm.toFixed(3)),
@@ -1020,6 +1133,15 @@ export function routeReachNetwork(opts: {
       deepPercolationMm: Number(deepPercolationMm.toFixed(3)),
       closureErrorMm: Number(closureErrorMm.toFixed(5)),
       closureErrorPct: Number(closureErrorPct.toFixed(4))
-    }
+    },
+    ...(trackPeakEnvelope && peakStageNormal && peakBackwaterHead && peakBackwaterStartLong && peakBackwaterLenFrac && peakStreamPowerWm2
+      ? {
+          peakStageNormal,
+          peakBackwaterHead,
+          peakBackwaterStartLong,
+          peakBackwaterLenFrac,
+          peakStreamPowerWm2
+        }
+      : {})
   };
 }

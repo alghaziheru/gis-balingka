@@ -22,6 +22,7 @@ import { MapView, type FlyRequest, type MapCameraState, type MapControlHandle, t
 import { RainOverlay } from './components/RainOverlay';
 import { SimulationDisclaimerModal } from './components/SimulationDisclaimerModal';
 import { SidebarSkeleton } from './components/SidebarSkeleton';
+import { SimTimelineDock } from './components/SimTimelineDock';
 import { SimulationTab } from './components/SimulationTab';
 import { TelemetryDock } from './components/TelemetryDock';
 import { TerrainTab } from './components/TerrainTab';
@@ -248,7 +249,7 @@ export function App() {
       if (nextTab === prevTab) return;
       if (prevTab !== 'sim' && nextTab === 'sim') {
         preSimBasemapRef.current = basemapRef.current;
-        setBasemap('relief');
+        setBasemap('elev');
         let seen = false;
         try {
           seen =
@@ -293,7 +294,8 @@ export function App() {
     climateBaseline,
     region: activeRegion,
     calibrationMarks: editor.calibrationMarks,
-    calibrationProfile: editor.calibrationProfile
+    calibrationProfile: editor.calibrationProfile,
+    verifiedWaterways: editor.verifiedWaterways
   });
   simPauseRef.current = () => sim.setSimPlaying(false);
 
@@ -389,7 +391,7 @@ export function App() {
     if (next === 'simple') {
       if (tab === 'sim') {
         if (basemap !== 'relief' && basemap !== 'elev') {
-          setBasemap('relief');
+          setBasemap('elev');
         }
       } else if (basemap !== 'sat' && basemap !== 'osm') {
         setBasemap('sat');
@@ -412,7 +414,7 @@ export function App() {
   );
 
   const effectiveBasemap: BasemapId =
-    tab === 'sim' ? (allowedSimBasemaps.includes(basemap) ? basemap : 'relief') : basemap;
+    tab === 'sim' ? (allowedSimBasemaps.includes(basemap) ? basemap : 'elev') : basemap;
 
   const handleChangeBasemap = useCallback(
     (next: BasemapId) => {
@@ -523,15 +525,15 @@ export function App() {
       tab === 'sim'
         ? {
             ...layers,
-            verifiedWaterways: sim.simShowVerifiedWaterways,
-            agamRbiRivers: sim.simShowRbiRivers,
+            verifiedWaterways: sim.simShowWaterways,
+            agamRbiRivers: sim.simShowWaterways,
             osmContext: sim.simShowOsmRoads
           }
         : layers,
-    [tab, layers, sim.simShowVerifiedWaterways, sim.simShowRbiRivers, sim.simShowOsmRoads]
+    [tab, layers, sim.simShowWaterways, sim.simShowOsmRoads]
   );
 
-  const effectiveFlowDensity = tab === 'sim' ? (sim.simShowDemFlows ? 1 : 0) : flowDensity;
+  const effectiveFlowDensity = tab === 'sim' ? 0 : flowDensity;
 
   const mobileHeightClass =
     mobileSheetMode === 'full'
@@ -562,10 +564,18 @@ export function App() {
           simRain={sim.simRain}
           simDurationMin={sim.simDurationMin}
           simProgress={sim.simProgress}
+          liveElapsedMin={sim.liveElapsedMin}
+          simPlaying={sim.simPlaying}
+          playbackSpeed={sim.playbackSpeed}
+          uplandBbox={sim.uplandBbox}
+          liveRainMmHr={sim.liveRainMmHr}
+          meanSedimentCv={sim.cascadeKpis.meanSedimentCv}
+          isRecession={sim.liveIsRecession}
           simScenario={sim.drainCondition === 'cleared' ? 'cleared' : 'clogged'}
           rainAnimEnabled={sim.rainAnimEnabled}
           simMapViewMode={sim.simMapViewMode}
           cascadeEngine={sim.cascadeEngine}
+          playbackGridsRef={sim.playbackGridsRef}
           cascadeParams={sim.cascadeParams}
           drainFilter={drainFilter}
           raindrop={raindrop}
@@ -615,11 +625,15 @@ export function App() {
       {/* Falling Rain Animation Overlay during Simulation */}
       <RainOverlay
         active={tab === 'sim' && sim.rainAnimEnabled && sim.simProgress > 0.02}
+        playing={sim.simPlaying}
+        playbackSpeed={sim.playbackSpeed}
         intensityMmHr={sim.simRain}
+        liveRainMmHr={sim.liveRainMmHr}
+        basemap={effectiveBasemap}
         rainPattern={sim.rainPattern}
         uplandBbox={sim.uplandBbox}
         stormCore={sim.stormCore}
-        isRecession={sim.cascadeKpis.isRecession}
+        isRecession={sim.liveIsRecession}
         mapControlRef={mapControlRef}
       />
 
@@ -816,9 +830,13 @@ export function App() {
               lang={lang}
               viewMode={viewMode}
               playing={sim.simPlaying}
+              playbackSpeed={sim.playbackSpeed}
               rainMm={sim.simRain}
               durationMin={sim.simDurationMin}
               progress={sim.simProgress}
+              liveElapsedMin={sim.liveElapsedMin}
+              liveRainMmHr={sim.liveRainMmHr}
+              isRecession={sim.liveIsRecession}
               soilMoisture={sim.soilMoisture}
               antecedent5dMm={sim.antecedent5dMm}
               rainPattern={sim.rainPattern}
@@ -834,10 +852,8 @@ export function App() {
               isPlacingStormCore={activeTool === 'placeStormCore'}
               forestActualPct={metadata?.landCoverStats?.forestPct ?? 74}
               rainAnimEnabled={sim.rainAnimEnabled}
-              showVerifiedWaterways={sim.simShowVerifiedWaterways}
-              showRbiRivers={sim.simShowRbiRivers}
+              showWaterways={sim.simShowWaterways}
               showOsmRoads={sim.simShowOsmRoads}
-              showDemFlows={sim.simShowDemFlows}
               verifiedIssueCount={editor.verifiedIssueCount}
               verifiedWaterways={editor.verifiedWaterways}
               simNetwork={simFields?.network ?? null}
@@ -851,6 +867,7 @@ export function App() {
               onTogglePlay={sim.togglePlay}
               onResetSim={sim.resetSim}
               onChangeProgress={sim.changeProgress}
+              onChangeSpeed={sim.setPlaybackSpeed}
               onChangeRain={sim.setSimRain}
               onChangeDuration={sim.setSimDurationMin}
               onChangeSoilMoisture={sim.setSoilMoisture}
@@ -873,10 +890,8 @@ export function App() {
               onChangeSimMapViewMode={sim.setSimMapViewMode}
               onApplyPreset={preset => sim.applyPreset(preset, viewMode)}
               onToggleRainAnim={sim.setRainAnimEnabled}
-              onToggleVerifiedWaterways={sim.setSimShowVerifiedWaterways}
-              onToggleRbiRivers={sim.setSimShowRbiRivers}
+              onToggleWaterways={sim.setSimShowWaterways}
               onToggleOsmRoads={sim.setSimShowOsmRoads}
-              onToggleDemFlows={sim.setSimShowDemFlows}
               onOpenMethodology={() => setInfoModalTab('method')}
             />
           )}
@@ -994,12 +1009,29 @@ export function App() {
           flowDensity={effectiveFlowDensity}
           simProgress={sim.simProgress}
           simMapViewMode={sim.simMapViewMode}
+          rainPattern={sim.rainPattern}
+          stormCore={sim.stormCore}
           drainFilter={drainFilter}
           elevRange={metadata ? [metadata.minElevM, metadata.maxElevM] : undefined}
           landCoverStats={metadata?.landCoverStats}
           scourStats={metadata?.scourStats}
         />
       </TopHud>
+
+      {tab === 'sim' && datasets && demClient && (
+        <SimTimelineDock
+          lang={lang}
+          playing={sim.simPlaying}
+          playbackSpeed={sim.playbackSpeed}
+          progress={sim.simProgress}
+          liveElapsedMin={sim.liveElapsedMin}
+          mobileSheetMode={mobileSheetMode}
+          onTogglePlay={sim.togglePlay}
+          onResetSim={sim.resetSim}
+          onChangeProgress={sim.changeProgress}
+          onChangeSpeed={sim.setPlaybackSpeed}
+        />
+      )}
 
       {activeTool && (
         <div
@@ -1060,10 +1092,8 @@ export function App() {
         cursorTelemetry={cursorTelemetry}
         mapCamera={mapCamera}
         onToggleLayer={(key, val) => setLayers(prev => ({ ...prev, [key]: val }))}
-        onToggleSimVerifiedWaterways={sim.setSimShowVerifiedWaterways}
-        onToggleSimRbiRivers={sim.setSimShowRbiRivers}
+        onToggleSimWaterways={sim.setSimShowWaterways}
         onToggleSimOsmRoads={sim.setSimShowOsmRoads}
-        onToggleSimDemFlows={sim.setSimShowDemFlows}
         onChangeFlowDensity={setFlowDensity}
         onZoomIn={() => mapControlRef.current?.zoomIn()}
         onZoomOut={() => mapControlRef.current?.zoomOut()}

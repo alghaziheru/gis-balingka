@@ -29,7 +29,12 @@ import {
 import { runResetRegion } from '../scripts/reset-region.mjs';
 import { CascadeEngine, extractBuildingCentroids } from '../src/lib/cascadeEngine.ts';
 import { estimateChannelThresholds, resolveWaterwayCatchmentFromNetwork } from '../src/lib/channelHydraulics.ts';
-import { buildHyetograph, getMaxRealisticRainMmHr } from '../src/lib/reachRouter.ts';
+import {
+  buildHyetograph,
+  estimateReachBankfullDepthM,
+  getMaxRealisticRainMmHr,
+  invertSrcStage
+} from '../src/lib/reachRouter.ts';
 import {
   buildFieldSurveyPriorityCsv,
   buildHydrographCsv,
@@ -50,13 +55,14 @@ import { computeRunoffMergeNetwork } from '../src/lib/geometry.ts';
 import { getOverlayContrastPalette, isDarkBasemap } from '../src/lib/mapPalette.ts';
 import { lookupAgamAtPoint } from '../src/lib/agamLookup.ts';
 import { CLIMATE_BASELINE, MODEL_PARAMETER_AUDIT, buildModelParameterAudit } from '../src/data/climateBaseline.ts';
-import { isCellInSpatialSplit } from '../src/lib/validationMetrics.ts';
+import { isCellInReachSplit, isCellInSpatialSplit } from '../src/lib/validationMetrics.ts';
 import {
   computeAnnualMaxima,
   computeGumbelQuantiles,
   computeLp3Quantiles,
   deriveMononobeIdfEnvelope,
-  buildClimateBaselineFromDailySeries
+  buildClimateBaselineFromDailySeries,
+  getGumbelReducedParams
 } from '../scripts/lib/climate-fetcher.mjs';
 import {
   generateLatinHypercube,
@@ -2071,4 +2077,127 @@ test('regions.config.json defines Nagari Balingka and Malalak Timur & Utara with
       assert.equal(subFc.features.length, 2, 'Malalak Timur & Utara should include both official Nagari sub-boundaries');
     }
   }
+});
+
+test('Scientific hygiene: peak-envelope HWM, reconciled SRC datum, finite-sample SNI Gumbel, reach holdout, dynamic lag, and soil preset respect', t => {
+  // 1. Finite-sample SNI 2415:2016 Gumbel reduced parameters (Yn, Sn)
+  const g10 = getGumbelReducedParams(10);
+  const g41 = getGumbelReducedParams(41);
+  const gInf = getGumbelReducedParams(500);
+  assert.equal(g10.yn, 0.4952);
+  assert.equal(g10.sn, 0.9496);
+  assert.ok(g41.sn > 1.13 && g41.sn < 1.16, `expected finite-sample Sn(41) ~1.143, got ${g41.sn}`);
+  assert.equal(gInf.yn, 0.5772);
+  assert.equal(gInf.sn, 1.28255);
+
+  // Finite-sample n=41 yields higher T100 than asymptotic Sn=1.28255 for identical sample mean/sd
+  const sampleSeries = Array.from({ length: 41 }, (_, i) => 90 + ((i * 19) % 41) * 3);
+  const qFinite = computeGumbelQuantiles(sampleSeries);
+  const mean = sampleSeries.reduce((a, b) => a + b, 0) / sampleSeries.length;
+  const sd = Math.sqrt(sampleSeries.reduce((s, v) => s + (v - mean) ** 2, 0) / (sampleSeries.length - 1));
+  const yt100 = -Math.log(-Math.log(1 - 1 / 100));
+  const qAsymp100 = Math.round(mean + ((yt100 - 0.5772) / 1.28255) * sd);
+  assert.ok(
+    qFinite.t100 > qAsymp100,
+    `finite-sample SNI Gumbel T100 (${qFinite.t100}) must exceed asymptotic (${qAsymp100})`
+  );
+
+  // 2. Reach-level holdout split keeps every reach intact in a single fold
+  const synthReachId = new Uint16Array([0, 0, 0, 1, 1, 1, 2, 2, 3, 3, 65535, 65535]);
+  for (let rid = 0; rid <= 3; rid++) {
+    const idxs = [];
+    for (let i = 0; i < synthReachId.length; i++) if (synthReachId[i] === rid) idxs.push(i);
+    const firstInCal = isCellInReachSplit(idxs[0], 4, synthReachId, 'calibration');
+    for (const idx of idxs) {
+      assert.equal(
+        isCellInReachSplit(idx, 4, synthReachId, 'calibration'),
+        firstInCal,
+        `reach ${rid} must not split across calibration and holdout`
+      );
+      assert.notEqual(
+        isCellInReachSplit(idx, 4, synthReachId, 'calibration'),
+        isCellInReachSplit(idx, 4, synthReachId, 'holdout')
+      );
+    }
+  }
+
+  // 3. Open limitations documentation exists
+  assert.ok(fs.existsSync(path.join(ROOT_DIR, 'docs', 'MODEL_LIMITATIONS.md')));
+
+  const simPath = path.join(DATA_DIR, 'sim-fields.json');
+  if (!fs.existsSync(simPath)) {
+    t.skip('sim-fields.json not present yet');
+    return;
+  }
+  const simFields = JSON.parse(fs.readFileSync(simPath, 'utf8'));
+  const reaches = simFields.network.reaches;
+
+  // 4. Reconciled SRC bankfull datum & exact hydraulic areaM2 parity
+  for (const reach of reaches.slice(0, 50)) {
+    assert.ok(
+      typeof reach.bankfullDepthM === 'number' && reach.bankfullDepthM >= 0.4,
+      `reach ${reach.id} missing canonical bankfullDepthM`
+    );
+    assert.equal(estimateReachBankfullDepthM(reach), reach.bankfullDepthM);
+    assert.ok(Array.isArray(reach.areaM2) && reach.areaM2.length === reach.kRef.length);
+  }
+  const inv = invertSrcStage(12, 0.045, reaches[reaches.length - 1], simFields.network.srcStagesM);
+  assert.ok(inv.stageM > 0 && inv.velocityMs >= 0.15 && inv.velocityMs <= 8.5);
+
+  const engine = new CascadeEngine(simFields);
+
+  // 5. Peak-envelope (max_t) HWM evaluation dominates any single snapshot across an early-peaking storm
+  const frontStorm = {
+    rainMmHr: 40,
+    durationMin: 180,
+    progress: 0.78,
+    soilMoisture: 'saturated',
+    antecedent5dMm: 140,
+    rainPattern: 'upland',
+    drainCondition: 'clogged',
+    forestScenario: 'actual',
+    hyetograph: 'convective_front',
+    debrisCoupling: 'coupled'
+  };
+  const peakEnv = engine.evaluatePeakEnvelopeAtStorm(frontStorm);
+  engine.evaluate({ ...frontStorm, progress: 0.35 }, { skipValidation: true });
+  const snapEarly = engine.sampleAtLngLat(100.319, -0.345);
+  engine.evaluate({ ...frontStorm, progress: 0.78 }, { skipValidation: true });
+  const snapLate = engine.sampleAtLngLat(100.319, -0.345);
+  const peakSample = peakEnv.sampleAtLngLat(100.319, -0.345);
+  assert.ok(
+    peakSample.depthM + 1e-4 >= Math.max(snapEarly.depthM, snapLate.depthM),
+    `peak-envelope depth (${peakSample.depthM}) must be >= early (${snapEarly.depthM}) and late (${snapLate.depthM}) snapshots`
+  );
+  assert.ok(
+    peakSample.streamPowerWm2 >= Math.max(snapEarly.streamPowerWm2, snapLate.streamPowerWm2) - 1,
+    'peak-envelope stream power must dominate individual snapshots'
+  );
+
+  // 6. Dynamic hydrograph lag differs across storm regimes & calibration uses reach holdout
+  const kShort = engine.evaluate({ ...frontStorm, hyetograph: 'alternating_block', durationMin: 180, progress: 0.78 });
+  const kLong = engine.evaluate(
+    { ...frontStorm, rainMmHr: 7, durationMin: 2880, hyetograph: 'alternating_block', progress: 0.78 },
+    { skipValidation: true }
+  );
+  assert.equal(kShort.validation.validationSplitStrategy, 'reach');
+  assert.ok(
+    kShort.peakTravelMin > 5 && kLong.peakTravelMin > kShort.peakTravelMin,
+    `dynamic lag should respond to storm regime (3h=${kShort.peakTravelMin} min vs 48h=${kLong.peakTravelMin} min)`
+  );
+
+  // 7. Explicit non-volcanic soilProfile is honored even when soilErodibilityBase64 is present
+  assert.ok(simFields.soilErodibilityBase64, 'expected regional soilErodibility raster');
+  const andosolRes = engine.evaluate(
+    { ...frontStorm, soilProfile: 'volcanic_andosol' },
+    { skipValidation: true, nominalOnly: true }
+  );
+  const karstRes = engine.evaluate(
+    { ...frontStorm, soilProfile: 'karst_limestone' },
+    { skipValidation: true, nominalOnly: true }
+  );
+  assert.ok(
+    karstRes.landslideAreaHa < andosolRes.landslideAreaHa,
+    `karst_limestone (${karstRes.landslideAreaHa} ha) must remain more stable than volcanic_andosol (${andosolRes.landslideAreaHa} ha) even with soilErodibility present`
+  );
 });

@@ -1,10 +1,10 @@
-import { useId, useState } from 'react';
+import { useEffect, useId, useState } from 'react';
 import {
-  AlertTriangle,
   ChevronDown,
   ChevronUp,
   Crosshair,
   Download,
+  Layers,
   Pause,
   Play,
   RotateCcw,
@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { useActiveRegion, useT } from '../context/RegionContext';
 import type { ClimateBaselineData } from '../data/climateBaseline';
+import type { PlaybackSpeed } from '../hooks/useSimulationController';
 import { estimateChannelThresholds, resolveWaterwayCatchmentFromNetwork } from '../lib/channelHydraulics';
 import type { DemClient } from '../lib/demClient';
 import { getMaxRealisticRainMmHr, type RoutedReachState } from '../lib/reachRouter';
@@ -24,7 +25,6 @@ import {
 } from '../lib/scenarioExport';
 import type {
   AgamStats,
-  CascadeAlertLevel,
   CascadeKpis,
   CascadeSimParams,
   DebrisCouplingMode,
@@ -42,14 +42,19 @@ import type {
 import { HydrographSparkline } from './HydrographSparkline';
 import { InfoTooltip } from './InfoTooltip';
 import { LegendIcon } from './LegendIcon';
+import { SimSpeedMenu } from './SimSpeedMenu';
 
 interface SimulationTabProps {
   lang: Language;
   viewMode: ViewMode;
   playing: boolean;
+  playbackSpeed: PlaybackSpeed;
   rainMm: number;
   durationMin: number;
   progress: number;
+  liveElapsedMin: number;
+  liveRainMmHr: number;
+  isRecession: boolean;
   soilMoisture: SoilMoisture;
   antecedent5dMm: number;
   rainPattern: RainPattern;
@@ -65,10 +70,8 @@ interface SimulationTabProps {
   isPlacingStormCore: boolean;
   forestActualPct: number;
   rainAnimEnabled: boolean;
-  showVerifiedWaterways: boolean;
-  showRbiRivers: boolean;
+  showWaterways: boolean;
   showOsmRoads: boolean;
-  showDemFlows: boolean;
   verifiedIssueCount?: number;
   verifiedWaterways?: VerifiedWaterwayFeature[];
   simNetwork?: SimNetworkData | null;
@@ -82,6 +85,7 @@ interface SimulationTabProps {
   onTogglePlay: () => void;
   onResetSim: () => void;
   onChangeProgress: (progress: number) => void;
+  onChangeSpeed: (speed: PlaybackSpeed) => void;
   onChangeRain: (rain: number) => void;
   onChangeDuration: (minutes: number) => void;
   onChangeSoilMoisture: (m: SoilMoisture) => void;
@@ -99,10 +103,8 @@ interface SimulationTabProps {
   onChangeSimMapViewMode: (mode: SimMapViewMode) => void;
   onApplyPreset: (preset: 'normal' | 'upland' | 'extreme') => void;
   onToggleRainAnim: (enabled: boolean) => void;
-  onToggleVerifiedWaterways: (enabled: boolean) => void;
-  onToggleRbiRivers: (enabled: boolean) => void;
+  onToggleWaterways: (enabled: boolean) => void;
   onToggleOsmRoads: (enabled: boolean) => void;
-  onToggleDemFlows: (enabled: boolean) => void;
   onOpenMethodology: () => void;
 }
 
@@ -144,20 +146,178 @@ function formatDurationLabel(totalMinutes: number, isEn: boolean): string {
   return `${h} ${isEn ? 'hr' : 'jam'} ${m} ${isEn ? 'min' : 'mnt'}`;
 }
 
-const ALERT_BADGE: Record<CascadeAlertLevel, { bg: string; text: string }> = {
-  normal: { bg: 'bg-[#047857]/12', text: 'text-[#047857]' },
-  waspada: { bg: 'bg-[#0369a1]/12', text: 'text-[#0369a1]' },
-  siaga: { bg: 'bg-[#b45309]/12', text: 'text-[#92400e]' },
-  kritis: { bg: 'bg-[#161c1a]/12', text: 'text-[#161c1a]' }
-};
+function HairlineSlider({
+  id,
+  label,
+  tooltip,
+  valueText,
+  min,
+  max,
+  step = 1,
+  value,
+  onChange,
+  leftTick,
+  midTick,
+  rightTick,
+  hint
+}: {
+  id: string;
+  label: string;
+  tooltip?: string;
+  valueText: string;
+  min: number;
+  max: number;
+  step?: number;
+  value: number;
+  onChange: (val: number) => void;
+  leftTick?: string;
+  midTick?: string;
+  rightTick?: string;
+  hint?: string;
+}) {
+  const clamped = Math.max(min, Math.min(max, value));
+  const pct = max > min ? ((clamped - min) / (max - min)) * 100 : 0;
+  return (
+    <div className="flex flex-col gap-1">
+      <div className="flex items-center justify-between gap-2 text-[13px]">
+        <span className="flex min-w-0 items-center gap-1.5 font-semibold text-[#434d49]">
+          <label htmlFor={id} className="truncate">
+            {label}
+          </label>
+          {tooltip && <InfoTooltip text={tooltip} label={label} />}
+        </span>
+        <span className="font-mono-num shrink-0 text-[12.5px] font-bold text-[#161c1a]">{valueText}</span>
+      </div>
+      <div className="relative flex h-[22px] items-center">
+        <div className="pointer-events-none absolute inset-x-0 h-[2px] rounded-full bg-[#161c1a]/15">
+          <div className="h-full rounded-full bg-[#0369a1]" style={{ width: `${pct}%` }} />
+        </div>
+        <input
+          id={id}
+          type="range"
+          min={min}
+          max={max}
+          step={step}
+          value={clamped}
+          onChange={e => onChange(parseInt(e.target.value, 10))}
+          className="sim-range-input"
+        />
+      </div>
+      {(leftTick || midTick || rightTick) && (
+        <div className="flex justify-between text-[11px] font-medium text-[#636f6a]">
+          <span>{leftTick}</span>
+          {midTick && <span>{midTick}</span>}
+          <span>{rightTick}</span>
+        </div>
+      )}
+      {hint && <div className="text-[11px] leading-snug text-[#636f6a]">{hint}</div>}
+    </div>
+  );
+}
+
+function SegmentedPills<T extends string>({
+  label,
+  tooltip,
+  value,
+  options,
+  onChange
+}: {
+  label: string;
+  tooltip?: string;
+  value: T;
+  options: { value: T; label: string }[];
+  onChange: (val: T) => void;
+}) {
+  return (
+    <div className="flex flex-col gap-1.5 py-2">
+      <div className="flex items-center gap-1.5 text-[12.5px] font-semibold text-[#434d49]">
+        <span>{label}</span>
+        {tooltip && <InfoTooltip text={tooltip} label={label} />}
+      </div>
+      <div
+        role="radiogroup"
+        aria-label={label}
+        className="grid gap-1 rounded-lg border border-[#161c1a]/12 bg-[#f2f3ef] p-1"
+        style={{ gridTemplateColumns: `repeat(${options.length}, minmax(0, 1fr))` }}
+      >
+        {options.map(opt => {
+          const active = value === opt.value;
+          return (
+            <button
+              key={opt.value}
+              type="button"
+              role="radio"
+              aria-checked={active}
+              onClick={() => onChange(opt.value)}
+              className={`btn-tactile min-h-[32px] truncate rounded-md px-2 py-1 text-[12px] font-semibold ${
+                active
+                  ? 'bg-white text-[#0369a1] shadow-xs'
+                  : 'text-[#434d49] hover:text-[#161c1a]'
+              }`}
+            >
+              {opt.label}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function SwitchRow({
+  id,
+  label,
+  tooltip,
+  checked,
+  onChange
+}: {
+  id: string;
+  label: string;
+  tooltip?: string;
+  checked: boolean;
+  onChange: (next: boolean) => void;
+}) {
+  return (
+    <div className="flex min-h-[40px] items-center justify-between gap-2.5 py-1.5">
+      <div className="flex min-w-0 flex-1 items-center gap-1.5">
+        <label htmlFor={id} className="cursor-pointer text-[13px] font-medium text-[#161c1a]">
+          {label}
+        </label>
+        {tooltip && <InfoTooltip text={tooltip} label={label} />}
+      </div>
+      <button
+        id={id}
+        type="button"
+        role="switch"
+        aria-checked={checked}
+        onClick={() => onChange(!checked)}
+        className={`relative inline-flex h-[20px] w-[36px] shrink-0 cursor-pointer items-center rounded-full border transition-colors duration-150 ${
+          checked
+            ? 'border-[#0369a1] bg-[#0369a1]'
+            : 'border-[#161c1a]/20 bg-[#f2f3ef]'
+        }`}
+      >
+        <span
+          className={`inline-block h-[14px] w-[14px] rounded-full bg-white shadow-xs transition-transform duration-150 ${
+            checked ? 'translate-x-[18px]' : 'translate-x-[2px]'
+          }`}
+        />
+      </button>
+    </div>
+  );
+}
 
 export function SimulationTab({
   lang,
   viewMode,
   playing,
+  playbackSpeed,
   rainMm,
   durationMin,
   progress,
+  liveElapsedMin,
+  liveRainMmHr,
+  isRecession: _isRecession,
   soilMoisture,
   antecedent5dMm,
   rainPattern,
@@ -173,10 +333,8 @@ export function SimulationTab({
   isPlacingStormCore,
   forestActualPct,
   rainAnimEnabled,
-  showVerifiedWaterways,
-  showRbiRivers,
+  showWaterways,
   showOsmRoads,
-  showDemFlows,
   verifiedIssueCount = 0,
   verifiedWaterways = [],
   simNetwork = null,
@@ -190,6 +348,7 @@ export function SimulationTab({
   onTogglePlay,
   onResetSim,
   onChangeProgress,
+  onChangeSpeed,
   onChangeRain,
   onChangeDuration,
   onChangeSoilMoisture,
@@ -207,10 +366,8 @@ export function SimulationTab({
   onChangeSimMapViewMode,
   onApplyPreset,
   onToggleRainAnim,
-  onToggleVerifiedWaterways,
-  onToggleRbiRivers,
+  onToggleWaterways,
   onToggleOsmRoads,
-  onToggleDemFlows,
   onOpenMethodology
 }: SimulationTabProps) {
   const uid = useId();
@@ -220,6 +377,34 @@ export function SimulationTab({
   const isDetail = viewMode === 'detail';
   const [selectedRiverId, setSelectedRiverId] = useState<string>('');
   const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [layersOpen, setLayersOpen] = useState(false);
+
+  // Spacebar toggles Play/Pause while on Simulation tab
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.code !== 'Space' || e.repeat) return;
+      const target = e.target as HTMLElement | null;
+      if (target) {
+        const tag = target.tagName;
+        if (
+          tag === 'INPUT' ||
+          tag === 'SELECT' ||
+          tag === 'TEXTAREA' ||
+          tag === 'BUTTON' ||
+          tag === 'A' ||
+          target.isContentEditable ||
+          target.getAttribute('role') === 'slider'
+        ) {
+          return;
+        }
+      }
+      if (document.querySelector('[role="dialog"]')) return;
+      e.preventDefault();
+      onTogglePlay();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [onTogglePlay]);
 
   const overrideCount = Object.keys(structureBlockageOverrides).length;
 
@@ -257,38 +442,6 @@ export function SimulationTab({
           : rainMm <= 50
             ? t.rainPresetVeryHeavy
             : t.rainPresetExtreme;
-
-  const alertText =
-    kpis.alertLevel === 'kritis'
-      ? t.alertKritis
-      : kpis.alertLevel === 'siaga'
-        ? t.alertSiaga
-        : kpis.alertLevel === 'waspada'
-          ? t.alertWaspada
-          : t.alertNormal;
-  const alertStyle = ALERT_BADGE[kpis.alertLevel];
-
-  const stageTitle =
-    kpis.stage === 0
-      ? t.stage0Title
-      : kpis.stage === 1
-        ? t.stage1Title
-        : kpis.stage === 2
-          ? t.stage2Title
-          : kpis.stage === 3
-            ? t.stage3Title
-            : t.stage4Title;
-
-  const stageDesc =
-    kpis.stage === 0
-      ? t.stage0Desc
-      : kpis.stage === 1
-        ? t.stage1Desc
-        : kpis.stage === 2
-          ? t.stage2Desc
-          : kpis.stage === 3
-            ? t.stage3Desc
-            : t.stage4Desc;
 
   const maxRainForDur = getMaxRealisticRainMmHr(durationMin, climateBaseline);
   const totalStormInputMm = Math.round(rainMm * (durationMin / 60));
@@ -351,307 +504,254 @@ export function SimulationTab({
 
   const isAtEnd = !playing && progress >= 0.99;
   const showRanges = progress > 0.02;
+  const activeLayerCount = [showWaterways, showOsmRoads].filter(Boolean).length;
+
+  const presets: { id: 'normal' | 'upland' | 'extreme'; title: string; meta: string }[] = [
+    {
+      id: 'normal',
+      title: 'Normal',
+      meta: isEn ? '15 mm/h · 2h' : '15 mm/j · 2j'
+    },
+    {
+      id: 'upland',
+      title: isEn ? 'Upland' : 'Hulu',
+      meta: isEn ? '40 mm/h · 3h' : '40 mm/j · 3j'
+    },
+    {
+      id: 'extreme',
+      title: isEn ? 'Monsoon' : 'Monsun',
+      meta: isEn ? '7 mm/h · 48h' : '7 mm/j · 48j'
+    }
+  ];
 
   return (
     <div className="flex flex-col gap-3.5">
-      {/* Compact Sticky Playback Bar */}
-      <div className="sticky -top-3.5 z-10 -mx-3.5 -mt-3.5 border-b border-[#161c1a]/12 bg-white px-3.5 pt-3 pb-2.5 shadow-[0_4px_12px_-6px_rgba(22,28,26,0.12)]">
-        <div className="mb-2 flex items-center justify-between gap-2">
-          <div className="flex min-w-0 items-center gap-1.5">
-            <span className="truncate text-[12.5px] font-bold text-[#161c1a]">{stageTitle}</span>
-            <InfoTooltip text={stageDesc} label={stageTitle} />
-          </div>
-          <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10.5px] font-bold ${alertStyle.bg} ${alertStyle.text}`}>
-            {alertText}
-          </span>
-        </div>
-
-        <div className="mb-2 flex items-center gap-2">
-          <button
-            type="button"
-            onClick={onTogglePlay}
-            className={`inline-flex min-h-[38px] flex-1 items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-[13px] font-bold text-white transition ${
-              playing ? 'bg-[#161c1a] hover:bg-[#2a3330]' : 'bg-[#0369a1] hover:bg-[#075985]'
-            }`}
-          >
-            {playing ? (
-              <Pause className="h-3.5 w-3.5" />
-            ) : isAtEnd ? (
-              <RotateCcw className="h-3.5 w-3.5" />
-            ) : (
-              <Play className="h-3.5 w-3.5" />
-            )}
-            <span>{playing ? t.pause : isAtEnd ? t.simReplay : t.play}</span>
-          </button>
-          <button
-            type="button"
-            onClick={onResetSim}
-            disabled={progress === 0 && !playing}
-            aria-label={t.simReset}
-            title={t.simReset}
-            className="grid h-[38px] w-[38px] shrink-0 place-items-center rounded-lg border border-[#161c1a]/15 bg-white text-[#161c1a] transition hover:bg-[#f2f3ef] disabled:cursor-not-allowed disabled:opacity-45"
-          >
-            <RotateCcw className="h-4 w-4" />
-          </button>
-        </div>
-
-        <div className="flex flex-col gap-1">
-          <div className="flex items-center justify-between gap-2 text-[11.5px]">
-            <span className="flex items-center gap-1.5">
-              <span className="font-mono-num font-bold text-[#0369a1]">
-                {formatDurationClock(kpis.elapsedMin)} / {formatDurationClock(kpis.totalWindowMin)}
-              </span>
-              {kpis.isRecession && progress > 0.02 && (
-                <span className="rounded bg-[#0369a1]/10 px-1.5 py-0.5 text-[10px] font-bold text-[#0369a1]">
-                  {t.simRecessionBadge}
-                </span>
+      {/* Sticky Ultra-Clean 2-Part Playback + Scrubbable Hydrograph Card */}
+      <div
+        data-testid="sim-playback-card"
+        className="sticky -top-3.5 z-10 -mx-3.5 -mt-3.5 border-b border-[#161c1a]/12 bg-white px-3.5 pt-3 pb-2.5 shadow-[0_4px_12px_-6px_rgba(22,28,26,0.10)]"
+      >
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              data-testid="sim-play-btn"
+              onClick={onTogglePlay}
+              className={`btn-tactile inline-flex min-h-[34px] items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[12.5px] font-bold text-white ${
+                playing ? 'bg-[#161c1a] hover:bg-[#2a3330]' : 'bg-[#0369a1] hover:bg-[#075985]'
+              }`}
+            >
+              {playing ? (
+                <Pause className="h-3.5 w-3.5" />
+              ) : isAtEnd ? (
+                <RotateCcw className="h-3.5 w-3.5" />
+              ) : (
+                <Play className="h-3.5 w-3.5" />
               )}
-            </span>
-            <span className="font-mono-num font-semibold text-[#434d49]">
-              {kpis.accumulatedMm.toFixed(1)} mm
-            </span>
+              <span>{playing ? t.pause : isAtEnd ? t.simReplay : isEn ? 'Play' : 'Putar'}</span>
+            </button>
+
+            {progress > 0 && !isAtEnd && (
+              <button
+                type="button"
+                data-testid="sim-reset-btn"
+                onClick={onResetSim}
+                aria-label={t.simReset}
+                title={t.simReset}
+                className="btn-tactile grid h-[34px] w-[34px] shrink-0 place-items-center rounded-lg border border-[#161c1a]/15 bg-white text-[#161c1a] hover:bg-[#f2f3ef]"
+              >
+                <RotateCcw className="h-3.5 w-3.5" />
+              </button>
+            )}
+
+            <SimSpeedMenu
+              speed={playbackSpeed}
+              onSelect={onChangeSpeed}
+              lang={lang}
+              placement="down"
+              testId="sim-speed-btn"
+            />
           </div>
-          <input
-            type="range"
-            min={0}
-            max={100}
-            step={1}
-            value={Math.round(progress * 100)}
-            onChange={e => onChangeProgress(parseInt(e.target.value, 10) / 100)}
-            aria-label={t.lblTimeline}
-            className="w-full cursor-pointer accent-[#0369a1]"
-          />
-          <div className="grid grid-cols-4 gap-1">
-            {[1, 2, 3, 4].map(st => (
-              <div
-                key={st}
-                className={`h-1 rounded-full transition ${
-                  kpis.stage >= st ? 'bg-[#0369a1]' : 'bg-[#161c1a]/12'
-                }`}
-              />
-            ))}
+
+          <div className="font-mono-num flex items-center gap-1.5 text-[11.5px] whitespace-nowrap">
+            <span className="font-bold text-[#0369a1]">
+              {formatDurationClock(liveElapsedMin)}
+              <span className="font-normal text-[#636f6a]"> / {formatDurationClock(kpis.totalWindowMin)}</span>
+            </span>
+            {progress > 0.02 && (
+              <span className="font-semibold text-[#434d49]">
+                · {liveRainMmHr > 0.2 ? Math.round(liveRainMmHr) : 0} mm/{isEn ? 'h' : 'j'}
+              </span>
+            )}
           </div>
         </div>
 
-        <div className="mt-2 flex items-start justify-between gap-1.5 rounded-md border border-[#b45309]/25 bg-[#b45309]/8 px-2.5 py-1.5 text-[11px] leading-snug font-semibold text-[#78350f]">
-          <span className="flex min-w-0 items-start gap-1.5">
-            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[#b45309]" />
-            <span>{t.simIndicativeShort}</span>
-          </span>
-          <InfoTooltip
-            text={isDetail ? t.simDisclaimerDetail : t.simDisclaimer}
-            label={isEn ? 'Model scope & disclaimer' : 'Penjelasan batas model'}
+        <div className="mt-2.5 border-t border-[#161c1a]/10 pt-2">
+          <HydrographSparkline
+            lang={lang}
+            points={kpis.hydrograph}
+            progress={progress}
+            durationMin={durationMin}
+            totalWindowMin={kpis.totalWindowMin}
+            peakQ={kpis.peakDischargeM3s}
+            peakQP10={kpis.ensemble.peakDischargeM3s.p10}
+            peakQP90={kpis.ensemble.peakDischargeM3s.p90}
+            isCalibrated={isCalibrated}
+            mode={viewMode}
+            interactive={true}
+            compact={true}
+            bare={true}
+            onSeekProgress={onChangeProgress}
           />
         </div>
       </div>
 
-      {/* Rain, Soil & Channel Parameters */}
+      {/* Card 1: Scenario & Rain/Soil/Channel Parameters (Matching Peta/Drainase Card Recipe) */}
       <section className="rounded-xl border border-[#161c1a]/12 bg-white p-3.5">
-        <div className="mb-2.5 text-[13px] font-bold text-[#161c1a]">{controlTitle}</div>
-
-        {/* Dropdown 1: Scenario Preset */}
-        <div className="flex items-center justify-between gap-2.5 py-1">
-          <div className="flex min-w-0 flex-1 items-center gap-1.5 text-[12.5px] font-semibold text-[#434d49]">
-            <label htmlFor={`${uid}-scenario`} className="truncate">
-              {t.presetQuickTitle}
-            </label>
-            <InfoTooltip text={t.infoScenario} label={t.presetQuickTitle} />
-          </div>
-          <select
-            id={`${uid}-scenario`}
-            value={activeScenario}
-            onChange={e => {
-              const val = e.target.value;
-              if (val === 'normal' || val === 'upland' || val === 'extreme') {
-                onApplyPreset(val);
-              }
-            }}
-            className="min-h-[34px] w-[158px] shrink-0 cursor-pointer rounded-lg border border-[#161c1a]/20 bg-[#fafaf8] px-2.5 py-1 text-[12px] font-semibold text-[#161c1a] transition hover:border-[#161c1a]/30"
-          >
-            <option value="custom">{t.presetCustom}</option>
-            <option value="normal">{t.presetNormal}</option>
-            <option value="upland">{t.presetUpland}</option>
-            <option value="extreme">{t.presetExtreme}</option>
-          </select>
-        </div>
-
-        {/* Slider 1: Rainfall Intensity */}
-        <div className="mt-2.5 flex flex-col gap-1.5 border-t border-[#161c1a]/10 pt-3">
-          <div className="flex items-center justify-between gap-2 text-[12.5px]">
-            <span className="flex items-center gap-1.5 font-semibold text-[#434d49]">
-              <label htmlFor={`${uid}-rain`}>{rainIntensityLabel}</label>
-              <InfoTooltip text={t.infoRainIntensity} label={rainIntensityLabel} />
+        <div className="mb-2.5 flex items-center justify-between gap-2">
+          <span className="text-[13px] font-bold text-[#161c1a]">{controlTitle}</span>
+          {activeScenario === 'custom' && (
+            <span className="rounded bg-[#f2f3ef] px-1.5 py-0.5 text-[11px] font-semibold text-[#434d49]">
+              {isEn ? 'Custom' : 'Kustom'}
             </span>
-            <span className="font-mono-num shrink-0 font-bold text-[#161c1a]">
-              {rainMm} {isEn ? 'mm/hr' : 'mm/jam'} · {rainCategoryLabel}
-            </span>
-          </div>
-          <input
-            id={`${uid}-rain`}
-            type="range"
-            min={1}
-            max={maxRainForDur}
-            step={maxRainForDur <= 24 ? 1 : 5}
-            value={Math.min(rainMm, maxRainForDur)}
-            onChange={e => onChangeRain(parseInt(e.target.value, 10))}
-            className="w-full cursor-pointer accent-[#0369a1]"
-          />
-          <div className="flex justify-between text-[11px] font-medium text-[#636f6a]">
-            <span>{t.rainLight}</span>
-            {maxRainForDur >= 50 && <span>{t.rainHeavy}</span>}
-            <span>
-              {isEn ? `Max (${maxRainForDur})` : `Maks (${maxRainForDur})`}
-            </span>
-          </div>
-          <div className="text-[10.5px] font-medium text-[#636f6a]">
-            {isEn
-              ? `${climSrcTag} (${climPeriodTag}) Mononobe cap: ≤${maxRainForDur} mm/hr at ${formatDurationLabel(durationMin, true)} (Total ~${totalStormInputMm} mm)`
-              : `Batas wajar ${climSrcTag} (${climPeriodTag}): ≤${maxRainForDur} mm/jam untuk ${formatDurationLabel(durationMin, false)} (Total ~${totalStormInputMm} mm)`}
-          </div>
-        </div>
-
-        {/* Slider 2: Storm Duration (stepped 30 min -> 72 hr / 3 days) */}
-        <div className="mt-3 flex flex-col gap-1.5 border-t border-[#161c1a]/10 pt-3">
-          <div className="flex items-center justify-between gap-2 text-[12.5px]">
-            <span className="flex items-center gap-1.5 font-semibold text-[#434d49]">
-              <label htmlFor={`${uid}-duration`}>{durationLabel}</label>
-              <InfoTooltip text={t.infoDuration} label={durationLabel} />
-            </span>
-            <span className="font-mono-num shrink-0 font-bold text-[#161c1a]">
-              {formatDurationLabel(durationMin, isEn)}
-            </span>
-          </div>
-          <input
-            id={`${uid}-duration`}
-            type="range"
-            min={0}
-            max={DURATION_STEPS_MIN.length - 1}
-            step={1}
-            value={durationMinToStepIdx(durationMin)}
-            onChange={e => {
-              const idx = Math.max(0, Math.min(DURATION_STEPS_MIN.length - 1, parseInt(e.target.value, 10)));
-              onChangeDuration(DURATION_STEPS_MIN[idx]);
-            }}
-            className="w-full cursor-pointer accent-[#0369a1]"
-          />
-          <div className="flex justify-between text-[11px] font-medium text-[#636f6a]">
-            <span>{t.durMin}</span>
-            <span>{t.durMid}</span>
-            <span>{t.durMax}</span>
-          </div>
-        </div>
-
-        {/* Single-line Parameter Dropdowns */}
-        <div className="mt-3 divide-y divide-[#161c1a]/10 border-t border-[#161c1a]/10">
-          {/* Soil Moisture */}
-          <div className="flex items-center justify-between gap-2.5 py-2">
-            <div className="flex min-w-0 flex-1 items-center gap-1.5 text-[12.5px] font-semibold text-[#434d49]">
-              <label htmlFor={`${uid}-soil`} className="truncate">
-                {soilShortLabel}
-              </label>
-              <InfoTooltip text={t.infoSoilMoisture} label={soilShortLabel} />
-            </div>
-            <select
-              id={`${uid}-soil`}
-              value={soilMoisture}
-              onChange={e => onChangeSoilMoisture(e.target.value as SoilMoisture)}
-              className="min-h-[34px] w-[158px] shrink-0 cursor-pointer rounded-lg border border-[#161c1a]/20 bg-[#fafaf8] px-2.5 py-1 text-[12px] font-semibold text-[#161c1a] transition hover:border-[#161c1a]/30"
-            >
-              <option value="dry">{t.soilDry}</option>
-              <option value="moist">{t.soilMoist}</option>
-              <option value="saturated">{t.soilSaturated}</option>
-            </select>
-          </div>
-
-          {/* Culvert & Channel State */}
-          <div className="flex items-center justify-between gap-2.5 py-2">
-            <div className="flex min-w-0 flex-1 items-center gap-1.5 text-[12.5px] font-semibold text-[#434d49]">
-              <label htmlFor={`${uid}-drain`} className="truncate">
-                {drainShortLabel}
-              </label>
-              <InfoTooltip text={t.infoDrainState} label={drainShortLabel} />
-            </div>
-            <select
-              id={`${uid}-drain`}
-              value={drainCondition}
-              onChange={e => onChangeDrainCondition(e.target.value as DrainCondition)}
-              className="min-h-[34px] w-[158px] shrink-0 cursor-pointer rounded-lg border border-[#161c1a]/20 bg-[#fafaf8] px-2.5 py-1 text-[12px] font-semibold text-[#161c1a] transition hover:border-[#161c1a]/30"
-            >
-              <option value="cleared">{t.scCleared}</option>
-              <option value="clogged">{t.scClogged}</option>
-              {isDetail && <option value="surge">{t.scSurge}</option>}
-            </select>
-          </div>
-
-          {/* Upland Forest What-If (Detailed only) */}
-          {isDetail && (
-            <div className="flex items-center justify-between gap-2.5 py-2">
-              <div className="flex min-w-0 flex-1 items-center gap-1.5 text-[12.5px] font-semibold text-[#434d49]">
-                <label htmlFor={`${uid}-forest`} className="truncate">
-                  {t.lblForestShort}
-                </label>
-                <InfoTooltip text={t.infoForestScenario} label={t.lblForestShort} />
-              </div>
-              <select
-                id={`${uid}-forest`}
-                value={forestScenario}
-                onChange={e => onChangeForestScenario(e.target.value as ForestScenario)}
-                className="min-h-[34px] w-[158px] shrink-0 cursor-pointer rounded-lg border border-[#161c1a]/20 bg-[#fafaf8] px-2.5 py-1 text-[12px] font-semibold text-[#161c1a] transition hover:border-[#161c1a]/30"
-              >
-                <option value="actual">
-                  {isEn ? `Actual (${Math.round(forestActualPct)}%)` : `Aktual (${Math.round(forestActualPct)}%)`}
-                </option>
-                <option value="degraded30">{t.forestDeg30}</option>
-                <option value="degraded50">{t.forestDeg50}</option>
-              </select>
-            </div>
           )}
         </div>
 
-        {/* Checkboxes: Rainfall Focus & Falling Rain Visual */}
-        <div className="divide-y divide-[#161c1a]/10 border-t border-[#161c1a]/10 pt-1">
-          <div className="flex min-h-[40px] items-center justify-between gap-2.5 py-1">
-            <div className="flex min-w-0 flex-1 items-center gap-1.5">
-              <label
-                htmlFor={`${uid}-upland-check`}
-                className="cursor-pointer text-[12.5px] font-semibold text-[#161c1a]"
+        {/* 3 Quick-Scenario Preset Buttons */}
+        <div className="mb-3 grid grid-cols-3 gap-1.5" role="group" aria-label={t.presetQuickTitle}>
+          {presets.map(p => {
+            const active = activeScenario === p.id;
+            return (
+              <button
+                key={p.id}
+                type="button"
+                data-testid={`sim-preset-${p.id}`}
+                onClick={() => onApplyPreset(p.id)}
+                className={`btn-tactile flex flex-col items-start rounded-lg border px-2.5 py-2 text-left ${
+                  active
+                    ? 'border-[#0369a1] bg-[#0369a1]/[0.06] text-[#0369a1]'
+                    : 'border-[#161c1a]/15 bg-[#fafaf8] text-[#161c1a] hover:bg-[#f2f3ef]'
+                }`}
               >
-                {t.lblRainUplandCheck}
-              </label>
-              <InfoTooltip text={t.infoRainPattern} label={t.lblRainUplandCheck} />
-            </div>
-            <input
+                <span className="text-[12.5px] leading-tight font-bold">{p.title}</span>
+                <span className={`font-mono-num mt-0.5 text-[10.5px] ${active ? 'text-[#0369a1]' : 'text-[#636f6a]'}`}>
+                  {p.meta}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Parameters divided by 1px hairlines */}
+        <div className="divide-y divide-[#161c1a]/10 border-t border-[#161c1a]/10">
+          <div className="py-2.5">
+            <HairlineSlider
+              id={`${uid}-rain`}
+              label={rainIntensityLabel}
+              tooltip={t.infoRainIntensity}
+              valueText={`${rainMm} ${isEn ? 'mm/hr' : 'mm/jam'} · ${rainCategoryLabel}`}
+              min={1}
+              max={maxRainForDur}
+              step={maxRainForDur <= 24 ? 1 : 5}
+              value={Math.min(rainMm, maxRainForDur)}
+              onChange={onChangeRain}
+              leftTick={t.rainLight}
+              midTick={maxRainForDur >= 50 ? t.rainHeavy : undefined}
+              rightTick={isEn ? `Max (${maxRainForDur})` : `Maks (${maxRainForDur})`}
+              hint={
+                isEn
+                  ? `${climSrcTag} (${climPeriodTag}) Mononobe cap ≤${maxRainForDur} mm/hr · Total ~${totalStormInputMm} mm`
+                  : `Batas ${climSrcTag} (${climPeriodTag}) ≤${maxRainForDur} mm/jam · Total ~${totalStormInputMm} mm`
+              }
+            />
+          </div>
+
+          <div className="py-2.5">
+            <HairlineSlider
+              id={`${uid}-duration`}
+              label={durationLabel}
+              tooltip={t.infoDuration}
+              valueText={formatDurationLabel(durationMin, isEn)}
+              min={0}
+              max={DURATION_STEPS_MIN.length - 1}
+              step={1}
+              value={durationMinToStepIdx(durationMin)}
+              onChange={idx => {
+                const safeIdx = Math.max(0, Math.min(DURATION_STEPS_MIN.length - 1, idx));
+                onChangeDuration(DURATION_STEPS_MIN[safeIdx]);
+              }}
+              leftTick={t.durMin}
+              midTick={t.durMid}
+              rightTick={t.durMax}
+            />
+          </div>
+
+          <SegmentedPills
+            label={soilShortLabel}
+            tooltip={t.infoSoilMoisture}
+            value={soilMoisture}
+            options={[
+              { value: 'dry', label: t.soilDry },
+              { value: 'moist', label: t.soilMoist },
+              { value: 'saturated', label: t.soilSaturated }
+            ]}
+            onChange={onChangeSoilMoisture}
+          />
+
+          <SegmentedPills
+            label={drainShortLabel}
+            tooltip={t.infoDrainState}
+            value={drainCondition}
+            options={
+              isDetail
+                ? [
+                    { value: 'cleared', label: t.scCleared },
+                    { value: 'clogged', label: t.scClogged },
+                    { value: 'surge', label: isEn ? 'Surge' : 'Lonjakan' }
+                  ]
+                : [
+                    { value: 'cleared', label: t.scCleared },
+                    { value: 'clogged', label: t.scClogged }
+                  ]
+            }
+            onChange={onChangeDrainCondition}
+          />
+
+          {isDetail && (
+            <SegmentedPills
+              label={t.lblForestShort}
+              tooltip={t.infoForestScenario}
+              value={forestScenario}
+              options={[
+                { value: 'actual', label: `${Math.round(forestActualPct)}%` },
+                { value: 'degraded30', label: '-30%' },
+                { value: 'degraded50', label: '-50%' }
+              ]}
+              onChange={onChangeForestScenario}
+            />
+          )}
+
+          <div className="divide-y divide-[#161c1a]/10">
+            <SwitchRow
               id={`${uid}-upland-check`}
-              type="checkbox"
+              label={t.lblRainUplandCheck}
+              tooltip={t.infoRainPattern}
               checked={rainPattern === 'upland'}
-              onChange={e => {
-                if (e.target.checked) {
+              onChange={checked => {
+                if (checked) {
                   onClearStormCore();
                   onChangeRainPattern('upland');
                 } else {
                   onChangeRainPattern('uniform');
                 }
               }}
-              className="h-4.5 w-4.5 shrink-0 cursor-pointer accent-[#0369a1]"
             />
-          </div>
-
-          <div className="flex min-h-[40px] items-center justify-between gap-2.5 py-1">
-            <div className="flex min-w-0 flex-1 items-center gap-1.5">
-              <label
-                htmlFor={`${uid}-anim-check`}
-                className="cursor-pointer text-[12.5px] font-semibold text-[#161c1a]"
-              >
-                {t.lblRainAnim}
-              </label>
-              <InfoTooltip text={t.infoRainAnim} label={t.lblRainAnim} />
-            </div>
-            <input
+            <SwitchRow
               id={`${uid}-anim-check`}
-              type="checkbox"
+              label={t.lblRainAnim}
+              tooltip={t.infoRainAnim}
               checked={rainAnimEnabled}
-              onChange={e => onToggleRainAnim(e.target.checked)}
-              className="h-4.5 w-4.5 shrink-0 cursor-pointer accent-[#0369a1]"
+              onChange={onToggleRainAnim}
             />
           </div>
         </div>
@@ -662,8 +762,9 @@ export function SimulationTab({
             <button
               type="button"
               data-testid="sim-advanced-toggle"
+              aria-expanded={advancedOpen}
               onClick={() => setAdvancedOpen(v => !v)}
-              className="flex min-h-[36px] w-full items-center justify-between gap-2 rounded-lg bg-[#fafaf8] px-2.5 py-1.5 text-[12px] font-bold text-[#161c1a] transition hover:bg-[#f2f3ef]"
+              className="flex min-h-[36px] w-full items-center justify-between gap-2 rounded-lg bg-[#fafaf8] px-2.5 py-1.5 text-[12.5px] font-bold text-[#161c1a] transition hover:bg-[#f2f3ef]"
             >
               <span className="flex items-center gap-1.5">
                 <SlidersHorizontal className="h-3.5 w-3.5 text-[#0369a1]" />
@@ -677,102 +778,69 @@ export function SimulationTab({
             </button>
 
             {advancedOpen && (
-              <div className="mt-2 flex flex-col gap-2.5 rounded-lg border border-[#161c1a]/10 bg-[#fafaf8] p-2.5 text-[12px]">
-                {/* Hyetograph Temporal Profile */}
-                <div className="flex items-center justify-between gap-2">
-                  <label htmlFor={`${uid}-hyeto`} className="font-semibold text-[#434d49]">
-                    {isEn ? 'Storm profile' : 'Pola hietograf'}
-                  </label>
-                  <select
-                    id={`${uid}-hyeto`}
-                    value={hyetograph}
-                    onChange={e => onChangeHyetograph(e.target.value as HyetographType)}
-                    className="min-h-[32px] w-[150px] rounded-md border border-[#161c1a]/18 bg-white px-2 py-1 text-[11.5px] font-semibold text-[#161c1a]"
-                  >
-                    <option value="uniform">{isEn ? 'Uniform' : 'Merata (Uniform)'}</option>
-                    <option value="alternating_block">{isEn ? 'Center Peak' : 'Puncak Tengah'}</option>
-                    <option value="convective_front">{isEn ? 'Convective Front' : 'Hentakan Awal'}</option>
-                    <option value="double_burst">{isEn ? 'Double Burst' : 'Dua Gelombang'}</option>
-                  </select>
-                </div>
+              <div className="mt-2 flex flex-col divide-y divide-[#161c1a]/10 rounded-lg border border-[#161c1a]/10 bg-[#fafaf8] px-2.5 py-1 text-[12.5px]">
+                <SegmentedPills
+                  label={isEn ? 'Storm profile' : 'Pola hietograf'}
+                  value={hyetograph}
+                  options={[
+                    { value: 'uniform', label: isEn ? 'Uniform' : 'Merata' },
+                    { value: 'alternating_block', label: isEn ? 'Peak' : 'Puncak' },
+                    { value: 'convective_front', label: isEn ? 'Front' : 'Awal' },
+                    { value: 'double_burst', label: isEn ? 'Double' : 'Ganda' }
+                  ]}
+                  onChange={onChangeHyetograph}
+                />
 
-                {/* Debris / Sediment Coupling */}
-                <div className="flex items-center justify-between gap-2">
-                  <label htmlFor={`${uid}-debris`} className="font-semibold text-[#434d49]">
-                    {isEn ? 'Debris coupling' : 'Kopl. sedimen'}
-                  </label>
-                  <select
-                    id={`${uid}-debris`}
-                    value={debrisCoupling}
-                    onChange={e => onChangeDebrisCoupling(e.target.value as DebrisCouplingMode)}
-                    className="min-h-[32px] w-[150px] rounded-md border border-[#161c1a]/18 bg-white px-2 py-1 text-[11.5px] font-semibold text-[#161c1a]"
-                  >
-                    <option value="clear">{isEn ? 'Clear water' : 'Air bersih'}</option>
-                    <option value="coupled">{isEn ? 'Coupled bulking' : 'Terkopel sedimen'}</option>
-                    <option value="surge">{isEn ? 'Debris-jam surge' : 'Gelombang sumbatan'}</option>
-                  </select>
-                </div>
+                <SegmentedPills
+                  label={isEn ? 'Debris coupling' : 'Kopl. sedimen'}
+                  value={debrisCoupling}
+                  options={[
+                    { value: 'clear', label: isEn ? 'Clear' : 'Bersih' },
+                    { value: 'coupled', label: isEn ? 'Bulked' : 'Sedimen' },
+                    { value: 'surge', label: isEn ? 'Jam Surge' : 'Sumbatan' }
+                  ]}
+                  onChange={onChangeDebrisCoupling}
+                />
 
-                {/* Continuous Antecedent 5-day Rainfall P5 */}
-                <div className="flex flex-col gap-1 border-t border-[#161c1a]/8 pt-2">
-                  <div className="flex items-center justify-between">
-                    <label htmlFor={`${uid}-p5`} className="font-semibold text-[#434d49]">
-                      {isEn ? '5-day antecedent rain (P5)' : 'Hujan 5 hari sebelumnya (P5)'}
-                    </label>
-                    <span className="font-mono-num font-bold text-[#161c1a]">{antecedent5dMm} mm</span>
-                  </div>
-                  <input
+                <div className="py-2">
+                  <HairlineSlider
                     id={`${uid}-p5`}
-                    type="range"
+                    label={isEn ? '5-day antecedent rain (P5)' : 'Hujan 5 hari sebelumnya (P5)'}
+                    valueText={`${antecedent5dMm} mm`}
                     min={0}
                     max={250}
                     step={5}
                     value={antecedent5dMm}
-                    onChange={e => onChangeAntecedent5dMm(parseInt(e.target.value, 10))}
-                    className="w-full cursor-pointer accent-[#0369a1]"
+                    onChange={onChangeAntecedent5dMm}
                   />
                 </div>
 
-                {/* Orographic Elevation Gradient */}
-                <div className="flex flex-col gap-1 border-t border-[#161c1a]/8 pt-2">
-                  <div className="flex items-center justify-between">
-                    <label htmlFor={`${uid}-oro`} className="font-semibold text-[#434d49]">
-                      {isEn ? 'Orographic gradient' : 'Gradien orografis lereng'}
-                    </label>
-                    <span className="font-mono-num font-bold text-[#161c1a]">+{orographicPctPerKm}%/km</span>
-                  </div>
-                  <input
+                <div className="py-2">
+                  <HairlineSlider
                     id={`${uid}-oro`}
-                    type="range"
+                    label={isEn ? 'Orographic gradient' : 'Gradien orografis lereng'}
+                    valueText={`+${orographicPctPerKm}%/km`}
                     min={0}
                     max={80}
                     step={5}
                     value={orographicPctPerKm}
-                    onChange={e => onChangeOrographicPctPerKm(parseInt(e.target.value, 10))}
-                    className="w-full cursor-pointer accent-[#0369a1]"
+                    onChange={onChangeOrographicPctPerKm}
                   />
                 </div>
 
-                {/* Culvert Blockage Severity */}
-                <div className="flex flex-col gap-1 border-t border-[#161c1a]/8 pt-2">
-                  <div className="flex items-center justify-between">
-                    <label htmlFor={`${uid}-block`} className="font-semibold text-[#434d49]">
-                      {isEn ? 'Culvert blockage' : 'Sumbatan gorong-gorong'}
-                    </label>
-                    <span className="font-mono-num font-bold text-[#161c1a]">{culvertBlockagePct}%</span>
-                  </div>
-                  <input
+                <div className="py-2">
+                  <HairlineSlider
                     id={`${uid}-block`}
-                    type="range"
+                    label={isEn ? 'Culvert blockage' : 'Sumbatan gorong-gorong'}
+                    valueText={`${culvertBlockagePct}%`}
                     min={0}
                     max={100}
                     step={5}
                     value={culvertBlockagePct}
-                    onChange={e => onChangeCulvertBlockagePct(parseInt(e.target.value, 10))}
-                    className="w-full cursor-pointer accent-[#0369a1]"
+                    onChange={onChangeCulvertBlockagePct}
                   />
                   {overrideCount > 0 && (
-                    <div className="mt-0.5 flex items-center justify-between rounded bg-[#0369a1]/8 px-2 py-1 text-[11px] font-semibold text-[#0369a1]">
+                    <div className="mt-1 flex items-center justify-between rounded bg-[#0369a1]/8 px-2 py-1 text-[11px] font-semibold text-[#0369a1]">
                       <span>
                         {isEn
                           ? `${overrideCount} per-culvert override(s) active`
@@ -789,15 +857,14 @@ export function SimulationTab({
                   )}
                 </div>
 
-                {/* Localized Convective Storm Core Placement */}
-                <div className="flex items-center justify-between gap-2 border-t border-[#161c1a]/8 pt-2">
+                <div className="flex items-center justify-between gap-2 py-2">
                   <button
                     type="button"
                     onClick={onTogglePlaceStormCore}
-                    className={`inline-flex min-h-[32px] flex-1 items-center justify-center gap-1.5 rounded-md border px-2 py-1 text-[11.5px] font-bold transition ${
+                    className={`btn-tactile inline-flex min-h-[34px] flex-1 items-center justify-center gap-1.5 rounded-lg border px-2 py-1 text-[12px] font-bold ${
                       isPlacingStormCore
                         ? 'border-[#0369a1] bg-[#0369a1] text-white'
-                        : 'border-[#161c1a]/18 bg-white text-[#161c1a] hover:bg-[#f2f3ef]'
+                        : 'border-[#161c1a]/15 bg-white text-[#161c1a] hover:bg-[#f2f3ef]'
                     }`}
                   >
                     <Crosshair className="h-3.5 w-3.5" />
@@ -816,7 +883,7 @@ export function SimulationTab({
                       type="button"
                       onClick={onClearStormCore}
                       title={isEn ? 'Clear storm core' : 'Hapus pusat badai'}
-                      className="grid h-[32px] w-[32px] shrink-0 place-items-center rounded-md border border-[#161c1a]/15 bg-white text-[#434d49] hover:bg-[#f2f3ef]"
+                      className="btn-tactile grid h-[34px] w-[34px] shrink-0 place-items-center rounded-lg border border-[#161c1a]/15 bg-white text-[#434d49] hover:bg-[#f2f3ef]"
                     >
                       <X className="h-3.5 w-3.5" />
                     </button>
@@ -836,91 +903,76 @@ export function SimulationTab({
         )}
       </section>
 
-      {/* River & Tributary Layers shown during Simulation */}
+      {/* Card 2: Collapsible River & Tributary Layers */}
       <section className="rounded-xl border border-[#161c1a]/12 bg-white p-3.5">
-        <div className="mb-1.5 text-[13px] font-bold text-[#161c1a]">{t.simRiversTitle}</div>
-        <div className="divide-y divide-[#161c1a]/10">
-          <div className="flex min-h-[40px] items-center justify-between gap-2.5 py-1">
-            <label
-              htmlFor={`${uid}-sim-ww`}
-              className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 text-[12.5px] font-medium text-[#161c1a]"
-            >
-              <LegendIcon kind="waterway" />
-              <span className="leading-snug">{t.lblVerifiedWaterways}</span>
-            </label>
-            <input
-              id={`${uid}-sim-ww`}
-              data-testid="sim-toggle-verified-waterways"
-              type="checkbox"
-              checked={showVerifiedWaterways}
-              onChange={e => onToggleVerifiedWaterways(e.target.checked)}
-              className="h-4.5 w-4.5 shrink-0 cursor-pointer accent-[#0369a1]"
-            />
-          </div>
+        <button
+          type="button"
+          data-testid="sim-layers-toggle"
+          aria-expanded={layersOpen}
+          onClick={() => setLayersOpen(v => !v)}
+          className="flex w-full items-center justify-between gap-2 text-left"
+        >
+          <span className="flex items-center gap-1.5 text-[13px] font-bold text-[#161c1a]">
+            <Layers className="h-3.5 w-3.5 text-[#0369a1]" />
+            <span>{t.simRiversTitle}</span>
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span className="font-mono-num text-[11.5px] font-semibold text-[#636f6a]">
+              {activeLayerCount}/2 {t.layersActiveCount}
+            </span>
+            {layersOpen ? (
+              <ChevronUp className="h-4 w-4 text-[#636f6a]" />
+            ) : (
+              <ChevronDown className="h-4 w-4 text-[#636f6a]" />
+            )}
+          </span>
+        </button>
 
-          <div className="flex min-h-[40px] items-center justify-between gap-2.5 py-1">
-            <div className="flex min-w-0 flex-1 items-center gap-1.5">
-              <label
-                htmlFor={`${uid}-sim-rbi`}
-                className="flex min-w-0 cursor-pointer items-center gap-2 text-[12.5px] font-medium text-[#161c1a]"
-              >
-                <LegendIcon kind="agamRbi" />
-                <span className="leading-snug">{t.lblAgamRbiRivers}</span>
-              </label>
-              <InfoTooltip text={t.infoSimRbiRivers} label={t.lblAgamRbiRivers} />
+        {layersOpen && (
+          <div className="mt-2 divide-y divide-[#161c1a]/10 border-t border-[#161c1a]/10 pt-1">
+            <div className="flex min-h-[40px] items-center justify-between gap-2.5 py-1">
+              <div className="flex min-w-0 flex-1 items-center gap-1.5">
+                <label
+                  htmlFor={`${uid}-sim-ww`}
+                  className="flex min-w-0 cursor-pointer items-center gap-2.5 text-[13px] font-medium text-[#161c1a]"
+                >
+                  <LegendIcon kind="simWaterways" />
+                  <span className="leading-snug">{t.lblSimUnifiedWaterways}</span>
+                </label>
+                <InfoTooltip text={t.infoSimUnifiedWaterways} label={t.lblSimUnifiedWaterways} />
+              </div>
+              <input
+                id={`${uid}-sim-ww`}
+                data-testid="sim-toggle-waterways"
+                type="checkbox"
+                checked={showWaterways}
+                onChange={e => onToggleWaterways(e.target.checked)}
+                className="h-4.5 w-4.5 shrink-0 cursor-pointer accent-[#0369a1]"
+              />
             </div>
-            <input
-              id={`${uid}-sim-rbi`}
-              data-testid="sim-toggle-rbi-rivers"
-              type="checkbox"
-              checked={showRbiRivers}
-              onChange={e => onToggleRbiRivers(e.target.checked)}
-              className="h-4.5 w-4.5 shrink-0 cursor-pointer accent-[#0369a1]"
-            />
-          </div>
 
-          <div className="flex min-h-[40px] items-center justify-between gap-2.5 py-1">
-            <label
-              htmlFor={`${uid}-sim-osm`}
-              className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 text-[12.5px] font-medium text-[#161c1a]"
-            >
-              <LegendIcon kind="osm" />
-              <span className="leading-snug">{t.lblOsmContext}</span>
-            </label>
-            <input
-              id={`${uid}-sim-osm`}
-              data-testid="sim-toggle-osm-roads"
-              type="checkbox"
-              checked={showOsmRoads}
-              onChange={e => onToggleOsmRoads(e.target.checked)}
-              className="h-4.5 w-4.5 shrink-0 cursor-pointer accent-[#0369a1]"
-            />
-          </div>
-
-          <div className="flex min-h-[40px] items-center justify-between gap-2.5 py-1">
-            <div className="flex min-w-0 flex-1 items-center gap-1.5">
+            <div className="flex min-h-[40px] items-center justify-between gap-2.5 py-1">
               <label
-                htmlFor={`${uid}-sim-flow`}
-                className="flex min-w-0 cursor-pointer items-center gap-2 text-[12.5px] font-medium text-[#161c1a]"
+                htmlFor={`${uid}-sim-osm`}
+                className="flex min-w-0 flex-1 cursor-pointer items-center gap-2.5 text-[13px] font-medium text-[#161c1a]"
               >
-                <LegendIcon kind="flow" />
-                <span className="leading-snug">{isDetail ? t.lblFlowDetail : t.lblFlowSimple}</span>
+                <LegendIcon kind="osm" simPalette />
+                <span className="leading-snug">{t.lblOsmContext}</span>
               </label>
-              <InfoTooltip text={t.infoFlowSimple} label={isDetail ? t.lblFlowDetail : t.lblFlowSimple} />
+              <input
+                id={`${uid}-sim-osm`}
+                data-testid="sim-toggle-osm-roads"
+                type="checkbox"
+                checked={showOsmRoads}
+                onChange={e => onToggleOsmRoads(e.target.checked)}
+                className="h-4.5 w-4.5 shrink-0 cursor-pointer accent-[#0369a1]"
+              />
             </div>
-            <input
-              id={`${uid}-sim-flow`}
-              data-testid="sim-toggle-dem-flows"
-              type="checkbox"
-              checked={showDemFlows}
-              onChange={e => onToggleDemFlows(e.target.checked)}
-              className="h-4.5 w-4.5 shrink-0 cursor-pointer accent-[#0369a1]"
-            />
           </div>
-        </div>
+        )}
       </section>
 
-      {/* Model Output Summary */}
+      {/* Card 3: Model Output Summary */}
       <section className="rounded-xl border border-[#161c1a]/12 bg-white p-3.5">
         <div className="mb-2.5 flex flex-wrap items-center justify-between gap-1.5">
           <span className="text-[13px] font-bold text-[#161c1a]">{outputTitle}</span>
@@ -951,7 +1003,7 @@ export function SimulationTab({
         {isDetail && kpis.validation.hwmCount === 0 && (
           <div
             data-testid="sim-uncalibrated-note"
-            className="mb-2.5 rounded-md border border-[#161c1a]/10 bg-[#fafaf8] px-2.5 py-1.5 text-[11px] font-medium text-[#434d49]"
+            className="mb-2.5 rounded-md border border-[#161c1a]/10 bg-[#fafaf8] px-2.5 py-1.5 text-[11.5px] font-medium text-[#434d49]"
           >
             {isEn
               ? `Uncalibrated screening model · ${cov ? `${cov.measuredReaches}/${cov.insideReaches} cross-sections, ${cov.measuredCrossings}/${cov.totalCrossings} culverts measured` : '0 field river gauges'}`
@@ -963,7 +1015,7 @@ export function SimulationTab({
         {isDetail && (
           <div
             data-testid="sim-map-view-switcher"
-            className="mb-2.5 grid grid-cols-4 gap-1 rounded-lg border border-[#161c1a]/10 bg-[#f2f3ef] p-0.5"
+            className="mb-2.5 grid grid-cols-4 gap-1 rounded-lg border border-[#161c1a]/12 bg-[#f2f3ef] p-1"
           >
             {(
               [
@@ -977,7 +1029,7 @@ export function SimulationTab({
                 key={mode}
                 type="button"
                 onClick={() => onChangeSimMapViewMode(mode)}
-                className={`min-h-[28px] rounded-md px-1 text-[11px] font-bold transition ${
+                className={`btn-tactile min-h-[30px] rounded-md px-1 text-[11.5px] font-bold ${
                   simMapViewMode === mode
                     ? 'bg-white text-[#0369a1] shadow-xs'
                     : 'text-[#434d49] hover:text-[#161c1a]'
@@ -989,26 +1041,10 @@ export function SimulationTab({
           </div>
         )}
 
-        {/* Hydrograph & Sensitivity Envelope (Detailed Mode Only) */}
-        {isDetail && kpis.hydrograph.length > 1 && (
-          <div className="mb-2.5">
-            <HydrographSparkline
-              lang={lang}
-              points={kpis.hydrograph}
-              progress={progress}
-              durationMin={durationMin}
-              totalWindowMin={kpis.totalWindowMin}
-              peakQ={kpis.peakDischargeM3s}
-              peakQP10={kpis.ensemble.peakDischargeM3s.p10}
-              peakQP90={kpis.ensemble.peakDischargeM3s.p90}
-              isCalibrated={isCalibrated}
-            />
-          </div>
-        )}
-
+        {/* KPI Grid (matching TerrainTab metric cells) */}
         <div className="grid grid-cols-2 gap-2">
           <div className="rounded-lg bg-[#fafaf8] px-3 py-2">
-            <div className="flex items-start justify-between gap-1 text-[11.5px] leading-tight text-[#636f6a]">
+            <div className="flex items-start justify-between gap-1 text-[12px] leading-tight text-[#636f6a]">
               <span>{kpiFloodLabel}</span>
               <InfoTooltip text={t.infoKpiFlood} label={kpiFloodLabel} />
             </div>
@@ -1017,12 +1053,13 @@ export function SimulationTab({
             </div>
             {showRanges && (
               <div className="font-mono-num text-[10.5px] text-[#636f6a]">
-                {isEn ? 'Sens.' : 'Sensitivitas'}: {kpis.ensemble.floodAreaHa.p10.toFixed(0)}–{kpis.ensemble.floodAreaHa.p90.toFixed(0)} ha
+                {isEn ? 'Sens.' : 'Sens.'}: {kpis.ensemble.floodAreaHa.p10.toFixed(0)}–{kpis.ensemble.floodAreaHa.p90.toFixed(0)} ha
               </div>
             )}
           </div>
+
           <div className="rounded-lg bg-[#fafaf8] px-3 py-2">
-            <div className="flex items-start justify-between gap-1 text-[11.5px] leading-tight text-[#636f6a]">
+            <div className="flex items-start justify-between gap-1 text-[12px] leading-tight text-[#636f6a]">
               <span>{kpiLandslideLabel}</span>
               <InfoTooltip text={t.infoKpiLandslide} label={kpiLandslideLabel} />
             </div>
@@ -1031,8 +1068,8 @@ export function SimulationTab({
             </div>
             {showRanges && (
               <div className="font-mono-num text-[10.5px] text-[#636f6a]">
-                {isEn ? 'Sens.' : 'Sensitivitas'}: {kpis.ensemble.landslideAreaHa.p10.toFixed(0)}–{kpis.ensemble.landslideAreaHa.p90.toFixed(0)} ha
-                {kpis.runoutAreaHa && kpis.runoutAreaHa > 0 ? ` (+~${Math.round(kpis.runoutAreaHa)} ha)` : ''}
+                {kpis.ensemble.landslideAreaHa.p10.toFixed(0)}–{kpis.ensemble.landslideAreaHa.p90.toFixed(0)} ha
+                {kpis.runoutAreaHa && kpis.runoutAreaHa > 0 ? ` (+~${Math.round(kpis.runoutAreaHa)})` : ''}
               </div>
             )}
           </div>
@@ -1040,7 +1077,7 @@ export function SimulationTab({
           {!isDetail ? (
             <>
               <div className="rounded-lg bg-[#fafaf8] px-3 py-2">
-                <div className="flex items-start justify-between gap-1 text-[11.5px] leading-tight text-[#636f6a]">
+                <div className="flex items-start justify-between gap-1 text-[12px] leading-tight text-[#636f6a]">
                   <span>{t.kpiSimpleCrossings}</span>
                   <InfoTooltip text={t.infoKpiCrossings} label={t.kpiSimpleCrossings} />
                 </div>
@@ -1049,7 +1086,7 @@ export function SimulationTab({
                 </div>
               </div>
               <div className="rounded-lg bg-[#fafaf8] px-3 py-2">
-                <div className="flex items-start justify-between gap-1 text-[11.5px] leading-tight text-[#636f6a]">
+                <div className="flex items-start justify-between gap-1 text-[12px] leading-tight text-[#636f6a]">
                   <span>{t.kpiTravelTimeSimple}</span>
                   <InfoTooltip text={t.infoKpiTravelTime} label={t.kpiTravelTimeSimple} />
                 </div>
@@ -1061,7 +1098,7 @@ export function SimulationTab({
           ) : (
             <>
               <div className="rounded-lg bg-[#fafaf8] px-3 py-2">
-                <div className="flex items-start justify-between gap-1 text-[11.5px] leading-tight text-[#636f6a]">
+                <div className="flex items-start justify-between gap-1 text-[12px] leading-tight text-[#636f6a]">
                   <span>{t.kpiEffectiveRunoff}</span>
                   <InfoTooltip text={t.infoKpiRunoff} label={t.kpiEffectiveRunoff} />
                 </div>
@@ -1073,7 +1110,7 @@ export function SimulationTab({
                 </div>
               </div>
               <div className="rounded-lg bg-[#fafaf8] px-3 py-2">
-                <div className="flex items-start justify-between gap-1 text-[11.5px] leading-tight text-[#636f6a]">
+                <div className="flex items-start justify-between gap-1 text-[12px] leading-tight text-[#636f6a]">
                   <span>{t.kpiChoke}</span>
                   <InfoTooltip text={t.infoKpiCrossings} label={t.kpiChoke} />
                 </div>
@@ -1082,7 +1119,7 @@ export function SimulationTab({
                 </div>
               </div>
               <div className="rounded-lg bg-[#fafaf8] px-3 py-2">
-                <div className="flex items-start justify-between gap-1 text-[11.5px] leading-tight text-[#636f6a]">
+                <div className="flex items-start justify-between gap-1 text-[12px] leading-tight text-[#636f6a]">
                   <span>{isEn ? 'Max Stream Power' : 'Energi Gerusan Maks'}</span>
                   <InfoTooltip
                     text={
@@ -1101,7 +1138,7 @@ export function SimulationTab({
                 </div>
               </div>
               <div className="rounded-lg bg-[#fafaf8] px-3 py-2">
-                <div className="flex items-start justify-between gap-1 text-[11.5px] leading-tight text-[#636f6a]">
+                <div className="flex items-start justify-between gap-1 text-[12px] leading-tight text-[#636f6a]">
                   <span>{t.kpiTravelTime}</span>
                   <InfoTooltip text={t.infoKpiTravelTime} label={t.kpiTravelTime} />
                 </div>
@@ -1116,7 +1153,7 @@ export function SimulationTab({
         {/* Independent Validation Readout (Detailed Mode Only) */}
         {isDetail && (agamStats || kpis.validation.scourSampleCount > 0 || kpis.validation.hwmCount > 0) && (
           <div className="mt-2.5 rounded-lg border border-[#161c1a]/10 bg-[#fafaf8] px-2.5 py-2">
-            <div className="mb-1 flex items-center justify-between gap-1.5 text-[11px]">
+            <div className="mb-1 flex items-center justify-between gap-1.5 text-[11.5px]">
               <span className="font-bold text-[#434d49]">
                 {kpis.validation.hwmCount === 0
                   ? isEn
@@ -1140,20 +1177,22 @@ export function SimulationTab({
               </div>
             </div>
             <div className="grid grid-cols-3 gap-1.5 text-center">
-              <div className="rounded bg-white px-1.5 py-1 border border-[#161c1a]/8">
-                <div className="text-[10px] text-[#636f6a]">S2 Scour CSI</div>
+              <div className="rounded border border-[#161c1a]/8 bg-white px-1.5 py-1">
+                <div className="text-[10.5px] text-[#636f6a]">S2 Scour CSI</div>
                 <div className="font-mono-num text-[12px] font-bold text-[#161c1a]">
                   {kpis.validation.scourCsi != null ? `${kpis.validation.scourCsi}%` : '—'}
                 </div>
               </div>
-              <div className="rounded bg-white px-1.5 py-1 border border-[#161c1a]/8">
-                <div className="text-[10px] text-[#636f6a]">Agam AUC</div>
+              <div className="rounded border border-[#161c1a]/8 bg-white px-1.5 py-1">
+                <div className="text-[10.5px] text-[#636f6a]">
+                  {isEn ? 'BPBD Map AUC' : 'AUC Peta BPBD'}
+                </div>
                 <div className="font-mono-num text-[12px] font-bold text-[#161c1a]">
                   {kpis.validation.landslideAuc != null ? kpis.validation.landslideAuc.toFixed(2) : '—'}
                 </div>
               </div>
-              <div className="rounded bg-white px-1.5 py-1 border border-[#161c1a]/8">
-                <div className="text-[10px] text-[#636f6a]">
+              <div className="rounded border border-[#161c1a]/8 bg-white px-1.5 py-1">
+                <div className="text-[10.5px] text-[#636f6a]">
                   HWM ({kpis.validation.hwmCount})
                 </div>
                 <div className="font-mono-num text-[12px] font-bold text-[#0369a1]">
@@ -1161,6 +1200,13 @@ export function SimulationTab({
                 </div>
               </div>
             </div>
+            {kpis.validation.hwmCount === 0 && (
+              <div className="mt-1.5 text-[10.5px] leading-snug text-[#636f6a]">
+                {isEn
+                  ? 'S2 NDVI = 18-mo surface change; BPBD AUC = model-vs-model map intercomparison (not observed scars).'
+                  : 'NDVI S2 = selisih 18 bln; AUC BPBD = pembandingan antar-model peta (bukan inventaris longsor nyata).'}
+              </div>
+            )}
           </div>
         )}
 
@@ -1173,7 +1219,7 @@ export function SimulationTab({
                 const csv = buildHydrographCsv(kpis);
                 triggerBrowserDownload(csv, `${region.id}-hydrograph-${rainMm}mmh-${durationMin}m.csv`, 'text/csv;charset=utf-8');
               }}
-              className="inline-flex min-h-[32px] items-center justify-center gap-1.5 rounded-lg border border-[#161c1a]/14 bg-white px-2 py-1 text-[11px] font-bold text-[#161c1a] transition hover:border-[#0369a1]/40 hover:text-[#0369a1]"
+              className="btn-tactile inline-flex min-h-[34px] items-center justify-center gap-1.5 rounded-lg border border-[#161c1a]/15 bg-[#fafaf8] px-2 py-1 text-[11.5px] font-bold text-[#161c1a] hover:border-[#0369a1]/40 hover:text-[#0369a1]"
             >
               <Download className="h-3.5 w-3.5 shrink-0" />
               <span>{isEn ? 'CSV Hydrograph' : 'CSV Hidrograf'}</span>
@@ -1201,7 +1247,7 @@ export function SimulationTab({
                 const json = buildScenarioExportJson(fallbackParams, kpis, simNetwork, routedNominal);
                 triggerBrowserDownload(json, `${region.id}-scenario-${rainMm}mmh-${durationMin}m.json`, 'application/json;charset=utf-8');
               }}
-              className="inline-flex min-h-[32px] items-center justify-center gap-1.5 rounded-lg border border-[#161c1a]/14 bg-white px-2 py-1 text-[11px] font-bold text-[#161c1a] transition hover:border-[#0369a1]/40 hover:text-[#0369a1]"
+              className="btn-tactile inline-flex min-h-[34px] items-center justify-center gap-1.5 rounded-lg border border-[#161c1a]/15 bg-[#fafaf8] px-2 py-1 text-[11.5px] font-bold text-[#161c1a] hover:border-[#0369a1]/40 hover:text-[#0369a1]"
             >
               <Download className="h-3.5 w-3.5 shrink-0" />
               <span>{isEn ? 'JSON Scenario' : 'JSON Skenario'}</span>
@@ -1213,13 +1259,13 @@ export function SimulationTab({
           type="button"
           data-testid="sim-open-methodology"
           onClick={onOpenMethodology}
-          className="mt-2.5 flex w-full items-center justify-center rounded-lg border border-[#161c1a]/10 bg-[#fafaf8] px-3 py-1.5 text-[11.5px] font-semibold text-[#0369a1] transition hover:border-[#0369a1]/35 hover:bg-[#f2f3ef]"
+          className="btn-tactile mt-2.5 flex w-full items-center justify-center rounded-lg border border-[#161c1a]/12 bg-[#fafaf8] px-3 py-1.5 text-[12px] font-semibold text-[#0369a1] hover:border-[#0369a1]/35 hover:bg-[#f2f3ef]"
         >
           {t.simSeeFormulasLink} →
         </button>
       </section>
 
-      {/* Detailed-only River Width & Bank-Widening Threshold Calculator */}
+      {/* Card 4 (Detailed only): River Width & Bank-Widening Threshold Calculator */}
       {isDetail && verifiedWaterways.length > 0 && (() => {
         const activeWw =
           verifiedWaterways.find(w => w.properties.id === selectedRiverId) ||
@@ -1287,7 +1333,7 @@ export function SimulationTab({
               aria-label={t.channelCalcTitle}
               value={activeWw.properties.id}
               onChange={e => setSelectedRiverId(e.target.value)}
-              className="mb-2.5 min-h-[38px] w-full cursor-pointer rounded-lg border border-[#161c1a]/20 bg-[#fafaf8] px-2.5 py-1.5 text-[12.5px] font-semibold text-[#161c1a] transition hover:border-[#161c1a]/30"
+              className="mb-2.5 min-h-[36px] w-full cursor-pointer rounded-lg border border-[#161c1a]/20 bg-[#fafaf8] px-2.5 py-1.5 text-[12.5px] font-semibold text-[#161c1a] transition hover:border-[#161c1a]/30"
             >
               {verifiedWaterways.map(w => (
                 <option key={w.properties.id} value={w.properties.id}>
@@ -1298,21 +1344,21 @@ export function SimulationTab({
 
             <div className="mb-2.5 grid grid-cols-4 gap-1.5 text-center">
               <div className="rounded-lg bg-[#fafaf8] px-1.5 py-1.5">
-                <div className="text-[10px] text-[#636f6a]">{isEn ? 'Width' : 'Lebar'}</div>
+                <div className="text-[10.5px] text-[#636f6a]">{isEn ? 'Width' : 'Lebar'}</div>
                 <div className="font-mono-num text-[12px] font-bold text-[#161c1a]">
                   {calc.widthPreM != null ? `${calc.widthPreM}→${calc.widthM}m` : `~${calc.widthM}m`}
                 </div>
               </div>
               <div className="rounded-lg bg-[#fafaf8] px-1.5 py-1.5">
-                <div className="text-[10px] text-[#636f6a]">{isEn ? 'Depth' : 'Dalam'}</div>
+                <div className="text-[10.5px] text-[#636f6a]">{isEn ? 'Depth' : 'Dalam'}</div>
                 <div className="font-mono-num text-[12px] font-bold text-[#161c1a]">~{calc.depthM}m</div>
               </div>
               <div className="rounded-lg bg-[#fafaf8] px-1.5 py-1.5">
-                <div className="text-[10px] text-[#636f6a]">{isEn ? 'Slope' : 'Lereng'}</div>
+                <div className="text-[10.5px] text-[#636f6a]">{isEn ? 'Slope' : 'Lereng'}</div>
                 <div className="font-mono-num text-[12px] font-bold text-[#161c1a]">{calc.slopePct}%</div>
               </div>
               <div className="rounded-lg bg-[#fafaf8] px-1.5 py-1.5">
-                <div className="text-[10px] text-[#636f6a]">DAS</div>
+                <div className="text-[10.5px] text-[#636f6a]">DAS</div>
                 <div className="font-mono-num text-[12px] font-bold text-[#0369a1]">
                   {calc.catchmentKm2} km²
                 </div>
@@ -1348,6 +1394,11 @@ export function SimulationTab({
                 </span>
               </div>
             </div>
+            <p className="mt-2 mb-0 text-[10.5px] leading-snug text-[#636f6a]">
+              {isEn
+                ? 'Standalone steady-state Rational Method + Manning quick check (separate from the transient Muskingum-Cunge hydrograph above).'
+                : 'Hitungan cepat tunak Metode Rasional + Manning terpisah dari penelusuran hidrograf Muskingum-Cunge di atas.'}
+            </p>
           </section>
         );
       })()}

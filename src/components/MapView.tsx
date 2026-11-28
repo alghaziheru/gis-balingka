@@ -30,11 +30,15 @@ import {
   createInitialMapStyle
 } from './map/mapSetup';
 import {
+  createCanvasMorphMap,
+  disposeCanvasMorphMap,
   startFlowParticleLoop,
   syncSimulationOverlays,
   syncStormSky,
-  syncWaterwaySimStyling
+  syncWaterwaySimStyling,
+  type CanvasMorphMap
 } from './map/mapSimulation';
+import { buildUnifiedSimWaterways } from './map/simWaterways';
 import {
   asGeoInput,
   buildImageCoords,
@@ -48,6 +52,7 @@ import {
   type MapViewProps
 } from './map/types';
 import type { BasemapId } from '../types/gis';
+import { renderValleyElevationDataUrl, SIM_ELEV_MAX_M } from './map/elevRaster';
 import { useMapEditing } from './map/useMapEditing';
 
 export type { FlyRequest, LoadedDatasets, MapCameraState, MapControlHandle, MapLoadState };
@@ -127,12 +132,14 @@ export function MapView(props: MapViewProps) {
   cascadeEngineRef.current = props.cascadeEngine;
   const cascadeParamsRef = useRef(props.cascadeParams);
   cascadeParamsRef.current = props.cascadeParams;
-  const [poolGlintPoints, setPoolGlintPoints] = useState<[number, number][]>([]);
   const lastSkyKeyRef = useRef('');
-  const landslideCanvasRef = useRef<HTMLCanvasElement | null>(null);
-  const agreementCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const canvasMorphsRef = useRef<CanvasMorphMap | null>(null);
   const lastCascadeTsRef = useRef(0);
   const lastCascadeKeyRef = useRef('');
+  const lastFootprintKeyRef = useRef('');
+  const lastPoolEmptyRef = useRef({ yard: true, knee: true, deep: true });
+  const simElevUrlCacheRef = useRef<{ regionId: string; url: string } | null>(null);
+  const lastElevScaleModeRef = useRef<'full' | 'sim'>('full');
 
   const corridors = useMemo(
     () =>
@@ -158,6 +165,17 @@ export function MapView(props: MapViewProps) {
       props.layers.verifiedWaterways,
       props.layers.agamRbiRivers
     ]
+  );
+
+  const unifiedSimWaterways = useMemo(
+    () =>
+      buildUnifiedSimWaterways(
+        props.verifiedWaterways,
+        props.datasets.agamRbiRivers,
+        props.datasets.flowPaths,
+        props.suppressedDemIds
+      ),
+    [props.verifiedWaterways, props.datasets.agamRbiRivers, props.datasets.flowPaths, props.suppressedDemIds]
   );
 
   const editorUnlockedRef = useRef(props.editorUnlocked);
@@ -414,7 +432,8 @@ export function MapView(props: MapViewProps) {
       }
 
       const ds = props.datasets;
-      addDataSourcesAndLayers(map, ds, activeBasemapRef.current);
+      const canvasHandles = addDataSourcesAndLayers(map, ds, activeBasemapRef.current);
+      canvasMorphsRef.current = createCanvasMorphMap(canvasHandles);
       contourMarkersRef.current = addStaticPlaceAndContourMarkers(map, ds, {
         region: props.region,
         activeToolRef,
@@ -463,6 +482,8 @@ export function MapView(props: MapViewProps) {
       basemapCleanupRef.current = null;
       telemetryControls.cleanup();
       stopParticles?.();
+      disposeCanvasMorphMap(map, canvasMorphsRef.current);
+      canvasMorphsRef.current = null;
       hydratedSyncedRef.current = false;
       mapLoadedRef.current = false;
       setMapReady(false);
@@ -629,8 +650,16 @@ export function MapView(props: MapViewProps) {
     map.setLayoutProperty('agam-soil-fill', 'visibility', vis(props.layers.agamSoilGeology));
     map.setLayoutProperty('agam-soil-casing', 'visibility', vis(props.layers.agamSoilGeology));
     map.setLayoutProperty('agam-soil-line', 'visibility', vis(props.layers.agamSoilGeology));
-    map.setLayoutProperty('agam-rbi-casing', 'visibility', vis(props.layers.agamRbiRivers));
-    map.setLayoutProperty('agam-rbi-line', 'visibility', vis(props.layers.agamRbiRivers));
+    const isSim = props.tab === 'sim';
+    const showSimUnified = isSim && props.layers.verifiedWaterways;
+    if (map.getLayer('sim-waterways-halo')) {
+      map.setLayoutProperty('sim-waterways-halo', 'visibility', vis(showSimUnified));
+    }
+    if (map.getLayer('sim-waterways-line')) {
+      map.setLayoutProperty('sim-waterways-line', 'visibility', vis(showSimUnified));
+    }
+    map.setLayoutProperty('agam-rbi-casing', 'visibility', vis(!isSim && props.layers.agamRbiRivers));
+    map.setLayoutProperty('agam-rbi-line', 'visibility', vis(!isSim && props.layers.agamRbiRivers));
     map.setLayoutProperty('contours-casing', 'visibility', vis(props.layers.contours));
     map.setLayoutProperty('contours-line', 'visibility', vis(props.layers.contours));
 
@@ -649,11 +678,11 @@ export function MapView(props: MapViewProps) {
     map.setLayoutProperty('slope-overlay', 'visibility', vis(props.layers.slope && props.basemap !== 'slope'));
     map.setLayoutProperty('osm-roads-casing', 'visibility', vis(props.layers.osmContext));
     map.setLayoutProperty('osm-roads', 'visibility', vis(props.layers.osmContext));
-    map.setLayoutProperty('verified-waterways-casing', 'visibility', vis(props.layers.verifiedWaterways));
-    map.setLayoutProperty('verified-waterways-line', 'visibility', vis(props.layers.verifiedWaterways));
-    map.setLayoutProperty('verified-culverts-line', 'visibility', vis(props.layers.verifiedWaterways));
-    map.setLayoutProperty('verified-waterways-arrows', 'visibility', vis(props.layers.verifiedWaterways && !isRaining));
-    syncWaterwaySimStyling(map, isRaining);
+    map.setLayoutProperty('verified-waterways-casing', 'visibility', vis(!isSim && props.layers.verifiedWaterways));
+    map.setLayoutProperty('verified-waterways-line', 'visibility', vis(!isSim && props.layers.verifiedWaterways));
+    map.setLayoutProperty('verified-culverts-line', 'visibility', vis(!isSim && props.layers.verifiedWaterways));
+    map.setLayoutProperty('verified-waterways-arrows', 'visibility', vis(!isSim && props.layers.verifiedWaterways));
+    syncWaterwaySimStyling(map, props.tab, isRaining);
 
     const wwSrc = map.getSource('src-verified-waterways') as GeoJSONSource | undefined;
     if (wwSrc) {
@@ -695,8 +724,8 @@ export function MapView(props: MapViewProps) {
     }
 
     const maxTier = props.flowDensity;
-    const flowVis = maxTier > 0;
-    const flowAnimActive = props.tab !== 'sim' && props.flowDensity > 0;
+    const flowVis = !isSim && maxTier > 0;
+    const flowAnimActive = !isSim && props.flowDensity > 0;
     flowAnimActiveRef.current = flowAnimActive;
 
     map.setLayoutProperty('flows-glow', 'visibility', vis(flowVis));
@@ -888,6 +917,17 @@ export function MapView(props: MapViewProps) {
     props.suppressedDemIds
   ]);
 
+  const overlaySimProgress = props.cascadeEngine
+    ? props.cascadeParams.progress
+    : Math.round(props.simProgress * 20) / 20;
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapLoadedRef.current || !mapReady) return;
+    const src = map.getSource('src-sim-waterways') as GeoJSONSource | undefined;
+    if (src) src.setData(asGeoInput(unifiedSimWaterways));
+  }, [mapReady, unifiedSimWaterways]);
+
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !mapLoadedRef.current || !mapReady || !map.getLayer('basemap-sat')) return;
@@ -895,33 +935,39 @@ export function MapView(props: MapViewProps) {
       map,
       tab: props.tab,
       isRaining,
+      simPlaying: props.simPlaying,
       simMapViewMode: props.simMapViewMode,
       datasets: props.datasets,
       layers: props.layers,
       simRain: props.simRain,
       simDurationMin: props.simDurationMin,
-      simProgress: props.simProgress,
+      simProgress: overlaySimProgress,
       simScenario: props.simScenario,
+      uplandBbox: props.uplandBbox,
+      meanSedimentCv: props.meanSedimentCv,
       cascadeEngine: props.cascadeEngine,
       cascadeParams: props.cascadeParams,
       verifiedWaterways: props.verifiedWaterways,
       lastCascadeKeyRef,
       lastCascadeTsRef,
-      landslideCanvasRef,
-      agreementCanvasRef,
-      setPoolGlintPoints
+      lastFootprintKeyRef,
+      lastPoolEmptyRef,
+      canvasMorphsRef
     });
   }, [
     mapReady,
     props.tab,
     isRaining,
+    props.simPlaying,
     props.simMapViewMode,
     props.datasets,
     props.layers,
     props.simRain,
     props.simDurationMin,
-    props.simProgress,
+    overlaySimProgress,
     props.simScenario,
+    props.uplandBbox,
+    props.meanSedimentCv,
     props.cascadeEngine,
     props.cascadeParams,
     props.verifiedWaterways
@@ -930,14 +976,15 @@ export function MapView(props: MapViewProps) {
   const quantizedSkyProgress = Math.round(props.simProgress * 10) / 10;
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !mapLoadedRef.current) return;
+    if (!map || !mapLoadedRef.current || props.simPlaying) return;
     syncStormSky(map, lastSkyKeyRef, {
       tab: props.tab,
       rainAnimEnabled: props.rainAnimEnabled,
       simProgress: quantizedSkyProgress,
-      simRain: props.simRain
+      simRain: props.simRain,
+      isRecession: props.isRecession
     });
-  }, [mapReady, props.tab, props.rainAnimEnabled, quantizedSkyProgress, props.simRain]);
+  }, [mapReady, props.simPlaying, props.tab, props.rainAnimEnabled, quantizedSkyProgress, props.simRain, props.isRecession]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -954,6 +1001,46 @@ export function MapView(props: MapViewProps) {
       duration: 600
     });
   }, [mapReady, props.is3D]);
+
+  // Swap elevation color ramp between full terrain range (Peta) and 1,250 mdpl valley cap (Simulasi)
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapLoadedRef.current || !mapReady) return;
+    const elevSrc = map.getSource('img-elev') as ImageSource | undefined;
+    if (!elevSrc || typeof elevSrc.updateImage !== 'function') return;
+
+    const wantSimElev =
+      props.tab === 'sim' &&
+      props.basemap === 'elev' &&
+      props.demClient.meta.maxElev > SIM_ELEV_MAX_M;
+    const nextMode: 'full' | 'sim' = wantSimElev ? 'sim' : 'full';
+    const cacheMismatch = nextMode === 'sim' && simElevUrlCacheRef.current?.regionId !== props.region.id;
+
+    if (nextMode === lastElevScaleModeRef.current && !cacheMismatch) return;
+
+    const imgCoords = buildImageCoords(props.datasets.bbox);
+    if (nextMode === 'sim') {
+      if (cacheMismatch || !simElevUrlCacheRef.current) {
+        const url = renderValleyElevationDataUrl(props.demClient.meta, SIM_ELEV_MAX_M);
+        if (url) simElevUrlCacheRef.current = { regionId: props.region.id, url };
+      }
+      if (simElevUrlCacheRef.current?.url) {
+        elevSrc.updateImage({ url: simElevUrlCacheRef.current.url, coordinates: imgCoords });
+      }
+    } else {
+      const base = props.dataBasePath.replace(/\/+$/, '');
+      elevSrc.updateImage({ url: `${base}/raster-elev.png`, coordinates: imgCoords });
+    }
+    lastElevScaleModeRef.current = nextMode;
+  }, [
+    mapReady,
+    props.tab,
+    props.basemap,
+    props.region.id,
+    props.dataBasePath,
+    props.datasets.bbox,
+    props.demClient
+  ]);
 
   // Refresh recomputed flow paths, drainage crossings, and HAND flood rasters live
   useEffect(() => {
@@ -1030,17 +1117,25 @@ export function MapView(props: MapViewProps) {
       <div ref={containerRef} className="absolute inset-0 h-full w-full" aria-label={`${APP_BRAND.name} — ${region.name}`} />
       <FlowFilamentOverlay
         active={props.tab === 'sim' && props.simProgress > 0.02 && Boolean(props.cascadeEngine)}
+        playing={props.simPlaying}
+        playbackSpeed={props.playbackSpeed}
         mapRef={mapRef}
         corridors={corridors}
-        glintPoints={poolGlintPoints}
         nagariBoundary={props.datasets.nagariBoundary}
         rainMmHr={props.simRain}
+        liveRainMmHr={props.liveRainMmHr}
         durationMin={props.simDurationMin}
         progress={props.simProgress}
+        elapsedMin={props.liveElapsedMin}
         drainCondition={props.cascadeParams.drainCondition}
+        debrisCoupling={props.cascadeParams.debrisCoupling ?? 'clear'}
+        meanSedimentCv={props.meanSedimentCv}
+        isRecession={props.isRecession}
         rainPattern={props.cascadeParams.rainPattern}
         soilMoisture={props.cascadeParams.soilMoisture}
+        simMapViewMode={props.simMapViewMode}
         cascadeEngine={props.cascadeEngine}
+        playbackGridsRef={props.playbackGridsRef}
       />
     </div>
   );

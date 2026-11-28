@@ -59,13 +59,13 @@ export function TopHud({
     tab === 'sim'
       ? isDetail
         ? [
-            ['relief', t.bmRelief],
             ['elev', t.bmElev],
+            ['relief', t.bmRelief],
             ['slope', t.bmSlope]
           ]
         : [
-            ['relief', t.bmRelief],
-            ['elev', t.bmElev]
+            ['elev', t.bmElev],
+            ['relief', t.bmRelief]
           ]
       : isDetail
         ? [

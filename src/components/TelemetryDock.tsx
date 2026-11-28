@@ -76,10 +76,8 @@ interface TelemetryDockProps {
   };
   mapCamera: MapCameraState;
   onToggleLayer: (key: keyof LayerToggles, val: boolean) => void;
-  onToggleSimVerifiedWaterways?: (val: boolean) => void;
-  onToggleSimRbiRivers?: (val: boolean) => void;
+  onToggleSimWaterways?: (val: boolean) => void;
   onToggleSimOsmRoads?: (val: boolean) => void;
-  onToggleSimDemFlows?: (val: boolean) => void;
   onChangeFlowDensity: (density: number) => void;
   onZoomIn: () => void;
   onZoomOut: () => void;
@@ -103,10 +101,8 @@ export function TelemetryDock({
   cursorTelemetry,
   mapCamera,
   onToggleLayer,
-  onToggleSimVerifiedWaterways,
-  onToggleSimRbiRivers,
+  onToggleSimWaterways,
   onToggleSimOsmRoads,
-  onToggleSimDemFlows,
   onChangeFlowDensity,
   onZoomIn,
   onZoomOut,
@@ -252,18 +248,10 @@ export function TelemetryDock({
   } else if (tab === 'sim') {
     mobileToggleItems.push({
       id: 'sim-ww',
-      label: t.lblVerifiedWaterways,
-      icon: 'waterway',
+      label: t.lblSimUnifiedWaterways,
+      icon: 'simWaterways',
       checked: layers.verifiedWaterways,
-      onChange: v =>
-        onToggleSimVerifiedWaterways ? onToggleSimVerifiedWaterways(v) : onToggleLayer('verifiedWaterways', v)
-    });
-    mobileToggleItems.push({
-      id: 'sim-rbi',
-      label: t.lblAgamRbiRivers,
-      icon: 'agamRbi',
-      checked: layers.agamRbiRivers,
-      onChange: v => (onToggleSimRbiRivers ? onToggleSimRbiRivers(v) : onToggleLayer('agamRbiRivers', v))
+      onChange: v => (onToggleSimWaterways ? onToggleSimWaterways(v) : onToggleLayer('verifiedWaterways', v))
     });
     mobileToggleItems.push({
       id: 'sim-osm',
@@ -271,13 +259,6 @@ export function TelemetryDock({
       icon: 'osm',
       checked: layers.osmContext,
       onChange: v => (onToggleSimOsmRoads ? onToggleSimOsmRoads(v) : onToggleLayer('osmContext', v))
-    });
-    mobileToggleItems.push({
-      id: 'sim-flow',
-      label: isDetail ? t.lblFlowDetail : t.lblFlowSimple,
-      icon: 'flow',
-      checked: flowDensity > 0,
-      onChange: v => (onToggleSimDemFlows ? onToggleSimDemFlows(v) : onChangeFlowDensity(v ? 1 : 0))
     });
     mobileToggleItems.push({
       id: 'evac',

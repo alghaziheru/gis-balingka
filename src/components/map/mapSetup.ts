@@ -241,6 +241,7 @@ export function createInitialMapStyle(
       'img-slope': { type: 'image', url: `${base}/raster-slope.png`, coordinates: imgCoords },
       'img-landcover': { type: 'image', url: `${base}/raster-landcover.png`, coordinates: imgCoords },
       'img-scour-change': { type: 'image', url: `${base}/raster-scour-change.png`, coordinates: imgCoords },
+      'img-cascade-flood': { type: 'image', url: TRANSPARENT_1PX_PNG, coordinates: imgCoords },
       'img-cascade-landslide': { type: 'image', url: TRANSPARENT_1PX_PNG, coordinates: imgCoords },
       'img-cascade-agreement': { type: 'image', url: TRANSPARENT_1PX_PNG, coordinates: imgCoords },
       'img-hand-clogged-low': { type: 'image', url: `${base}/raster-hand-clogged-low.png`, coordinates: imgCoords },
@@ -314,9 +315,31 @@ export function createInitialMapStyle(
   };
 }
 
-export function addDataSourcesAndLayers(map: MapLibreMap, ds: LoadedDatasets, basemap: BasemapId): void {
+export interface CascadeCanvasHandles {
+  flood: HTMLCanvasElement;
+  landslide: HTMLCanvasElement;
+  agreement: HTMLCanvasElement;
+}
+
+function makeOffscreenCanvas(size = 160): HTMLCanvasElement {
+  const c = document.createElement('canvas');
+  c.width = size;
+  c.height = size;
+  return c;
+}
+
+export function addDataSourcesAndLayers(
+  map: MapLibreMap,
+  ds: LoadedDatasets,
+  basemap: BasemapId
+): CascadeCanvasHandles {
   const p = getOverlayContrastPalette(basemap);
   registerCartographicIcons(map);
+  const cascadeCanvases: CascadeCanvasHandles = {
+    flood: makeOffscreenCanvas(160),
+    landslide: makeOffscreenCanvas(160),
+    agreement: makeOffscreenCanvas(160)
+  };
 
   // 10m ESA WorldCover forest & land-cover overlay
   map.addLayer({
@@ -356,7 +379,7 @@ export function addDataSourcesAndLayers(map: MapLibreMap, ds: LoadedDatasets, ba
     });
   }
 
-  // Dynamic physical cascade overlays (vector-sharp blue pools + steep-slope landslide risk + ensemble agreement)
+  // Dynamic physical cascade ImageSources (terrain-draped smooth depth + slope saturation + agreement)
   map.addLayer({
     id: 'cascade-landslide-overlay',
     type: 'raster',
@@ -373,17 +396,24 @@ export function addDataSourcesAndLayers(map: MapLibreMap, ds: LoadedDatasets, ba
     paint: { 'raster-opacity': 0.85, 'raster-fade-duration': 0 }
   });
 
+  map.addLayer({
+    id: 'cascade-flood-overlay',
+    type: 'raster',
+    source: 'img-cascade-flood',
+    layout: { visibility: 'none' },
+    paint: { 'raster-opacity': 0.78, 'raster-fade-duration': 0 }
+  });
+
   // 3-tier calm cartographic depth contour bands (~13.8 m DEMNAS riverbank precision):
-  // Tier 1 (0.12-0.30m shallow terrain flow): subtle translucent tint + dashed outline
-  // Tier 2 (0.30-1.00m moderate basin depth): sky-blue + crisp hairline contour
-  // Tier 3 (>1.00m deep channel / bankfull overflow): clear ocean blue (crisp on Relief/Elevasi)
+  // Smooth continuous terrain-draped water depth sits in cascade-flood-overlay;
+  // these vector layers provide crisp dashed/hairline depth contours & subtle deep-core accents.
   map.addSource('src-sim-pools-yard', { type: 'geojson', data: asGeoInput(EMPTY_FC) });
   map.addLayer({
     id: 'sim-pools-yard-fill',
     type: 'fill',
     source: 'src-sim-pools-yard',
     layout: { visibility: 'none' },
-    paint: { 'fill-color': '#7dd3fc', 'fill-opacity': 0.22, 'fill-antialias': true }
+    paint: { 'fill-color': '#7dd3fc', 'fill-opacity': 0.12, 'fill-antialias': true }
   });
   map.addLayer({
     id: 'sim-pools-yard-outline',
@@ -399,7 +429,7 @@ export function addDataSourcesAndLayers(map: MapLibreMap, ds: LoadedDatasets, ba
     type: 'fill',
     source: 'src-sim-pools-knee',
     layout: { visibility: 'none' },
-    paint: { 'fill-color': '#38bdf8', 'fill-opacity': 0.34, 'fill-antialias': true }
+    paint: { 'fill-color': '#38bdf8', 'fill-opacity': 0.18, 'fill-antialias': true }
   });
   map.addLayer({
     id: 'sim-pools-knee-outline',
@@ -415,7 +445,29 @@ export function addDataSourcesAndLayers(map: MapLibreMap, ds: LoadedDatasets, ba
     type: 'fill',
     source: 'src-sim-pools-deep',
     layout: { visibility: 'none' },
-    paint: { 'fill-color': '#0369a1', 'fill-opacity': 0.50, 'fill-antialias': true }
+    paint: { 'fill-color': '#0369a1', 'fill-opacity': 0.30, 'fill-antialias': true }
+  });
+
+  // Simulation-only unified, deduplicated solid watershed hierarchy (Verified + BIG RBI 50K + DEM tier-1)
+  map.addSource('src-sim-waterways', { type: 'geojson', data: asGeoInput(EMPTY_FC) });
+  map.addLayer({
+    id: 'sim-waterways-halo',
+    type: 'line',
+    source: 'src-sim-waterways',
+    filter: ['==', ['get', 'order'], 1],
+    layout: { visibility: 'none', 'line-cap': 'round', 'line-join': 'round' },
+    paint: { 'line-color': '#0f2d42', 'line-width': 4.4, 'line-opacity': 0.28 }
+  });
+  map.addLayer({
+    id: 'sim-waterways-line',
+    type: 'line',
+    source: 'src-sim-waterways',
+    layout: { visibility: 'none', 'line-cap': 'round', 'line-join': 'round' },
+    paint: {
+      'line-color': ['match', ['get', 'order'], 1, '#1b5270', 2, '#286787', 3, '#3a7a99', '#538ca6'],
+      'line-width': ['match', ['get', 'order'], 1, 2.9, 2, 1.75, 3, 1.2, 0.85],
+      'line-opacity': ['match', ['get', 'order'], 1, 0.94, 2, 0.88, 3, 0.80, 0.56]
+    }
   });
 
   map.addSource('src-sim-scour-reaches', { type: 'geojson', data: asGeoInput(EMPTY_FC) });
@@ -1215,6 +1267,8 @@ export function addDataSourcesAndLayers(map: MapLibreMap, ds: LoadedDatasets, ba
       'circle-stroke-width': 2.5
     }
   });
+
+  return cascadeCanvases;
 }
 
 export function addStaticPlaceAndContourMarkers(
@@ -1297,30 +1351,57 @@ export function applyBasemapContrastPalette(
   map: MapLibreMap,
   basemap: BasemapId,
   tab: TabId,
-  simProgress: number
+  _simProgress: number
 ): void {
   const pal = getOverlayContrastPalette(basemap);
+  const isSim = tab === 'sim';
 
-  map.setPaintProperty('osm-roads-casing', 'line-color', pal.roads.casingColor);
-  map.setPaintProperty('osm-roads-casing', 'line-opacity', pal.roads.casingOpacity);
-  map.setPaintProperty('osm-roads-casing', 'line-width', [
-    'case',
-    ['==', ['get', 'highway'], 'secondary'],
-    pal.roads.secondaryCasingWidth,
-    pal.roads.localCasingWidth
-  ]);
-  map.setPaintProperty('osm-roads', 'line-color', [
-    'case',
-    ['==', ['get', 'highway'], 'secondary'],
-    pal.roads.secondaryCoreColor,
-    pal.roads.localCoreColor
-  ]);
-  map.setPaintProperty('osm-roads', 'line-width', [
-    'case',
-    ['==', ['get', 'highway'], 'secondary'],
-    pal.roads.secondaryCoreWidth,
-    pal.roads.localCoreWidth
-  ]);
+  if (isSim) {
+    // Calm topographic sand/stone roads at normal opacity so rivers & white flow ribbons keep focus
+    map.setPaintProperty('osm-roads-casing', 'line-color', '#4a4843');
+    map.setPaintProperty('osm-roads-casing', 'line-opacity', 0.72);
+    map.setPaintProperty('osm-roads-casing', 'line-width', [
+      'case',
+      ['==', ['get', 'highway'], 'secondary'],
+      3.8,
+      2.4
+    ]);
+    map.setPaintProperty('osm-roads', 'line-color', [
+      'case',
+      ['==', ['get', 'highway'], 'secondary'],
+      '#d8c79e',
+      '#cfc9be'
+    ]);
+    map.setPaintProperty('osm-roads', 'line-width', [
+      'case',
+      ['==', ['get', 'highway'], 'secondary'],
+      2.2,
+      1.3
+    ]);
+    map.setPaintProperty('osm-roads', 'line-opacity', 0.92);
+  } else {
+    map.setPaintProperty('osm-roads-casing', 'line-color', pal.roads.casingColor);
+    map.setPaintProperty('osm-roads-casing', 'line-opacity', pal.roads.casingOpacity);
+    map.setPaintProperty('osm-roads-casing', 'line-width', [
+      'case',
+      ['==', ['get', 'highway'], 'secondary'],
+      pal.roads.secondaryCasingWidth,
+      pal.roads.localCasingWidth
+    ]);
+    map.setPaintProperty('osm-roads', 'line-color', [
+      'case',
+      ['==', ['get', 'highway'], 'secondary'],
+      pal.roads.secondaryCoreColor,
+      pal.roads.localCoreColor
+    ]);
+    map.setPaintProperty('osm-roads', 'line-width', [
+      'case',
+      ['==', ['get', 'highway'], 'secondary'],
+      pal.roads.secondaryCoreWidth,
+      pal.roads.localCoreWidth
+    ]);
+    map.setPaintProperty('osm-roads', 'line-opacity', 0.96);
+  }
 
   map.setPaintProperty('contours-casing', 'line-opacity', pal.contours.majorCasingOpacity);
   map.setPaintProperty('contours-line', 'line-color', [
@@ -1341,16 +1422,19 @@ export function applyBasemapContrastPalette(
   map.setPaintProperty('flows-line', 'line-color', pal.flows.lineColor);
   map.setPaintProperty('flows-line', 'line-opacity', pal.flows.lineOpacity);
 
-  const rbiSimScale =
-    tab === 'sim' && simProgress > 0.02
-      ? { casing: 0.45, line: 0.65 }
-      : tab === 'sim'
-        ? { casing: 0.62, line: 0.78 }
-        : { casing: 1, line: 1 };
-  map.setPaintProperty('agam-rbi-casing', 'line-color', pal.agamRbi.casingColor);
-  map.setPaintProperty('agam-rbi-casing', 'line-opacity', pal.agamRbi.casingOpacity * rbiSimScale.casing);
-  map.setPaintProperty('agam-rbi-line', 'line-color', pal.agamRbi.lineColor);
-  map.setPaintProperty('agam-rbi-line', 'line-opacity', pal.agamRbi.lineOpacity * rbiSimScale.line);
+  if (isSim) {
+    // Muted slate-blue BIG RBI 50K tributaries at normal opacity without white casing
+    map.setPaintProperty('agam-rbi-casing', 'line-opacity', 0);
+    map.setPaintProperty('agam-rbi-line', 'line-color', '#5b7f95');
+    map.setPaintProperty('agam-rbi-line', 'line-opacity', 0.86);
+    map.setPaintProperty('agam-rbi-line', 'line-width', ['match', ['get', 'kind'], 'river', 1.9, 1.35]);
+  } else {
+    map.setPaintProperty('agam-rbi-casing', 'line-color', pal.agamRbi.casingColor);
+    map.setPaintProperty('agam-rbi-casing', 'line-opacity', pal.agamRbi.casingOpacity);
+    map.setPaintProperty('agam-rbi-line', 'line-color', pal.agamRbi.lineColor);
+    map.setPaintProperty('agam-rbi-line', 'line-opacity', pal.agamRbi.lineOpacity);
+    map.setPaintProperty('agam-rbi-line', 'line-width', ['match', ['get', 'kind'], 'river', 3.0, 2.1]);
+  }
 
   map.setPaintProperty('agam-forest-fill', 'fill-color', [
     'match',

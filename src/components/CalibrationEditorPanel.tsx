@@ -157,6 +157,10 @@ export function CalibrationEditorPanel({
   const kindLabel: Record<CalibrationMarkKind, string> = isEn
     ? { hwm: 'High-Water Mark', scour: 'Bank Scour', landslide_scar: 'Slope Scar' }
     : { hwm: 'Tanda Tinggi Air', scour: 'Gerusan Tebing', landslide_scar: 'Bekas Longsoran' };
+  const hwmDepthMarkCount = calibrationMarks.filter(
+    m => m.properties.kind === 'hwm' && m.properties.observed_depth_m != null
+  ).length;
+  const canAutoSolve = hwmDepthMarkCount >= 3;
 
   return (
     <div className="flex flex-col gap-3.5">
@@ -253,7 +257,9 @@ export function CalibrationEditorPanel({
             </div>
           </div>
           <div className="rounded-lg bg-[#fafaf8] px-2 py-1.5">
-            <div className="text-[10px] text-[#636f6a]">Agam AUC</div>
+            <div className="text-[10px] text-[#636f6a]">
+              {isEn ? 'BPBD Map AUC' : 'AUC Peta BPBD'}
+            </div>
             <div className="font-mono-num text-[12.5px] font-bold text-[#161c1a]">
               {validationMetrics.landslideAuc != null ? validationMetrics.landslideAuc.toFixed(2) : '—'}
             </div>
@@ -266,11 +272,11 @@ export function CalibrationEditorPanel({
           </div>
         </div>
 
-        {calibrationMarks.length < 3 && (
+        {!canAutoSolve && (
           <div className="mb-2.5 rounded-lg border border-[#b45309]/25 bg-[#b45309]/8 px-2.5 py-2 text-[11px] leading-snug text-[#78350f]">
             {isEn
-              ? 'Sentinel-2 Scour CSI & Agam AUC are spatial pattern sanity checks against a synthetic benchmark storm. Record ≥3 field High-Water Marks (HWM) below for true hydraulic depth calibration.'
-              : 'Scour CSI Sentinel-2 & AUC Agam hanya mengecek kecocokan pola spasial terhadap badai uji sintetis. Catat minimal 3 titik Tanda Tinggi Air (HWM) di bawah untuk kalibrasi kedalaman sungai nyata.'}
+              ? `Sentinel-2 Scour CSI (18-mo change) & BPBD Map AUC (model-vs-model intercomparison) are spatial sanity checks only. Record ≥3 field High-Water Marks with observed depths below (${hwmDepthMarkCount}/3) to unlock Auto-Solve calibration.`
+              : `Scour CSI Sentinel-2 (selisih 18 bln) & AUC Peta BPBD (pembandingan antar-model) hanya cek pola spasial. Catat minimal 3 titik Tanda Tinggi Air berukur di bawah (${hwmDepthMarkCount}/3) untuk membuka kalibrasi otomatis (Cari Optimal).`}
           </div>
         )}
 
@@ -358,8 +364,8 @@ export function CalibrationEditorPanel({
           <div className="mt-2.5 rounded-lg border border-[#0369a1]/25 bg-[#0369a1]/6 px-2.5 py-2 text-[11.5px] text-[#161c1a]">
             <div className="font-bold text-[#0369a1]">
               {isEn
-                ? 'Bounded Solver (50% Spatial Block Holdout)'
-                : 'Rekomendasi Kalibrasi (Uji Terpisah 50% Blok Spasial)'}
+                ? 'Bounded Solver (50% Reach Holdout)'
+                : 'Rekomendasi Kalibrasi (Uji Terpisah 50% Segmen Alur)'}
             </div>
             <div className="font-mono-num mt-0.5 text-[11px] text-[#434d49]">
               n×{autoProposal.profile.manningMult.toFixed(2)} · CN {autoProposal.profile.cnOffset >= 0 ? '+' : ''}
@@ -378,8 +384,15 @@ export function CalibrationEditorPanel({
             <button
               type="button"
               onClick={handleAutoCalibrate}
-              disabled={!cascadeEngine || busy}
-              className="inline-flex min-h-[36px] flex-1 items-center justify-center gap-1.5 rounded-lg border border-[#0369a1] bg-white px-2.5 py-1.5 text-[12px] font-bold text-[#0369a1] hover:bg-[#0369a1]/8 disabled:opacity-50"
+              disabled={!cascadeEngine || busy || !canAutoSolve}
+              title={
+                !canAutoSolve
+                  ? isEn
+                    ? 'Record ≥3 field High-Water Marks with observed depths to unlock Auto-Solve'
+                    : 'Catat minimal 3 Tanda Tinggi Air berukur untuk membuka Cari Optimal'
+                  : undefined
+              }
+              className="inline-flex min-h-[36px] flex-1 items-center justify-center gap-1.5 rounded-lg border border-[#0369a1] bg-white px-2.5 py-1.5 text-[12px] font-bold text-[#0369a1] hover:bg-[#0369a1]/8 disabled:cursor-not-allowed disabled:opacity-50"
             >
               <Gauge className="h-3.5 w-3.5" />
               <span>{isEn ? 'Auto-Solve' : 'Cari Optimal'}</span>

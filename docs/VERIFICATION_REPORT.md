@@ -2,7 +2,7 @@
 
 *Reproducible technical evidence generated from `CascadeEngine`, `routeReachNetwork`, and `climate-fetcher.mjs` on **Nagari Balingka** (`29.89 km²`, Kab. Agam, West Sumatra).*
 
-> **Epistemic Scope:** All verification tests below evaluate **mathematical consistency, mass conservation, solver agreement against published equations, multi-source precipitation uncertainty, and parameter sensitivity**. Because Nagari Balingka has no live stream gauges (`AWLR`), measured soil shear boreholes, or event-dated flood hydrographs yet, simulated discharges and depths remain **Screening-level (`≤44/100`)** rather than calibrated site predictions.
+> **Epistemic Scope:** All verification tests below evaluate **mathematical consistency, mass conservation, solver agreement against published equations, multi-source precipitation uncertainty, and parameter sensitivity**. Because Nagari Balingka has no live stream gauges (`AWLR`), measured soil shear boreholes, or event-dated flood hydrographs yet, simulated discharges and depths remain **Screening-level (`≤44/100`)** rather than calibrated site predictions. See [`MODEL_LIMITATIONS.md`](./MODEL_LIMITATIONS.md) for a candid audit of physical ceilings (1D HAND vs. 2D avulsion, `'surge'` pulse heuristic, shallow-only FoS, and model-to-model BPBD intercomparison).
 
 ---
 
@@ -12,19 +12,21 @@ Generated via `pnpm run benchmark` → [`docs/benchmarks/verification-summary.js
 
 | Verification Benchmark | Test Design | Measured Result | Acceptance Criterion |
 |---|---|---|---|
-| **Continuous SMA vs. Exact NRCS TR-55** | 15 storm totals (`P = 20–300 mm`, `CN = 72`, `S = 98.78 mm`, `Ia = 13.83 mm`, zero percolation, 28 steps) compared against analytical `Q = (P − Ia)² / (P − Ia + S)` | `R² = 1.00000`, `NSE = 1.00000`, `RMSE = 0.028 mm` | `R² > 0.999` |
+| **Continuous SMA vs. Exact NRCS TR-55** | 15 storm totals (`P = 20–300 mm`, `CN = 72`, `S = 98.78 mm`, `Ia = 13.83 mm`, zero percolation, 28 steps) calling live production `stepReachSma()` vs analytical `Q = (P − Ia)² / (P − Ia + S)` | `R² = 1.00000`, `NSE = 1.00000`, `RMSE = 0.028 mm` | `R² > 0.999` |
 | **SMA Catchments Mass-Balance Closure** | Full Nagari Balingka network across `15 mm/h × 2h` (`dry`), `40 mm/h × 3h` (`moist`), and `7 mm/h × 48h` (`surge`) checking `Rain = Ia + Runoff + ΔS + DeepPerc` | Max `|closureErrorPct| = 0.00000%` | `< 0.05%` |
 | **1D Muskingum-Cunge Synthetic Channel** | 10-reach channel (`2.5 km`, `S = 0.02`, `W = 6.0 m`), `45 mm/h × 2h` storm + tail (`dt = 2.1 min`) | Lag `+19.3 min` (`27.8 → 47.1 min`), peak `38.75 m³/s`, `minQ = 0.0035 m³/s` (non-oscillatory), volume accounted `-6.05%` (slow tail outflow past cutoff) | Stable (`minQ ≥ 0`), positive lag |
 | **FHWA HDS-5 Orifice & Bridge Capacity** | Pipe `Ø 0.80 m` (`Cd = 0.62`), Box `1.5 × 1.2 m` (`Cd = 0.66`), Bridge `4.0 × 2.5 m` (`Cd = 0.78`) vs analytical `Cd · A · √(2gH)` | Model `1.14`, `5.31`, `47.31 m³/s` · Max relative error `0.147%` | `< 0.5%` |
-| **Browser Engine Latency (7-Member Envelope)** | 10 cache-cold evaluations on full `185 × 260` grid + `~13.8 m` DEMNAS HAND & `2,175` buildings | Median `58.63 ms` (`2h`), `48.40 ms` (`3h`), `106.63 ms` (`48h`); P95 `52.46–124.76 ms` | Interactive (`< 250 ms`) |
+| **Browser Engine Latency (7-Member Envelope)** | 10 cache-cold evaluations on full `185 × 260` grid + `~13.8 m` DEMNAS HAND & `2,175` buildings | Median `59.86 ms` (`2h`), `46.77 ms` (`3h`), `100.43 ms` (`48h`); P95 `47.81–122.08 ms` | Interactive (`< 250 ms`) |
 
 ### Water-Balance Ledger Across Scenarios (`docs/benchmarks/verification-summary.json`)
+
+*(Reconciled bankfull SRC datum: stage `0..bfD` stays in-channel while `stage > bfD` integrates DEMNAS HAND strictly at overbank depth `stage − bfD` with exact hydraulic cross-sectional area.)*
 
 | Scenario | Rain Input (mm) | Interception `Ia` (mm) | Total Runoff (mm) | Soil ΔStorage (mm) | Deep Percolation (mm) | Closure Error | Peak Q (m³/s) | Corridor Overflow (ha) | Steep Slope `FoS < 1.1` (ha) |
 |---|---|---|---|---|---|---|---|---|---|
 | `normal_2h_dry` (`15 mm/h × 2h`) | `31.684` | `19.113` | `2.218` | `10.184` | `0.169` | `0%` | `4.7` | `0` | `0.1` |
-| `upland_3h_clogged` (`40 mm/h × 3h`) | `107.123` | `12.235` | `64.398` | `28.650` | `1.841` | `0%` | `125.8` | `2.2` | `1.6` |
-| `monsoon_48h_surge` (`7 mm/h × 48h`) | `274.984` | `10.958` | `199.712` | `38.849` | `25.464` | `0%` | `140.7` | `2.6` | `17.1` |
+| `upland_3h_clogged` (`40 mm/h × 3h`) | `107.123` | `12.235` | `64.398` | `28.650` | `1.841` | `0%` | `124.2` | `12.7` | `1.6` |
+| `monsoon_48h_surge` (`7 mm/h × 48h`) | `274.984` | `10.958` | `199.712` | `38.849` | `25.464` | `0%` | `140.4` | `16.9` | `17.3` |
 
 ---
 
@@ -44,39 +46,39 @@ Generated via `pnpm run sensitivity` → [`docs/benchmarks/sensitivity-summary.j
 
 | Scenario | Output Metric | #1 Dominant Factor | Morris `μ*` Share | Spearman `ρ` | #2 Factor | Morris `μ*` Share | Spearman `ρ` |
 |---|---|---|---|---|---|---|---|
-| **`upland_3h`** (`40 mm/h × 3h`, `120 mm`) | `peakDischargeM3s` | `antecedent5dMm` (`P5`) | `52.4%` | `+0.8296` | `rainScale` | `37.9%` | `+0.5264` |
-| `upland_3h` | `floodAreaHa` | `antecedent5dMm` / `manningMult` | `33.7%` / `33.7%` | `+0.7320` / `+0.4396` | `rainScale` | `23.9%` | `+0.4701` |
-| `upland_3h` | `landslideAreaHa` | `cohesionMult` | `53.2%` | `-0.9325` | `rainScale` | `27.3%` | `+0.2658` |
-| **`monsoon_48h`** (`7 mm/h × 48h`, `336 mm`) | `peakDischargeM3s` | `rainScale` | `48.5%` | `+0.8321` | `culvertBlockagePct` | `30.4%` (`σ=37.3`) | `+0.3722` |
-| `monsoon_48h` | `floodAreaHa` | `manningMult` | `36.9%` | `+0.5092` | `rainScale` | `30.1%` | `+0.6562` |
-| `monsoon_48h` | `landslideAreaHa` | `cohesionMult` | `56.1%` | `-0.8866` | `rainScale` | `34.6%` | `+0.4304` |
+| **`upland_3h`** (`40 mm/h × 3h`, `120 mm`) | `peakDischargeM3s` | `antecedent5dMm` (`P5`) | `52.2%` | `+0.8305` | `rainScale` | `37.8%` | `+0.5247` |
+| `upland_3h` | `floodAreaHa` | `antecedent5dMm` (`P5`) | `33.2%` | `+0.6207` | `manningMult` | `26.8%` | `+0.5398` |
+| `upland_3h` | `landslideAreaHa` | `cohesionMult` | `52.9%` | `-0.9323` | `rainScale` | `27.6%` | `+0.2655` |
+| **`monsoon_48h`** (`7 mm/h × 48h`, `336 mm`) | `peakDischargeM3s` | `rainScale` | `48.6%` | `+0.8328` | `culvertBlockagePct` | `30.3%` (`σ=37.3`) | `+0.3709` |
+| `monsoon_48h` | `floodAreaHa` | `rainScale` | `31.5%` | `+0.7020` | `manningMult` | `30.0%` | `+0.5954` |
+| `monsoon_48h` | `landslideAreaHa` | `cohesionMult` | `56.0%` | `-0.8870` | `rainScale` | `34.6%` | `+0.4292` |
 
 ### Fast 7-Scenario UI Sensitivity Envelope vs. `N = 500` LHS (`P10–P50–P90`)
 
 | Scenario | Output Metric | Fast 7-Scenario UI Bounds `[Low .. Central .. High]` | `N = 500` LHS `[P10 .. P50 .. P90]` | Span Coverage (`UI / LHS`) |
 |---|---|---|---|---|
-| `upland_3h` | `peakDischargeM3s` | `[94.4 .. 125.8 .. 160.2] m³/s` | `[81.56 .. 145.7 .. 210.43] m³/s` | `0.51×` |
-| `upland_3h` | `floodAreaHa` | `[0 .. 2.2 .. 5.9] ha` | `[0 .. 2.7 .. 10.0] ha` | `0.59×` |
-| `upland_3h` | `landslideAreaHa` | `[0.2 .. 1.6 .. 15.6] ha` | `[0.3 .. 1.8 .. 23.21] ha` | `0.67×` |
-| `monsoon_48h` | `peakDischargeM3s` | `[113.9 .. 143.5 .. 174.5] m³/s` | `[87.6 .. 118.15 .. 156.53] m³/s` | `0.88×` |
-| `monsoon_48h` | `floodAreaHa` | `[0.2 .. 2.6 .. 8.1] ha` | `[0 .. 1.6 .. 4.6] ha` | `1.72×` |
-| `monsoon_48h` | `landslideAreaHa` | `[0.9 .. 18.7 .. 64.1] ha` | `[1.3 .. 16.85 .. 63.45] ha` | `1.02×` |
+| `upland_3h` | `peakDischargeM3s` | `[92.7 .. 124.2 .. 159.1] m³/s` | `[80.13 .. 144.7 .. 209.85] m³/s` | `0.51×` |
+| `upland_3h` | `floodAreaHa` | `[1.9 .. 12.7 .. 21.4] ha` | `[10.4 .. 13.7 .. 21.61] ha` | `1.74×` |
+| `upland_3h` | `landslideAreaHa` | `[0.2 .. 1.6 .. 15.3] ha` | `[0.3 .. 1.8 .. 23.1] ha` | `0.66×` |
+| `monsoon_48h` | `peakDischargeM3s` | `[113.5 .. 143.2 .. 174.4] m³/s` | `[87.39 .. 118.15 .. 156.23] m³/s` | `0.88×` |
+| `monsoon_48h` | `floodAreaHa` | `[4.5 .. 17.0 .. 26.7] ha` | `[12.09 .. 15.1 .. 20.3] ha` | `2.70×` |
+| `monsoon_48h` | `landslideAreaHa` | `[0.9 .. 18.8 .. 64.4] ha` | `[1.3 .. 16.9 .. 64.16] ha` | `1.01×` |
 
-**Methodological Implication:** Because the live 7-scenario UI envelope fixes antecedent `P5` at the user-selected value while `N = 500` LHS samples `P5` uniformly across `[20, 150] mm`, the UI envelope captures `0.51–0.67×` of total `upland_3h` variance and `0.88–1.72×` of `monsoon_48h` variance. Meanwhile, Morris/Spearman proves why the participatory Editor & [`FIELD_SURVEY_PROTOCOL.md`](./FIELD_SURVEY_PROTOCOL.md) prioritize **5-day antecedent wetness tracking**, **channel Manning geometry**, **culvert blockage inspections** (threshold interaction `σ = 37.3` in 48h surge), and **soil shear cohesion (`c′`)**: together they drive >80% of output spread.
+**Methodological Implication:** Because the live 7-scenario UI envelope co-varies multiple parameter bounds simultaneously while fixing antecedent `P5` at the user-selected value (whereas `N = 500` LHS samples `P5` uniformly across `[20, 150] mm`), the UI envelope captures `0.51–0.66×` of `upland_3h` discharge/slope variance while bounding `1.74–2.70×` of `floodAreaHa` spread — reinforcing why UI ranges are explicitly labeled *7-scenario sensitivity bounds* rather than statistical P10–P90 percentiles. Meanwhile, Morris/Spearman proves why the participatory Editor & [`FIELD_SURVEY_PROTOCOL.md`](./FIELD_SURVEY_PROTOCOL.md) prioritize **5-day antecedent wetness tracking**, **channel Manning geometry**, **culvert blockage inspections** (threshold interaction `σ = 37.3` in 48h surge), and **soil shear cohesion (`c′`)**: together they drive >80% of output spread.
 
 ---
 
 ## 3. Multi-Source 41-Year Precipitation Cross-Comparison (`1985–2025`)
 
-Comparing three independent open-data baselines at Nagari Balingka (`-0.345, 100.319`):
+Comparing three independent open-data baselines at Nagari Balingka (`-0.345, 100.319`), using finite-sample **SNI 2415:2016** Gumbel parameters (`Yn = 0.5441`, `Sn = 1.1434` at `n = 41`):
 
 | Source | Spatial / Temporal Basis | Mean Annual (mm/yr) | `R24` `T100` Gumbel (mm) | `R48` `T100` Gumbel (mm) | `R72` `T100` Gumbel (mm) |
 |---|---|---|---|---|---|
 | **ERA5-Land Raw** (Open-Meteo) | `~9 km` reanalysis, `41 yr` (`n = 14,975` days) | `3,919` | `241` | `314` | `354` |
 | **ERA5-Land × 1.073 BMKG Bias** *(Model Baseline)* | Scaled by 43-month overlap vs. BMKG `96165` (`735 m`) & `96167` (`128 m`) | `4,203` | `259` (`LP3 238`) | `337` (`LP3 306`) | `380` (`LP3 342`) |
-| **NASA POWER `PRECTOTCORR`** | `~0.5°` MERRA-2 + satellite daily (`1985–2025`, `n = 14,975` days) | `3,419` | `223` (`LP3 239`) | `270` (`LP3 269`) | `307` (`LP3 305`) |
+| **NASA POWER `PRECTOTCORR`** | `~0.5°` MERRA-2 + satellite daily (`1985–2025`, `n = 14,975` days) | `3,419` | `237` (`LP3 239`) | `285` (`LP3 269`) | `324` (`LP3 305`) |
 
-Even between two global daily reanalyses (`ERA5-Land` vs `NASA POWER`), 100-year return depths differ by `14–20%` (`R24`: `259` vs `223 mm`; `R48`: `337` vs `270 mm`), and spatial smoothing at `9–50 km` still misses localized Mt. Singgalang orographic cores — justifying the explicit `±25%` rainfall sensitivity band and `Screening` cap.
+Even between two global daily reanalyses (`ERA5-Land` vs `NASA POWER`), 100-year return depths differ by `9–15%` (`R24`: `259` vs `237 mm`; `R48`: `337` vs `285 mm`), and spatial smoothing at `9–50 km` still misses localized Mt. Singgalang orographic cores — justifying the explicit `±25%` rainfall sensitivity band and `Screening` cap.
 
 ---
 

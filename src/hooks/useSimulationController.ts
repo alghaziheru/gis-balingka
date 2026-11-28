@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { REGION, type RegionConfig } from '../config/region';
 import type { ClimateBaselineData } from '../data/climateBaseline';
-import { CascadeEngine, extractBuildingCentroids, RECESSION_MULTIPLIER } from '../lib/cascadeEngine';
+import { CascadeEngine, computeRecessionDurationMin, extractBuildingCentroids } from '../lib/cascadeEngine';
 import { getMaxRealisticRainMmHr } from '../lib/reachRouter';
 import { computeUplandBounds } from '../lib/flowField';
+import type { CascadeWorkerResponse, PlaybackPoolRings } from '../workers/cascadeWorker';
 import type {
   CalibrationMarkFeature,
   CalibrationProfile,
@@ -14,13 +15,77 @@ import type {
   DrainCondition,
   ForestScenario,
   GeoFeatureCollection,
+  HydrographPoint,
   HyetographType,
   RainPattern,
   SimFieldsData,
   SimMapViewMode,
   SoilMoisture,
+  VerifiedWaterwayFeature,
   ViewMode
 } from '../types/gis';
+
+export const PLAYBACK_SPEEDS = [0.5, 1, 2, 4, 8, 16] as const;
+export type PlaybackSpeed = (typeof PLAYBACK_SPEEDS)[number];
+export const BASE_SIM_MINUTES_PER_SEC = 10;
+const UI_MIN_RECESSION_MIN = 240;
+
+export interface PlaybackHydroGrids {
+  depthGrid: Float32Array | null;
+  runoffGrid: Float32Array | null;
+  pools: PlaybackPoolRings | null;
+  poolsVersion: number;
+}
+
+function buildScenarioKey(p: CascadeSimParams): string {
+  return [
+    p.rainMmHr,
+    p.durationMin,
+    p.soilMoisture,
+    p.antecedent5dMm ?? '',
+    p.rainPattern,
+    p.drainCondition,
+    p.culvertBlockagePct ?? '',
+    p.forestScenario,
+    p.hyetograph ?? '',
+    p.orographicPctPerKm ?? '',
+    p.debrisCoupling ?? '',
+    p.minRecessionMin ?? ''
+  ].join('|');
+}
+
+function sampleHydrographAtTime(
+  points: HydrographPoint[],
+  elapsedMin: number,
+  fallbackRain: number,
+  isRecession: boolean
+): { rainMmHr: number; qM3s: number } {
+  if (!points || points.length === 0) {
+    return { rainMmHr: isRecession ? 0 : fallbackRain, qM3s: 0 };
+  }
+  if (elapsedMin <= points[0].timeMin) {
+    return { rainMmHr: points[0].rainMmHr, qM3s: points[0].qBulkP50 };
+  }
+  const last = points[points.length - 1];
+  if (elapsedMin >= last.timeMin) {
+    return { rainMmHr: last.rainMmHr, qM3s: last.qBulkP50 };
+  }
+  let lo = 0;
+  let hi = points.length - 1;
+  while (lo + 1 < hi) {
+    const mid = (lo + hi) >> 1;
+    if (points[mid].timeMin <= elapsedMin) lo = mid;
+    else hi = mid;
+  }
+  const a = points[lo];
+  const b = points[hi];
+  const span = Math.max(1e-4, b.timeMin - a.timeMin);
+  const t = Math.max(0, Math.min(1, (elapsedMin - a.timeMin) / span));
+  return {
+    rainMmHr: a.rainMmHr + (b.rainMmHr - a.rainMmHr) * t,
+    qM3s: a.qBulkP50 + (b.qBulkP50 - a.qBulkP50) * t
+  };
+}
 
 export function useSimulationController(opts: {
   simFields: SimFieldsData | null;
@@ -30,12 +95,21 @@ export function useSimulationController(opts: {
   region?: RegionConfig;
   calibrationMarks?: CalibrationMarkFeature[];
   calibrationProfile?: CalibrationProfile | null;
+  verifiedWaterways?: VerifiedWaterwayFeature[];
 }) {
   // Interactive Rainfall -> Hydro-Geomorphic Cascade Simulator (calm 00:00 normal baseline)
   const [simPlaying, setSimPlaying] = useState(false);
+  const [playbackSpeed, setPlaybackSpeed] = useState<PlaybackSpeed>(1);
   const [simRain, setSimRain] = useState(15);
   const [simDurationMin, setSimDurationMin] = useState(120);
   const [simProgress, setSimProgress] = useState(0);
+  const speedRef = useRef<PlaybackSpeed>(playbackSpeed);
+  speedRef.current = playbackSpeed;
+  const safeDur = Math.max(15, simDurationMin);
+  const recessionMin = computeRecessionDurationMin(safeDur, UI_MIN_RECESSION_MIN);
+  const totalWindowMin = safeDur + recessionMin;
+  const totalWindowMinRef = useRef(totalWindowMin);
+  totalWindowMinRef.current = totalWindowMin;
   const [soilMoisture, setSoilMoistureState] = useState<SoilMoisture>('moist');
   const [antecedent5dMm, setAntecedent5dMmState] = useState(45);
   const [rainPattern, setRainPattern] = useState<RainPattern>('uniform');
@@ -43,16 +117,14 @@ export function useSimulationController(opts: {
   const [culvertBlockagePct, setCulvertBlockagePct] = useState(5);
   const [structureBlockageOverrides, setStructureBlockageOverrides] = useState<Record<string, number>>({});
   const [forestScenario, setForestScenario] = useState<ForestScenario>('actual');
-  const [hyetograph, setHyetograph] = useState<HyetographType>('uniform');
+  const [hyetograph, setHyetograph] = useState<HyetographType>('alternating_block');
   const [orographicPctPerKm, setOrographicPctPerKm] = useState(15);
   const [stormCore, setStormCore] = useState<[number, number] | null>(null);
   const [debrisCoupling, setDebrisCoupling] = useState<DebrisCouplingMode>('clear');
   const [simMapViewMode, setSimMapViewMode] = useState<SimMapViewMode>('depth');
   const [rainAnimEnabled, setRainAnimEnabled] = useState(true);
-  const [simShowVerifiedWaterways, setSimShowVerifiedWaterways] = useState(true);
-  const [simShowRbiRivers, setSimShowRbiRivers] = useState(true);
+  const [simShowWaterways, setSimShowWaterways] = useState(true);
   const [simShowOsmRoads, setSimShowOsmRoads] = useState(true);
-  const [simShowDemFlows, setSimShowDemFlows] = useState(false);
 
   const setRainSafe = useCallback(
     (rain: number) => {
@@ -111,23 +183,33 @@ export function useSimulationController(opts: {
 
   useEffect(() => {
     if (!simPlaying) return;
+    let rafId = 0;
     let lastTick = performance.now();
-    const id = window.setInterval(() => {
-      const now = performance.now();
-      const dtMs = Math.max(40, Math.min(450, now - lastTick));
+    let accumMs = 0;
+
+    const tick = (now: number) => {
+      const dtMs = Math.max(0, Math.min(80, now - lastTick));
       lastTick = now;
-      const step = dtMs / 11000;
-      setSimProgress(prev => {
-        if (prev >= 1) {
-          setSimPlaying(false);
-          return 1;
-        }
-        const next = Math.min(1, prev + step);
-        if (next >= 1) setSimPlaying(false);
-        return next;
-      });
-    }, 180);
-    return () => window.clearInterval(id);
+      accumMs += dtMs;
+      if (accumMs >= 80) {
+        const simMinDelta = (accumMs / 1000) * BASE_SIM_MINUTES_PER_SEC * speedRef.current;
+        const step = simMinDelta / Math.max(15, totalWindowMinRef.current);
+        accumMs = 0;
+        setSimProgress(prev => {
+          if (prev >= 1) {
+            setSimPlaying(false);
+            return 1;
+          }
+          const next = Math.min(1, prev + step);
+          if (next >= 1) setSimPlaying(false);
+          return next;
+        });
+      }
+      rafId = requestAnimationFrame(tick);
+    };
+
+    rafId = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(rafId);
   }, [simPlaying]);
 
   const buildingCentroids = useMemo(() => extractBuildingCentroids(opts.settlements), [opts.settlements]);
@@ -145,13 +227,112 @@ export function useSimulationController(opts: {
     }
   }, [cascadeEngine, opts.calibrationMarks]);
 
+  const playbackGridsRef = useRef<PlaybackHydroGrids>({
+    depthGrid: null,
+    runoffGrid: null,
+    pools: null,
+    poolsVersion: 0
+  });
+  const workerRef = useRef<Worker | null>(null);
+  const workerBusyRef = useRef(false);
+  const workerReqIdRef = useRef(0);
+  const pendingEvalRef = useRef<CascadeSimParams | null>(null);
+  const [workerResult, setWorkerResult] = useState<{ scenarioKey: string; kpis: CascadeKpis } | null>(null);
+  const lastSyncRef = useRef<{ scenarioKey: string; kpis: CascadeKpis } | null>(null);
+
+  useEffect(() => {
+    if (!opts.simFields || typeof Worker === 'undefined') return;
+    let worker: Worker;
+    try {
+      worker = new Worker(new URL('../workers/cascadeWorker.ts', import.meta.url), { type: 'module' });
+    } catch {
+      return;
+    }
+    workerRef.current = worker;
+    workerBusyRef.current = false;
+    pendingEvalRef.current = null;
+    const totalCrossings =
+      (opts.metadata?.crossingsDetected || 0) + (opts.metadata?.bridgesDetected || 0) || 34;
+
+    worker.onmessage = (e: MessageEvent<CascadeWorkerResponse>) => {
+      const msg = e.data;
+      if (!msg || msg.type !== 'result') return;
+      workerBusyRef.current = false;
+      playbackGridsRef.current = {
+        depthGrid: msg.depthGrid,
+        runoffGrid: msg.runoffGrid,
+        pools: msg.pools ?? null,
+        poolsVersion: playbackGridsRef.current.poolsVersion + 1
+      };
+      setWorkerResult({ scenarioKey: msg.scenarioKey, kpis: msg.kpis });
+
+      const nextParams = pendingEvalRef.current;
+      if (nextParams) {
+        pendingEvalRef.current = null;
+        workerBusyRef.current = true;
+        const reqId = ++workerReqIdRef.current;
+        worker.postMessage({
+          type: 'evaluate',
+          reqId,
+          params: nextParams,
+          nominalOnly: true,
+          skipValidation: true,
+          extractPools: true
+        });
+      }
+    };
+
+    worker.postMessage({
+      type: 'init',
+      fields: opts.simFields,
+      buildingCentroids,
+      totalCrossings,
+      calibrationMarks: opts.calibrationMarks || [],
+      verifiedWaterways: opts.verifiedWaterways || []
+    });
+
+    return () => {
+      pendingEvalRef.current = null;
+      workerBusyRef.current = false;
+      workerRef.current = null;
+      worker.terminate();
+    };
+    // Calibration marks and verified waterways update incrementally via messages below
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [opts.simFields, buildingCentroids, opts.metadata?.crossingsDetected, opts.metadata?.bridgesDetected]);
+
+  useEffect(() => {
+    if (workerRef.current) {
+      workerRef.current.postMessage({
+        type: 'calibrationMarks',
+        calibrationMarks: opts.calibrationMarks || []
+      });
+    }
+  }, [opts.calibrationMarks]);
+
+  useEffect(() => {
+    if (workerRef.current) {
+      workerRef.current.postMessage({
+        type: 'verifiedWaterways',
+        verifiedWaterways: opts.verifiedWaterways || []
+      });
+    }
+  }, [opts.verifiedWaterways]);
+
   const uplandBbox = useMemo(() => (opts.simFields ? computeUplandBounds(opts.simFields) : null), [opts.simFields]);
+
+  // Scale step quantization with simulation window so short (2h) and long (48h) runs update smoothly
+  const playQuantSteps = Math.max(36, Math.min(180, Math.round(totalWindowMin / 18)));
+  const restQuantSteps = Math.max(40, Math.min(180, Math.round(totalWindowMin / 15)));
+  const quantSteps = simPlaying ? playQuantSteps : restQuantSteps;
+  const engineProgress =
+    simProgress <= 0.02 ? 0 : Math.min(1, Math.round(simProgress * quantSteps) / quantSteps);
 
   const cascadeParams: CascadeSimParams = useMemo(
     () => ({
       rainMmHr: simRain,
       durationMin: simDurationMin,
-      progress: simProgress,
+      progress: engineProgress,
       soilMoisture,
       rainPattern,
       drainCondition,
@@ -163,13 +344,14 @@ export function useSimulationController(opts: {
       culvertBlockagePct,
       structureBlockageOverrides,
       debrisCoupling,
+      minRecessionMin: UI_MIN_RECESSION_MIN,
       soilProfile: (opts.region ?? REGION).hydrology?.soilProfile,
       calibrationProfile: opts.calibrationProfile || null
     }),
     [
       simRain,
       simDurationMin,
-      simProgress,
+      engineProgress,
       soilMoisture,
       rainPattern,
       drainCondition,
@@ -186,15 +368,59 @@ export function useSimulationController(opts: {
     ]
   );
 
-  const cascadeKpis: CascadeKpis = useMemo(() => {
-    if (cascadeEngine) {
-      return cascadeEngine.evaluate(cascadeParams);
+  const scenarioKey = useMemo(() => buildScenarioKey(cascadeParams), [cascadeParams]);
+
+  // Dispatch off-thread worker evaluations during active playback so the main thread executes 0 heavy routing passes
+  useEffect(() => {
+    if (!simPlaying) {
+      playbackGridsRef.current = {
+        depthGrid: null,
+        runoffGrid: null,
+        pools: null,
+        poolsVersion: playbackGridsRef.current.poolsVersion + 1
+      };
+      pendingEvalRef.current = null;
+      return;
     }
-    const totalWindowMin = Math.round(simDurationMin * RECESSION_MULTIPLIER);
-    const elapsedMin = totalWindowMin * simProgress;
+    const worker = workerRef.current;
+    if (!worker) return;
+    if (workerBusyRef.current) {
+      pendingEvalRef.current = cascadeParams;
+      return;
+    }
+    workerBusyRef.current = true;
+    const reqId = ++workerReqIdRef.current;
+    worker.postMessage({
+      type: 'evaluate',
+      reqId,
+      params: cascadeParams,
+      nominalOnly: true,
+      skipValidation: true,
+      extractPools: true
+    });
+  }, [simPlaying, cascadeParams]);
+
+  const cascadeKpis: CascadeKpis = useMemo(() => {
+    if (simPlaying && workerRef.current) {
+      if (workerResult && workerResult.scenarioKey === scenarioKey) {
+        return workerResult.kpis;
+      }
+      if (lastSyncRef.current && lastSyncRef.current.scenarioKey === scenarioKey) {
+        return lastSyncRef.current.kpis;
+      }
+    }
+    if (cascadeEngine && !simPlaying) {
+      const res = cascadeEngine.evaluate(cascadeParams);
+      lastSyncRef.current = { scenarioKey, kpis: res };
+      return res;
+    }
+    if (cascadeEngine && simPlaying && !workerRef.current) {
+      return cascadeEngine.evaluate(cascadeParams, { nominalOnly: true, skipValidation: true });
+    }
+    const elapsedMin = totalWindowMin * engineProgress;
     const accumulatedMm = simRain * (Math.min(simDurationMin, elapsedMin) / 60);
     return {
-      stage: simProgress <= 0.02 ? 0 : simProgress <= 0.25 ? 1 : simProgress <= 0.55 ? 2 : simProgress <= 0.82 ? 3 : 4,
+      stage: engineProgress <= 0.02 ? 0 : engineProgress <= 0.25 ? 1 : engineProgress <= 0.55 ? 2 : engineProgress <= 0.82 ? 3 : 4,
       alertLevel: 'normal',
       elapsedMin,
       totalWindowMin,
@@ -238,7 +464,7 @@ export function useSimulationController(opts: {
         affectedBuildingsLandslide: { p10: 0, p50: 0, p90: 0 },
         peakDischargeM3s: { p10: 0, p50: 0, p90: 0 }
       },
-      hydrograph: [],
+      hydrograph: lastSyncRef.current?.kpis.hydrograph ?? [],
       validation: {
         scourCsi: null,
         scourPod: null,
@@ -252,7 +478,34 @@ export function useSimulationController(opts: {
         hwmCount: 0
       }
     };
-  }, [cascadeEngine, cascadeParams, simRain, simDurationMin, simProgress, opts.calibrationMarks]);
+  }, [
+    cascadeEngine,
+    cascadeParams,
+    scenarioKey,
+    simPlaying,
+    workerResult,
+    simRain,
+    simDurationMin,
+    engineProgress,
+    opts.calibrationMarks
+  ]);
+
+  const liveElapsedMin = cascadeKpis.totalWindowMin * simProgress;
+  const liveIsRecession = simProgress > 0.02 && liveElapsedMin > simDurationMin;
+  const liveHydroSample = useMemo(
+    () =>
+      simProgress <= 0.02
+        ? { rainMmHr: 0, qM3s: 0 }
+        : sampleHydrographAtTime(cascadeKpis.hydrograph, liveElapsedMin, simRain, liveIsRecession),
+    [cascadeKpis.hydrograph, liveElapsedMin, simRain, liveIsRecession, simProgress]
+  );
+
+  const cyclePlaybackSpeed = useCallback(() => {
+    setPlaybackSpeed(prev => {
+      const idx = PLAYBACK_SPEEDS.indexOf(prev);
+      return PLAYBACK_SPEEDS[(idx + 1) % PLAYBACK_SPEEDS.length];
+    });
+  }, []);
 
   const togglePlay = useCallback(() => {
     if (simPlaying) {
@@ -275,6 +528,7 @@ export function useSimulationController(opts: {
 
   const applyPreset = useCallback((preset: 'normal' | 'upland' | 'extreme', viewMode: ViewMode) => {
     setSimPlaying(false);
+    setPlaybackSpeed(1);
     setStormCore(null);
     if (preset === 'normal') {
       // BMKG Lebat (15 mm/hr x 2h = 30 mm) — stays contained within incised channels
@@ -286,7 +540,7 @@ export function useSimulationController(opts: {
       setDrainConditionState('cleared');
       setCulvertBlockagePct(5);
       setForestScenario('actual');
-      setHyetograph('uniform');
+      setHyetograph('alternating_block');
       setOrographicPctPerKm(15);
       setDebrisCoupling('clear');
     } else if (preset === 'upland') {
@@ -337,11 +591,18 @@ export function useSimulationController(opts: {
   return {
     simPlaying,
     setSimPlaying,
+    playbackSpeed,
+    setPlaybackSpeed,
+    cyclePlaybackSpeed,
     simRain,
     setSimRain: setRainSafe,
     simDurationMin,
     setSimDurationMin: setDurationSafe,
     simProgress,
+    liveElapsedMin,
+    liveIsRecession,
+    liveRainMmHr: liveHydroSample.rainMmHr,
+    liveDischargeM3s: liveHydroSample.qM3s,
     soilMoisture,
     setSoilMoisture,
     antecedent5dMm,
@@ -369,15 +630,12 @@ export function useSimulationController(opts: {
     setSimMapViewMode,
     rainAnimEnabled,
     setRainAnimEnabled,
-    simShowVerifiedWaterways,
-    setSimShowVerifiedWaterways,
-    simShowRbiRivers,
-    setSimShowRbiRivers,
+    simShowWaterways,
+    setSimShowWaterways,
     simShowOsmRoads,
     setSimShowOsmRoads,
-    simShowDemFlows,
-    setSimShowDemFlows,
     cascadeEngine,
+    playbackGridsRef,
     uplandBbox,
     cascadeParams,
     cascadeKpis,

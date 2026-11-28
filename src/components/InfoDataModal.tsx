@@ -61,6 +61,9 @@ function InfoDataModalContent({
   const isEn = lang === 'en';
   const GITHUB_REPO_URL = region.repositoryUrl;
   const GITHUB_DATA_SOURCES_URL = `${GITHUB_REPO_URL}/blob/main/DATA_SOURCES.md`;
+  const GITHUB_LIMITATIONS_URL = `${GITHUB_REPO_URL}/blob/main/docs/MODEL_LIMITATIONS.md`;
+  const GITHUB_VERIFICATION_URL = `${GITHUB_REPO_URL}/blob/main/docs/VERIFICATION_REPORT.md`;
+  const GITHUB_SURVEY_URL = `${GITHUB_REPO_URL}/blob/main/docs/FIELD_SURVEY_PROTOCOL.md`;
 
   const tabs: { id: InfoModalTab; label: string; Icon: typeof BookOpen }[] = [
     { id: 'guide', label: t.infoTabGuide, Icon: BookOpen },
@@ -406,43 +409,64 @@ function InfoDataModalContent({
                 <div className="mt-1 rounded-lg border border-[#161c1a]/12 bg-white p-3 text-[12px] text-[#434d49]">
                   <strong className="mb-1.5 block text-[12.5px] text-[#161c1a]">
                     {isEn
-                      ? 'Conceptual Priors & Known Model Limitations (What This Model Does NOT Simulate)'
-                      : 'Parameterisasi Konseptual & Batas Model (Yang TIDAK Disimulasikan)'}
+                      ? 'Honest Scope & Known Model Limitations (What This Model Does NOT Simulate)'
+                      : 'Batasan Model Secara Terbuka (Yang TIDAK Disimulasikan)'}
                   </strong>
-                  <ul className="m-0 flex list-disc flex-col gap-1 pl-4.5">
+                  <ul className="m-0 flex list-disc flex-col gap-1.5 pl-4.5">
                     <li>
                       <strong className="text-[#161c1a]">
-                        {isEn ? 'Uncalibrated conceptual priors:' : 'Konstanta konseptual belum terkalibrasi:'}
+                        {isEn ? 'Uncalibrated screening priors (≤44/100 cap):' : 'Prior skrining belum terkalibrasi (batas maks 44/100):'}
                       </strong>{' '}
                       {isEn
-                        ? 'Volcanic Andosol retention multipliers, dual-reservoir interflow lags, and incised bankfull depths are literature-inspired conceptual priors — not site-fitted against live gauges.'
-                        : 'Faktor simpanan tanah Andosol, jeda aliran bawah permukaan, dan kedalaman tampung alur normal merupakan perkiraan konseptual sebelum ada pengukuran AWLR lapangan.'}
+                        ? 'Soil retention, dual-reservoir interflow lags, and regional bankfull depths are conceptual literature priors until verified with field cross-sections, culvert openings, and ≥3 High-Water Marks.'
+                        : 'Faktor simpanan tanah, jeda aliran bawah permukaan, dan kedalaman alur normal masih berupa prior literatur sampai dilengkapi ukuran penampang lapangan, bukaan gorong-gorong, dan ≥3 tanda tinggi air.'}
                     </li>
                     <li>
                       <strong className="text-[#161c1a]">
-                        {isEn ? '1D HAND vs. 2D channel avulsion:' : 'Model 1D HAND (tanpa pindah alur 2D / avulsion):'}
+                        {isEn ? '1D HAND vs. 2D volcanic fan avulsion:' : 'Model 1D HAND (tanpa pindah alur 2D / avulsion):'}
                       </strong>{' '}
                       {isEn
-                        ? 'HAND projects 1D water stage onto nearby valley pixels; it cannot model 2D momentum or debris flows jumping riverbanks down roads.'
-                        : 'HAND memproyeksikan tinggi muka air 1D ke lembah sekitar; tidak mensimulasikan aliran bebas 2D maupun luapan galodo yang berpindah jalur mengikuti badan jalan.'}
+                        ? 'HAND projects 1D reach stage onto static D8 valley cells; it cannot simulate 2D momentum, alluvial-fan spreading, bed aggradation, or debris flows jumping riverbanks down roads.'
+                        : 'HAND memproyeksikan tinggi muka air 1D ke sel lembah D8 statis; tidak mensimulasikan momentum 2D, sebaran kipas aluvial, pendangkalan dasar sungai, maupun luapan galodo yang berpindah ke badan jalan.'}
                     </li>
                     <li>
                       <strong className="text-[#161c1a]">
-                        {isEn ? 'Slope initiation & geometric shadow vs. debris rheology:' : 'Inisiasi lereng & bayangan geometris (bukan reologi lumpur):'}
+                        {isEn ? 'Slope stability & ~20° shadow vs. wet debris rheology:' : 'Stabilitas lereng & bayangan ~20° (bukan reologi lumpur):'}
                       </strong>{' '}
                       {isEn
-                        ? 'Infinite-Slope FoS locates steep initiation zones and traces an indicative ~20° downslope shadow; it does not simulate non-Newtonian boulder transport or exact runout volume.'
-                        : 'Infinite-Slope FoS memetakan lereng awal yang jenuh dan bayangan lintasan ~20°, bukan dinamika material batu/lumpur non-Newtonian maupun jarak endapan pasti.'}
+                        ? 'Infinite-Slope FoS evaluates shallow translational sliding only (no deep rotational slides or volcanic Andosol liquefaction) and traces a single-path ~20° shadow up to ~330 m; real wet debris flows can travel farther at 8°–15°.'
+                        : 'Infinite-Slope FoS hanya mengevaluasi gelinciran dangkal (bukan longsoran dalam atau likuifaksi Andosol) dengan bayangan lintasan tunggal ~20° (~330 m); aliran debris basah nyata dapat melaju lebih jauh pada sudut 8°–15°.'}
                     </li>
                     <li>
                       <strong className="text-[#161c1a]">
-                        {isEn ? 'Snapshot backwater & IDF envelope:' : 'Efek sumbatan snapshot & batas hujan IDF:'}
+                        {isEn ? 'Surge stress-test & coarse daily rainfall:' : 'Skenario lonjakan & hujan harian reanalisis:'}
                       </strong>{' '}
                       {isEn
-                        ? 'Culvert backwater and debris surge are snapshot approximations rather than dynamic dam-break reservoir storage; slider intensity is capped by an upper-bound West Sumatra IDF curve.'
-                        : 'Kenaikan muka air hulu gorong-gorong dan lonjakan sumbatan bersifat perkiraan sesaat (bukan perambatan jebolnya bendungan alami secara dinamis); slider hujan dibatasi kurva wajar IDF.'}
+                        ? 'Detailed-mode Surge applies a scenario downstream pulse rather than dynamic dam-break storage; ERA5-Land (~9 km daily) + Mononobe + 2-yr monthly BMKG scaling smooths localized mountain convective storms.'
+                        : 'Mode Lonjakan menerapkan pulsa skenario hilir (bukan tampungan jebol bendungan dinamis); seri harian ERA5-Land (~9 km) + Mononobe + rasio bulanan BMKG 2 tahun meratakan badai konvektif lokal pegunungan.'}
+                    </li>
+                    <li>
+                      <strong className="text-[#161c1a]">
+                        {isEn ? 'Pattern checks vs. true event validation:' : 'Cek pola spasial vs. validasi kejadian nyata:'}
+                      </strong>{' '}
+                      {isEn
+                        ? 'BPBD Map AUC is a model-to-model intercomparison (not a scar inventory), Sentinel-2 NDVI spans 18.5 months rather than one dated storm, and the Channel Capacity card is a standalone steady-state Manning/Rational quick check.'
+                        : 'AUC Peta BPBD adalah pembandingan antar-model (bukan inventaris titik bekas longsor), NDVI Sentinel-2 mencakup selisih 18,5 bulan, dan kartu Kapasitas Saluran adalah hitungan cepat Manning/Rasional tunak terpisah.'}
                     </li>
                   </ul>
+                  <a
+                    href={GITHUB_LIMITATIONS_URL}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="mt-2 inline-flex items-center gap-1 text-[11.5px] font-bold text-[#0369a1] underline-offset-2 hover:underline"
+                  >
+                    <span>
+                      {isEn
+                        ? 'Read full Model Limitations & Researcher Audit Guide (GitHub)'
+                        : 'Baca dokumen lengkap Batasan Model & Panduan Audit Peneliti (GitHub)'}
+                    </span>
+                    <ExternalLink className="h-3 w-3 shrink-0" />
+                  </a>
                 </div>
 
                 <div
@@ -689,6 +713,48 @@ function InfoDataModalContent({
                       </span>
                     </div>
                   ))}
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-[#0369a1]/22 bg-[#0369a1]/[0.04] p-4">
+                <h3 className="m-0 text-[13.5px] font-bold text-[#161c1a]">
+                  {isEn
+                    ? 'Open Invitation for Hydrologists, Researchers & Field Teams'
+                    : 'Undangan Terbuka untuk Peneliti Hidrologi, Mahasiswa & Tim Lapangan'}
+                </h3>
+                <p className="mt-1 mb-2.5 text-[12.5px] leading-relaxed text-[#434d49]">
+                  {isEn
+                    ? 'Built as an independent open-source civic app by a software developer — not a hydrology institute. Domain experts, university teams, and local volunteers are warmly invited to audit the equations, critique limitations, cross-check against 2D models (HEC-RAS / LISFLOOD-FP), or submit field cross-sections and High-Water Marks.'
+                    : 'Dikembangkan secara terbuka oleh pengembang perangkat lunak (bukan lembaga hidrologi resmi). Peneliti, dosen/mahasiswa, maupun relawan lapangan sangat diundang untuk mengaudit rumus, mengkritisi batasan model, membandingkan dengan model 2D (HEC-RAS / LISFLOOD-FP), atau menambahkan data ukur penampang & tanda tinggi air.'}
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  <a
+                    href={GITHUB_LIMITATIONS_URL}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex min-h-[30px] items-center gap-1.5 rounded-lg border border-[#161c1a]/15 bg-white px-2.5 py-1 text-[11.5px] font-bold text-[#0369a1] hover:border-[#0369a1]/40"
+                  >
+                    <span>{isEn ? 'Model Limitations' : 'Batasan Model'}</span>
+                    <ExternalLink className="h-3 w-3 shrink-0" />
+                  </a>
+                  <a
+                    href={GITHUB_VERIFICATION_URL}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex min-h-[30px] items-center gap-1.5 rounded-lg border border-[#161c1a]/15 bg-white px-2.5 py-1 text-[11.5px] font-bold text-[#0369a1] hover:border-[#0369a1]/40"
+                  >
+                    <span>{isEn ? 'Verification & Sensitivity Report' : 'Laporan Verifikasi & Sensitivitas'}</span>
+                    <ExternalLink className="h-3 w-3 shrink-0" />
+                  </a>
+                  <a
+                    href={GITHUB_SURVEY_URL}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex min-h-[30px] items-center gap-1.5 rounded-lg border border-[#161c1a]/15 bg-white px-2.5 py-1 text-[11.5px] font-bold text-[#0369a1] hover:border-[#0369a1]/40"
+                  >
+                    <span>{isEn ? 'Field Survey Protocol' : 'Protokol Survei Lapangan'}</span>
+                    <ExternalLink className="h-3 w-3 shrink-0" />
+                  </a>
                 </div>
               </div>
 

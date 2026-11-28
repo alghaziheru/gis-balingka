@@ -1,10 +1,12 @@
-import type { Dispatch, MutableRefObject, SetStateAction } from 'react';
+import type { MutableRefObject } from 'react';
 import type { GeoJSONSource, ImageSource, Map as MapLibreMap } from 'maplibre-gl';
 import type { CascadeEngine } from '../../lib/cascadeEngine';
 import type { MergedWaterwayReach } from '../../lib/geometry';
 import { extractFloodPoolPolygons } from '../../lib/poolContours';
 import type {
+  BBox,
   CascadeSimParams,
+  DebrisCouplingMode,
   GeoFeature,
   GeoFeatureCollection,
   LayerToggles,
@@ -19,68 +21,323 @@ import {
   HAND_LAYERS,
   interpolateLine,
   lerpHex,
+  TRANSPARENT_1PX_PNG,
   type LoadedDatasets
 } from './types';
 
-function buildStormCoreGeoJson(stormCore: [number, number] | null | undefined, active: boolean): GeoFeatureCollection {
-  if (!active || !stormCore) return EMPTY_FC;
-  const [lng, lat] = stormCore;
-  const radiusKm = 2.4;
-  const dLat = radiusKm / 111.32;
-  const dLng = radiusKm / (111.32 * Math.max(0.2, Math.cos((lat * Math.PI) / 180)));
-  const ring: [number, number][] = [];
-  const segs = 32;
-  for (let i = 0; i <= segs; i++) {
-    const a = (i / segs) * Math.PI * 2;
-    ring.push([lng + Math.cos(a) * dLng, lat + Math.sin(a) * dLat]);
-  }
+function smoothstep(e0: number, e1: number, x: number): number {
+  const t = Math.max(0, Math.min(1, (x - e0) / Math.max(1e-6, e1 - e0)));
+  return t * t * (3 - 2 * t);
+}
+
+function clamp255(v: number): number {
+  return v < 0 ? 0 : v > 255 ? 255 : Math.round(v);
+}
+
+function sampleBilinear(grid: Float32Array, w: number, h: number, xf: number, yf: number): number {
+  const x = Math.max(0, Math.min(w - 1.0001, xf));
+  const y = Math.max(0, Math.min(h - 1.0001, yf));
+  const x0 = Math.floor(x);
+  const y0 = Math.floor(y);
+  const x1 = Math.min(w - 1, x0 + 1);
+  const y1 = Math.min(h - 1, y0 + 1);
+  const tx = x - x0;
+  const ty = y - y0;
+  const top = grid[y0 * w + x0] * (1 - tx) + grid[y0 * w + x1] * tx;
+  const bot = grid[y1 * w + x0] * (1 - tx) + grid[y1 * w + x1] * tx;
+  return top * (1 - ty) + bot * ty;
+}
+
+type ImageCoords = [[number, number], [number, number], [number, number], [number, number]];
+
+export interface CanvasMorphSlot {
+  canvas: HTMLCanvasElement;
+  current: Uint8ClampedArray;
+  from: Uint8ClampedArray;
+  target: Uint8ClampedArray;
+  timerId: number | null;
+  isEmpty: boolean;
+}
+
+export type CanvasMorphMap = Record<'flood' | 'landslide' | 'agreement', CanvasMorphSlot>;
+
+export function createCanvasMorphMap(handles: {
+  flood: HTMLCanvasElement;
+  landslide: HTMLCanvasElement;
+  agreement: HTMLCanvasElement;
+}): CanvasMorphMap {
+  const makeSlot = (canvas: HTMLCanvasElement): CanvasMorphSlot => {
+    const len = canvas.width * canvas.height * 4;
+    return {
+      canvas,
+      current: new Uint8ClampedArray(len),
+      from: new Uint8ClampedArray(len),
+      target: new Uint8ClampedArray(len),
+      timerId: null,
+      isEmpty: true
+    };
+  };
   return {
-    type: 'FeatureCollection',
-    features: [
-      {
-        type: 'Feature',
-        properties: { kind: 'ring' },
-        geometry: { type: 'Polygon', coordinates: [ring] }
-      },
-      {
-        type: 'Feature',
-        properties: { kind: 'center' },
-        geometry: { type: 'Point', coordinates: [lng, lat] }
-      }
-    ]
+    flood: makeSlot(handles.flood),
+    landslide: makeSlot(handles.landslide),
+    agreement: makeSlot(handles.agreement)
   };
 }
 
-export function syncWaterwaySimStyling(map: MapLibreMap, isRaining: boolean): void {
-  map.setPaintProperty('verified-waterways-casing', 'line-color', [
-    'case',
-    ['==', ['get', 'kind'], 'culvert'],
-    '#334155',
-    isRaining ? '#0c334a' : '#ffffff'
-  ]);
-  map.setPaintProperty(
-    'verified-waterways-casing',
-    'line-width',
-    isRaining
-      ? ['match', ['get', 'kind'], 'river', 7.8, 'stream', 6.0, 'culvert', 5.0, 4.8]
-      : ['match', ['get', 'kind'], 'river', 6.4, 'stream', 5.2, 'culvert', 5.0, 4.2]
+export function disposeCanvasMorphMap(_map: MapLibreMap | null, morphs: CanvasMorphMap | null): void {
+  if (!morphs) return;
+  for (const key of ['flood', 'landslide', 'agreement'] as const) {
+    const slot = morphs[key];
+    if (slot.timerId !== null) {
+      window.clearTimeout(slot.timerId);
+      slot.timerId = null;
+    }
+  }
+}
+
+function stopSlotTimer(slot: CanvasMorphSlot): void {
+  if (slot.timerId !== null) {
+    window.clearTimeout(slot.timerId);
+    slot.timerId = null;
+  }
+}
+
+function pushSlotToImageSource(
+  map: MapLibreMap,
+  slot: CanvasMorphSlot,
+  sourceId: string,
+  imgCoords: ImageCoords,
+  isEmpty: boolean
+): void {
+  const src = map.getSource(sourceId) as ImageSource | undefined;
+  if (!src || typeof src.updateImage !== 'function') return;
+
+  if (isEmpty) {
+    src.updateImage({ url: TRANSPARENT_1PX_PNG, coordinates: imgCoords });
+    return;
+  }
+
+  const ctx = slot.canvas.getContext('2d');
+  if (!ctx) return;
+  const img = ctx.createImageData(slot.canvas.width, slot.canvas.height);
+  img.data.set(slot.current);
+  ctx.putImageData(img, 0, 0);
+  src.updateImage({
+    url: slot.canvas.toDataURL('image/png'),
+    coordinates: imgCoords
+  });
+}
+
+function flushCanvasImmediate(
+  map: MapLibreMap,
+  slot: CanvasMorphSlot,
+  sourceId: string,
+  imgCoords: ImageCoords,
+  nextTarget: Uint8Array | Uint8ClampedArray,
+  isEmpty: boolean
+): void {
+  stopSlotTimer(slot);
+  slot.current.set(nextTarget);
+  slot.from.set(nextTarget);
+  slot.target.set(nextTarget);
+  slot.isEmpty = isEmpty;
+  pushSlotToImageSource(map, slot, sourceId, imgCoords, isEmpty);
+}
+
+function pushBufferToImageSource(
+  map: MapLibreMap,
+  slot: CanvasMorphSlot,
+  sourceId: string,
+  imgCoords: ImageCoords,
+  nextTarget: Uint8Array
+): void {
+  let hasAlpha = false;
+  for (let i = 3; i < nextTarget.length; i += 4) {
+    if (nextTarget[i] > 0) {
+      hasAlpha = true;
+      break;
+    }
+  }
+  if (!hasAlpha && slot.isEmpty) return;
+
+  slot.current.set(nextTarget);
+  slot.isEmpty = !hasAlpha;
+  pushSlotToImageSource(map, slot, sourceId, imgCoords, !hasAlpha);
+}
+
+function renderFilteredDepthRgba(
+  filteredDepth: Float32Array,
+  width: number,
+  height: number,
+  outSize: number,
+  sedimentCv: number,
+  debrisCoupling: DebrisCouplingMode
+): Uint8Array {
+  const rgba = new Uint8Array(outSize * outSize * 4);
+  const turbidity = Math.min(
+    0.42,
+    Math.max(0, (sedimentCv - 0.025) * 3.2) +
+      (debrisCoupling === 'surge' ? 0.22 : debrisCoupling === 'coupled' ? 0.12 : 0)
   );
-  map.setPaintProperty('verified-waterways-casing', 'line-opacity', isRaining ? 0.78 : 0.9);
-  map.setPaintProperty(
-    'verified-waterways-line',
-    'line-width',
-    isRaining
-      ? ['match', ['get', 'kind'], 'river', 4.8, 'stream', 3.5, 2.8]
-      : ['match', ['get', 'kind'], 'river', 3.8, 'stream', 2.8, 2.3]
-  );
-  map.setPaintProperty('verified-waterways-line', 'line-opacity', isRaining ? 0.92 : 0.96);
-  map.setPaintProperty('verified-culverts-line', 'line-opacity', 0.98);
+
+  for (let y = 0; y < outSize; y++) {
+    const yf = (y / Math.max(1, outSize - 1)) * (height - 1);
+    for (let x = 0; x < outSize; x++) {
+      const xf = (x / Math.max(1, outSize - 1)) * (width - 1);
+      const depth = sampleBilinear(filteredDepth, width, height, xf, yf);
+      if (depth <= 0.08) continue;
+
+      const pIdx = (y * outSize + x) * 4;
+      const alpha = smoothstep(0.08, 0.34, depth) * 182;
+      let r: number;
+      let g: number;
+      let b: number;
+      if (depth <= 0.9) {
+        const f = smoothstep(0.12, 0.9, depth);
+        r = 125 * (1 - f) + 14 * f;
+        g = 211 * (1 - f) + 142 * f;
+        b = 252 * (1 - f) + 206 * f;
+      } else {
+        const f = smoothstep(0.9, 2.2, depth);
+        r = 14 * (1 - f) + 3 * f;
+        g = 142 * (1 - f) + 105 * f;
+        b = 206 * (1 - f) + 161 * f;
+      }
+
+      if (turbidity > 0.01) {
+        r = r * (1 - turbidity) + 132 * turbidity;
+        g = g * (1 - turbidity) + 108 * turbidity;
+        b = b * (1 - turbidity) + 84 * turbidity;
+      }
+
+      rgba[pIdx] = clamp255(r);
+      rgba[pIdx + 1] = clamp255(g);
+      rgba[pIdx + 2] = clamp255(b);
+      rgba[pIdx + 3] = clamp255(alpha);
+    }
+  }
+  return rgba;
+}
+
+function buildStormFootprintGeoJson(
+  cp: CascadeSimParams,
+  _uplandBbox: BBox | null | undefined,
+  tab: TabId
+): { fc: GeoFeatureCollection; visible: boolean; hasCenterDot: boolean } {
+  if (tab !== 'sim') {
+    return { fc: EMPTY_FC, visible: false, hasCenterDot: false };
+  }
+  if (cp.rainPattern === 'storm_core' && cp.stormCore) {
+    const [lng, lat] = cp.stormCore;
+    const radiusKm = 2.4;
+    const dLat = radiusKm / 111.32;
+    const dLng = radiusKm / (111.32 * Math.max(0.2, Math.cos((lat * Math.PI) / 180)));
+    const ring: [number, number][] = [];
+    const segs = 32;
+    for (let i = 0; i <= segs; i++) {
+      const a = (i / segs) * Math.PI * 2;
+      ring.push([lng + Math.cos(a) * dLng, lat + Math.sin(a) * dLat]);
+    }
+    return {
+      visible: true,
+      hasCenterDot: true,
+      fc: {
+        type: 'FeatureCollection',
+        features: [
+          {
+            type: 'Feature',
+            properties: { kind: 'ring' },
+            geometry: { type: 'Polygon', coordinates: [ring] }
+          },
+          {
+            type: 'Feature',
+            properties: { kind: 'center' },
+            geometry: { type: 'Point', coordinates: [lng, lat] }
+          }
+        ]
+      }
+    };
+  }
+  return { fc: EMPTY_FC, visible: false, hasCenterDot: false };
+}
+
+function setLayerVisibilityIfChanged(map: MapLibreMap, layerId: string, visible: boolean): void {
+  if (!map.getLayer(layerId)) return;
+  const nextVis = visible ? 'visible' : 'none';
+  if (map.getLayoutProperty(layerId, 'visibility') !== nextVis) {
+    map.setLayoutProperty(layerId, 'visibility', nextVis);
+  }
+}
+
+export function syncWaterwaySimStyling(map: MapLibreMap, tab: TabId, isRaining: boolean): void {
+  if (tab !== 'sim') {
+    map.setPaintProperty('verified-waterways-casing', 'line-color', [
+      'case',
+      ['==', ['get', 'kind'], 'culvert'],
+      '#334155',
+      '#ffffff'
+    ]);
+    map.setPaintProperty(
+      'verified-waterways-casing',
+      'line-width',
+      ['match', ['get', 'kind'], 'river', 6.4, 'stream', 5.2, 'culvert', 5.0, 4.2]
+    );
+    map.setPaintProperty('verified-waterways-casing', 'line-opacity', 0.9);
+    map.setPaintProperty('verified-waterways-line', 'line-color', [
+      'case',
+      ['==', ['get', 'status'], 'clogged'],
+      '#b45309',
+      ['==', ['get', 'status'], 'damaged'],
+      '#c2410c',
+      ['==', ['get', 'status'], 'critical'],
+      '#b91c1c',
+      ['match', ['get', 'kind'], 'canal', '#0d9488', 'drain', '#0d9488', '#0369a1']
+    ]);
+    map.setPaintProperty(
+      'verified-waterways-line',
+      'line-width',
+      ['match', ['get', 'kind'], 'river', 3.8, 'stream', 2.8, 2.3]
+    );
+    map.setPaintProperty('verified-waterways-line', 'line-opacity', 0.96);
+    map.setPaintProperty('verified-culverts-line', 'line-opacity', 0.98);
+    return;
+  }
+
+  // In Simulation, style the single unified solid hydro-blue watershed hierarchy with subtle wet deepening
+  if (map.getLayer('sim-waterways-halo')) {
+    map.setPaintProperty('sim-waterways-halo', 'line-width', isRaining ? 4.8 : 4.4);
+    map.setPaintProperty('sim-waterways-halo', 'line-opacity', isRaining ? 0.36 : 0.28);
+  }
+  if (map.getLayer('sim-waterways-line')) {
+    map.setPaintProperty(
+      'sim-waterways-line',
+      'line-color',
+      isRaining
+        ? ['match', ['get', 'order'], 1, '#154663', 2, '#225c7a', 3, '#33708e', '#4b849e']
+        : ['match', ['get', 'order'], 1, '#1b5270', 2, '#286787', 3, '#3a7a99', '#538ca6']
+    );
+    map.setPaintProperty(
+      'sim-waterways-line',
+      'line-width',
+      isRaining
+        ? ['match', ['get', 'order'], 1, 3.2, 2, 1.9, 3, 1.3, 0.9]
+        : ['match', ['get', 'order'], 1, 2.9, 2, 1.75, 3, 1.2, 0.85]
+    );
+    map.setPaintProperty(
+      'sim-waterways-line',
+      'line-opacity',
+      isRaining
+        ? ['match', ['get', 'order'], 1, 0.96, 2, 0.90, 3, 0.82, 0.62]
+        : ['match', ['get', 'order'], 1, 0.94, 2, 0.88, 3, 0.80, 0.56]
+    );
+  }
 }
 
 export function syncSimulationOverlays(opts: {
   map: MapLibreMap;
   tab: TabId;
   isRaining: boolean;
+  simPlaying: boolean;
   simMapViewMode: SimMapViewMode;
   datasets: LoadedDatasets;
   layers: LayerToggles;
@@ -88,17 +345,18 @@ export function syncSimulationOverlays(opts: {
   simDurationMin: number;
   simProgress: number;
   simScenario: 'clogged' | 'cleared';
+  uplandBbox: BBox | null;
+  meanSedimentCv: number;
   cascadeEngine: CascadeEngine | null;
   cascadeParams: CascadeSimParams;
   verifiedWaterways: VerifiedWaterwayFeature[];
   lastCascadeKeyRef: MutableRefObject<string>;
   lastCascadeTsRef: MutableRefObject<number>;
-  landslideCanvasRef: MutableRefObject<HTMLCanvasElement | null>;
-  agreementCanvasRef: MutableRefObject<HTMLCanvasElement | null>;
-  setPoolGlintPoints: Dispatch<SetStateAction<[number, number][]>>;
+  lastFootprintKeyRef: MutableRefObject<string>;
+  lastPoolEmptyRef: MutableRefObject<{ yard: boolean; knee: boolean; deep: boolean }>;
+  canvasMorphsRef: MutableRefObject<CanvasMorphMap | null>;
 }): () => void {
-  const { map, isRaining, simMapViewMode, tab } = opts;
-  const vis = (on: boolean) => (on ? 'visible' : 'none');
+  const { map, isRaining, simPlaying, simMapViewMode, tab } = opts;
 
   const showFlood = isRaining;
   const useDynamicCascade = Boolean(opts.cascadeEngine);
@@ -114,42 +372,47 @@ export function syncSimulationOverlays(opts: {
   }
   for (const hid of HAND_LAYERS) {
     const isOn = hid === activeHandId;
-    map.setLayoutProperty(hid, 'visibility', vis(isOn));
+    setLayerVisibilityIfChanged(map, hid, isOn);
     if (isOn) map.setPaintProperty(hid, 'raster-opacity', handOpacity);
   }
 
-  // Storm core footprint visual
-  const stormCoreVisible =
-    tab === 'sim' && opts.cascadeParams.rainPattern === 'storm_core' && Boolean(opts.cascadeParams.stormCore);
-  const stormCoreSrc = map.getSource('src-storm-core') as GeoJSONSource | undefined;
-  if (stormCoreSrc) {
-    stormCoreSrc.setData(asGeoInput(buildStormCoreGeoJson(opts.cascadeParams.stormCore, stormCoreVisible)));
+  // Storm footprint (Storm Core or Upland rain focus) — only push GeoJSON when region/mode changes
+  const cpForFootprint = opts.cascadeParams;
+  const footprintCoreKey = cpForFootprint.stormCore
+    ? `${cpForFootprint.stormCore[0].toFixed(4)},${cpForFootprint.stormCore[1].toFixed(4)}`
+    : '';
+  const footprintBboxKey = opts.uplandBbox
+    ? `${opts.uplandBbox.west.toFixed(4)},${opts.uplandBbox.south.toFixed(4)}`
+    : '';
+  const footprintKey = `${tab}|${cpForFootprint.rainPattern}|${footprintCoreKey}|${footprintBboxKey}`;
+  if (footprintKey !== opts.lastFootprintKeyRef.current) {
+    opts.lastFootprintKeyRef.current = footprintKey;
+    const footprint = buildStormFootprintGeoJson(cpForFootprint, opts.uplandBbox, tab);
+    const stormCoreSrc = map.getSource('src-storm-core') as GeoJSONSource | undefined;
+    if (stormCoreSrc) {
+      stormCoreSrc.setData(asGeoInput(footprint.fc));
+    }
+    setLayerVisibilityIfChanged(map, 'storm-core-fill', footprint.visible);
+    setLayerVisibilityIfChanged(map, 'storm-core-ring', footprint.visible);
+    setLayerVisibilityIfChanged(map, 'storm-core-dot', footprint.hasCenterDot);
   }
-  if (map.getLayer('storm-core-fill')) map.setLayoutProperty('storm-core-fill', 'visibility', vis(stormCoreVisible));
-  if (map.getLayer('storm-core-ring')) map.setLayoutProperty('storm-core-ring', 'visibility', vis(stormCoreVisible));
-  if (map.getLayer('storm-core-dot')) map.setLayoutProperty('storm-core-dot', 'visibility', vis(stormCoreVisible));
 
   const showCascadeLayers = showFlood && useDynamicCascade;
   const showSurveyOnly = tab === 'sim' && simMapViewMode === 'survey' && useDynamicCascade;
   const showDepthTiers = showCascadeLayers && simMapViewMode === 'depth';
 
-  map.setLayoutProperty('sim-pools-yard-fill', 'visibility', vis(showDepthTiers));
-  map.setLayoutProperty('sim-pools-yard-outline', 'visibility', vis(showDepthTiers));
-  map.setLayoutProperty('sim-pools-knee-fill', 'visibility', vis(showDepthTiers));
-  map.setLayoutProperty('sim-pools-knee-outline', 'visibility', vis(showDepthTiers));
-  map.setLayoutProperty('sim-pools-deep-fill', 'visibility', vis(showDepthTiers));
-  map.setLayoutProperty(
-    'cascade-agreement-overlay',
-    'visibility',
-    vis(showCascadeLayers && simMapViewMode === 'confidence')
-  );
-  map.setLayoutProperty(
-    'cascade-landslide-overlay',
-    'visibility',
-    vis(showCascadeLayers && simMapViewMode !== 'survey')
-  );
-  map.setLayoutProperty('sim-scour-reaches-line', 'visibility', vis(showCascadeLayers && simMapViewMode === 'scour'));
-  map.setLayoutProperty('sim-survey-reaches-line', 'visibility', vis(showSurveyOnly));
+  setLayerVisibilityIfChanged(map, 'cascade-flood-overlay', showDepthTiers);
+  setLayerVisibilityIfChanged(map, 'sim-pools-yard-fill', showDepthTiers);
+  setLayerVisibilityIfChanged(map, 'sim-pools-yard-outline', showDepthTiers);
+  setLayerVisibilityIfChanged(map, 'sim-pools-knee-fill', showDepthTiers);
+  setLayerVisibilityIfChanged(map, 'sim-pools-knee-outline', showDepthTiers);
+  setLayerVisibilityIfChanged(map, 'sim-pools-deep-fill', showDepthTiers);
+  setLayerVisibilityIfChanged(map, 'cascade-agreement-overlay', showCascadeLayers && simMapViewMode === 'confidence');
+  setLayerVisibilityIfChanged(map, 'cascade-landslide-overlay', showCascadeLayers && simMapViewMode !== 'survey');
+  setLayerVisibilityIfChanged(map, 'sim-scour-reaches-line', showCascadeLayers && simMapViewMode === 'scour');
+  setLayerVisibilityIfChanged(map, 'sim-survey-reaches-line', showSurveyOnly);
+
+  const imgCoords = buildImageCoords(opts.datasets.bbox);
 
   let cascadeTimer: number | null = null;
   if (!showCascadeLayers && !showSurveyOnly) {
@@ -159,15 +422,70 @@ export function syncSimulationOverlays(opts: {
     const deepSrc = map.getSource('src-sim-pools-deep') as GeoJSONSource | undefined;
     const scourSrc = map.getSource('src-sim-scour-reaches') as GeoJSONSource | undefined;
     const surveySrc = map.getSource('src-sim-survey-reaches') as GeoJSONSource | undefined;
-    if (yardSrc) yardSrc.setData(asGeoInput(EMPTY_FC));
-    if (kneeSrc) kneeSrc.setData(asGeoInput(EMPTY_FC));
-    if (deepSrc) deepSrc.setData(asGeoInput(EMPTY_FC));
+    if (yardSrc && !opts.lastPoolEmptyRef.current.yard) {
+      yardSrc.setData(asGeoInput(EMPTY_FC));
+      opts.lastPoolEmptyRef.current.yard = true;
+    }
+    if (kneeSrc && !opts.lastPoolEmptyRef.current.knee) {
+      kneeSrc.setData(asGeoInput(EMPTY_FC));
+      opts.lastPoolEmptyRef.current.knee = true;
+    }
+    if (deepSrc && !opts.lastPoolEmptyRef.current.deep) {
+      deepSrc.setData(asGeoInput(EMPTY_FC));
+      opts.lastPoolEmptyRef.current.deep = true;
+    }
     if (scourSrc) scourSrc.setData(asGeoInput(EMPTY_FC));
     if (surveySrc) surveySrc.setData(asGeoInput(EMPTY_FC));
-    opts.setPoolGlintPoints(prev => (prev.length > 0 ? [] : prev));
+
+    const morphs = opts.canvasMorphsRef.current;
+    if (morphs) {
+      if (!morphs.flood.isEmpty) {
+        flushCanvasImmediate(map, morphs.flood, 'img-cascade-flood', imgCoords, new Uint8Array(morphs.flood.current.length), true);
+      }
+      if (!morphs.landslide.isEmpty) {
+        flushCanvasImmediate(map, morphs.landslide, 'img-cascade-landslide', imgCoords, new Uint8Array(morphs.landslide.current.length), true);
+      }
+      if (!morphs.agreement.isEmpty) {
+        flushCanvasImmediate(map, morphs.agreement, 'img-cascade-agreement', imgCoords, new Uint8Array(morphs.agreement.current.length), true);
+      }
+    }
   } else if (opts.cascadeEngine) {
     const cp = opts.cascadeParams;
     const engine = opts.cascadeEngine;
+
+    // Keep MapLibre WebGL 100% idle during active continuous playback so Canvas2D animations never stall.
+    // Full hi-res 13.8m vector contours & 3D draped rasters update immediately on pause, scrub, or finish.
+    if (simPlaying) {
+      const yardSrc = map.getSource('src-sim-pools-yard') as GeoJSONSource | undefined;
+      const kneeSrc = map.getSource('src-sim-pools-knee') as GeoJSONSource | undefined;
+      const deepSrc = map.getSource('src-sim-pools-deep') as GeoJSONSource | undefined;
+      if (yardSrc && !opts.lastPoolEmptyRef.current.yard) {
+        yardSrc.setData(asGeoInput(EMPTY_FC));
+        opts.lastPoolEmptyRef.current.yard = true;
+      }
+      if (kneeSrc && !opts.lastPoolEmptyRef.current.knee) {
+        kneeSrc.setData(asGeoInput(EMPTY_FC));
+        opts.lastPoolEmptyRef.current.knee = true;
+      }
+      if (deepSrc && !opts.lastPoolEmptyRef.current.deep) {
+        deepSrc.setData(asGeoInput(EMPTY_FC));
+        opts.lastPoolEmptyRef.current.deep = true;
+      }
+      const morphs = opts.canvasMorphsRef.current;
+      if (morphs) {
+        if (!morphs.flood.isEmpty) {
+          flushCanvasImmediate(map, morphs.flood, 'img-cascade-flood', imgCoords, new Uint8Array(morphs.flood.current.length), true);
+        }
+        if (!morphs.landslide.isEmpty) {
+          flushCanvasImmediate(map, morphs.landslide, 'img-cascade-landslide', imgCoords, new Uint8Array(morphs.landslide.current.length), true);
+        }
+        if (!morphs.agreement.isEmpty) {
+          flushCanvasImmediate(map, morphs.agreement, 'img-cascade-agreement', imgCoords, new Uint8Array(morphs.agreement.current.length), true);
+        }
+      }
+      return () => {};
+    }
+
     const ovKey = cp.structureBlockageOverrides
       ? Object.entries(cp.structureBlockageOverrides)
           .sort(([a], [b]) => a.localeCompare(b))
@@ -196,27 +514,61 @@ export function syncSimulationOverlays(opts: {
       simMapViewMode,
       opts.verifiedWaterways.length
     ].join('|');
-    const cacheKey = `${scenarioKey}::${cp.progress.toFixed(3)}`;
-
+    const cacheKey = `${scenarioKey}::${simPlaying ? 'play' : 'rest'}::${cp.progress.toFixed(3)}`;
     const renderCascade = () => {
       opts.lastCascadeKeyRef.current = cacheKey;
       opts.lastCascadeTsRef.current = performance.now();
-      engine.evaluate(cp);
+      engine.evaluate(cp, simPlaying ? { nominalOnly: true, skipValidation: true } : undefined);
 
       const yardSrc = map.getSource('src-sim-pools-yard') as GeoJSONSource | undefined;
       const kneeSrc = map.getSource('src-sim-pools-knee') as GeoJSONSource | undefined;
       const deepSrc = map.getSource('src-sim-pools-deep') as GeoJSONSource | undefined;
       const scourSrc = map.getSource('src-sim-scour-reaches') as GeoJSONSource | undefined;
       const surveySrc = map.getSource('src-sim-survey-reaches') as GeoJSONSource | undefined;
+      const morphs = opts.canvasMorphsRef.current;
 
-      if (showCascadeLayers && simMapViewMode === 'depth') {
+      if (simPlaying) {
+        // Clear vector contour polygons once when entering playback; raster overlays render smoothly at ~2ms
+        if (yardSrc && !opts.lastPoolEmptyRef.current.yard) {
+          yardSrc.setData(asGeoInput(EMPTY_FC));
+          opts.lastPoolEmptyRef.current.yard = true;
+        }
+        if (kneeSrc && !opts.lastPoolEmptyRef.current.knee) {
+          kneeSrc.setData(asGeoInput(EMPTY_FC));
+          opts.lastPoolEmptyRef.current.knee = true;
+        }
+        if (deepSrc && !opts.lastPoolEmptyRef.current.deep) {
+          deepSrc.setData(asGeoInput(EMPTY_FC));
+          opts.lastPoolEmptyRef.current.deep = true;
+        }
+      } else if (showCascadeLayers && simMapViewMode === 'depth') {
         const pools = extractFloodPoolPolygons(engine, opts.verifiedWaterways);
-        if (yardSrc) yardSrc.setData(asGeoInput(pools.yard));
-        if (kneeSrc) kneeSrc.setData(asGeoInput(pools.knee));
-        if (deepSrc) deepSrc.setData(asGeoInput(pools.deep));
-        opts.setPoolGlintPoints(pools.glintPoints);
-      } else {
-        opts.setPoolGlintPoints(prev => (prev.length > 0 ? [] : prev));
+        const yardEmpty = pools.yard.features.length === 0;
+        const kneeEmpty = pools.knee.features.length === 0;
+        const deepEmpty = pools.deep.features.length === 0;
+        if (yardSrc && !(yardEmpty && opts.lastPoolEmptyRef.current.yard)) {
+          yardSrc.setData(asGeoInput(pools.yard));
+          opts.lastPoolEmptyRef.current.yard = yardEmpty;
+        }
+        if (kneeSrc && !(kneeEmpty && opts.lastPoolEmptyRef.current.knee)) {
+          kneeSrc.setData(asGeoInput(pools.knee));
+          opts.lastPoolEmptyRef.current.knee = kneeEmpty;
+        }
+        if (deepSrc && !(deepEmpty && opts.lastPoolEmptyRef.current.deep)) {
+          deepSrc.setData(asGeoInput(pools.deep));
+          opts.lastPoolEmptyRef.current.deep = deepEmpty;
+        }
+        if (morphs) {
+          const floodRgba = renderFilteredDepthRgba(
+            pools.filteredDepth,
+            pools.gridWidth,
+            pools.gridHeight,
+            morphs.flood.canvas.width,
+            opts.meanSedimentCv,
+            cp.debrisCoupling ?? 'clear'
+          );
+          pushBufferToImageSource(map, morphs.flood, 'img-cascade-flood', imgCoords, floodRgba);
+        }
       }
 
       if (simMapViewMode === 'scour' || simMapViewMode === 'survey') {
@@ -225,58 +577,15 @@ export function syncSimulationOverlays(opts: {
         if (surveySrc) surveySrc.setData(asGeoInput(diag.surveyPriorityReaches));
       }
 
-      if (showCascadeLayers) {
-        const outSize = 256;
-        const { landslideRgba, agreementRgba } = engine.renderRgba(outSize);
-        const imgCoords = buildImageCoords(opts.datasets.bbox);
-
-        if (!opts.landslideCanvasRef.current) {
-          const c = document.createElement('canvas');
-          c.width = outSize;
-          c.height = outSize;
-          opts.landslideCanvasRef.current = c;
+      if (showCascadeLayers && morphs) {
+        const outSize = morphs.landslide.canvas.width;
+        const { floodRgba, landslideRgba, agreementRgba } = engine.renderRgba(outSize);
+        if (simPlaying && simMapViewMode === 'depth') {
+          pushBufferToImageSource(map, morphs.flood, 'img-cascade-flood', imgCoords, floodRgba);
         }
-        let hasLandslidePixels = false;
-        for (let ai = 3; ai < landslideRgba.length; ai += 4) {
-          if (landslideRgba[ai] > 0) {
-            hasLandslidePixels = true;
-            break;
-          }
-        }
-        const lsCanvas = opts.landslideCanvasRef.current;
-        if (hasLandslidePixels || lsCanvas.dataset.empty !== '1') {
-          const lCtx = lsCanvas.getContext('2d');
-          if (lCtx) {
-            lCtx.putImageData(new ImageData(new Uint8ClampedArray(landslideRgba), outSize, outSize), 0, 0);
-            const srcLs = map.getSource('img-cascade-landslide') as ImageSource | undefined;
-            if (srcLs && typeof srcLs.updateImage === 'function') {
-              srcLs.updateImage({
-                url: lsCanvas.toDataURL('image/png'),
-                coordinates: imgCoords
-              });
-            }
-          }
-          lsCanvas.dataset.empty = hasLandslidePixels ? '0' : '1';
-        }
-
+        pushBufferToImageSource(map, morphs.landslide, 'img-cascade-landslide', imgCoords, landslideRgba);
         if (simMapViewMode === 'confidence') {
-          if (!opts.agreementCanvasRef.current) {
-            const c = document.createElement('canvas');
-            c.width = outSize;
-            c.height = outSize;
-            opts.agreementCanvasRef.current = c;
-          }
-          const aCtx = opts.agreementCanvasRef.current.getContext('2d');
-          if (aCtx) {
-            aCtx.putImageData(new ImageData(new Uint8ClampedArray(agreementRgba), outSize, outSize), 0, 0);
-            const srcAg = map.getSource('img-cascade-agreement') as ImageSource | undefined;
-            if (srcAg && typeof srcAg.updateImage === 'function') {
-              srcAg.updateImage({
-                url: opts.agreementCanvasRef.current.toDataURL('image/png'),
-                coordinates: imgCoords
-              });
-            }
-          }
+          pushBufferToImageSource(map, morphs.agreement, 'img-cascade-agreement', imgCoords, agreementRgba);
         }
       }
     };
@@ -284,10 +593,11 @@ export function syncSimulationOverlays(opts: {
     if (cacheKey !== opts.lastCascadeKeyRef.current) {
       const isScenarioSwitch = opts.lastCascadeKeyRef.current.split('::')[0] !== scenarioKey;
       const elapsed = performance.now() - opts.lastCascadeTsRef.current;
-      if (isScenarioSwitch || elapsed >= 220) {
+      const throttleMs = simPlaying ? 950 : 60;
+      if (isScenarioSwitch || elapsed >= throttleMs) {
         renderCascade();
       } else {
-        cascadeTimer = window.setTimeout(renderCascade, 225 - elapsed);
+        cascadeTimer = window.setTimeout(renderCascade, throttleMs - elapsed);
       }
     }
   }
@@ -300,9 +610,9 @@ export function syncSimulationOverlays(opts: {
 export function syncStormSky(
   map: MapLibreMap,
   lastSkyKeyRef: MutableRefObject<string>,
-  opts: { tab: TabId; rainAnimEnabled: boolean; simProgress: number; simRain: number }
+  opts: { tab: TabId; rainAnimEnabled: boolean; simProgress: number; simRain: number; isRecession?: boolean }
 ): void {
-  const isStorm = opts.tab === 'sim' && opts.rainAnimEnabled && opts.simProgress > 0.02;
+  const isStorm = opts.tab === 'sim' && opts.rainAnimEnabled && opts.simProgress > 0.02 && !opts.isRecession;
   const rawStormFactor = isStorm
     ? Math.min(1, opts.simRain / 130) * Math.min(1, opts.simProgress * 2.5)
     : 0;
