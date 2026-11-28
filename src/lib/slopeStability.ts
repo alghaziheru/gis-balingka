@@ -118,14 +118,16 @@ export function evaluateSlopeStability(
   const cpCumRainArr = new Float64Array(K);
   const cpInstRainArr = new Float64Array(K);
   const cpElapsedHrArr = new Float64Array(K);
+  const safeDurationMin = Math.max(15, params.durationMin);
   for (let k = 0; k < K; k++) {
     const sIdx = checkpointSteps[k];
-    const cpProg = T > 1 ? sIdx / (T - 1) : 1;
-    cpProgArr[k] = cpProg;
-    cpRampArr[k] = smoothstep(0.06, 0.35, cpProg);
+    const cpTimeMin = hyetographSteps[sIdx]?.timeMin ?? 0;
+    const cpStormFrac = Math.min(1, cpTimeMin / safeDurationMin);
+    cpProgArr[k] = cpStormFrac;
+    cpRampArr[k] = smoothstep(0.06, 0.35, cpStormFrac);
     cpCumRainArr[k] = hyetographSteps[sIdx]?.cumRainMm ?? cumRainMm;
     cpInstRainArr[k] = hyetographSteps[sIdx]?.rainMmHr ?? params.rainMmHr;
-    cpElapsedHrArr[k] = (hyetographSteps[sIdx]?.timeMin ?? 0) / 60;
+    cpElapsedHrArr[k] = cpTimeMin / 60;
   }
 
   const antecedent5d = resolveAntecedent5dMm(params);
@@ -136,8 +138,10 @@ export function evaluateSlopeStability(
   // Base antecedent wetness factor driven by continuous 5-day antecedent rainfall P5 (mm)
   const p5Frac = Math.min(1, antecedent5d / 190);
   const baseWetness = 0.05 + 0.45 * Math.pow(p5Frac, 0.92);
-  const stormRamp = smoothstep(0.06, 0.35, params.progress);
-  const elapsedHr = Math.max(0, (params.durationMin / 60) * Math.min(1, params.progress * 1.15));
+  const targetTimeMin = hyetographSteps[safeTargetStep]?.timeMin ?? safeDurationMin * params.progress;
+  const targetStormFrac = Math.min(1, targetTimeMin / safeDurationMin);
+  const stormRamp = smoothstep(0.06, 0.35, targetStormFrac);
+  const elapsedHr = Math.max(0, targetTimeMin / 60);
   const targetInstRain = hyetographSteps[safeTargetStep]?.rainMmHr ?? params.rainMmHr;
 
   let landslideCellsP10 = 0;

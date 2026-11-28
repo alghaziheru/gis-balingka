@@ -15,6 +15,7 @@ import type {
 import {
   buildHyetograph,
   computeNominalReachSmaHistory,
+  computeRecessionDurationMin,
   estimateReachBankfullDepthM,
   RECESSION_MULTIPLIER,
   resolveHyetograph,
@@ -662,6 +663,7 @@ export class CascadeEngine {
       params.orographicPctPerKm ?? '',
       params.stormCore ? `${params.stormCore[0].toFixed(4)},${params.stormCore[1].toFixed(4)}` : '',
       params.debrisCoupling ?? '',
+      params.minRecessionMin ?? '',
       params.soilProfile ?? '',
       cal ? `${cal.manningMult}|${cal.cnOffset}|${cal.cohesionMult}` : '',
       this.calibrationMarks.length,
@@ -675,19 +677,21 @@ export class CascadeEngine {
     }
 
     const hyetographType = resolveHyetograph(params);
-    const estRecessionMin =
-      params.durationMin >= 720
-        ? Math.round(Math.min(params.durationMin * 0.28, 360))
-        : Math.max(1, Math.round(params.durationMin * (RECESSION_MULTIPLIER - 1)));
+    const minRec = params.minRecessionMin ?? 0;
+    const estRec = computeRecessionDurationMin(params.durationMin, minRec);
+    const estTotalMin = Math.max(15, params.durationMin) + estRec;
     const hyetographStepsCount =
       params.durationMin >= 720
-        ? Math.min(160, Math.max(36, Math.ceil((params.durationMin + estRecessionMin) / 30)))
-        : 28;
+        ? Math.min(160, Math.max(36, Math.ceil(estTotalMin / 30)))
+        : minRec > 0
+          ? Math.min(72, Math.max(28, Math.ceil(estTotalMin / 8)))
+          : 28;
     const { steps, totalWindowMin, dtMin, stormSteps } = buildHyetograph(
       params.rainMmHr,
       params.durationMin,
       hyetographType,
-      hyetographStepsCount
+      hyetographStepsCount,
+      minRec
     );
 
     const elapsedMin = totalWindowMin * p;
@@ -1274,4 +1278,4 @@ export class CascadeEngine {
   }
 }
 
-export { RECESSION_MULTIPLIER };
+export { computeRecessionDurationMin, RECESSION_MULTIPLIER };

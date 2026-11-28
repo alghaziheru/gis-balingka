@@ -1126,6 +1126,7 @@ export function MapView(props: MapViewProps) {
         liveRainMmHr={props.liveRainMmHr}
         durationMin={props.simDurationMin}
         progress={props.simProgress}
+        elapsedMin={props.liveElapsedMin}
         drainCondition={props.cascadeParams.drainCondition}
         debrisCoupling={props.cascadeParams.debrisCoupling ?? 'clear'}
         meanSedimentCv={props.meanSedimentCv}

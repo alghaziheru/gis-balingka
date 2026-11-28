@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { REGION, type RegionConfig } from '../config/region';
 import type { ClimateBaselineData } from '../data/climateBaseline';
-import { CascadeEngine, extractBuildingCentroids, RECESSION_MULTIPLIER } from '../lib/cascadeEngine';
+import { CascadeEngine, computeRecessionDurationMin, extractBuildingCentroids } from '../lib/cascadeEngine';
 import { getMaxRealisticRainMmHr } from '../lib/reachRouter';
 import { computeUplandBounds } from '../lib/flowField';
 import type { CascadeWorkerResponse, PlaybackPoolRings } from '../workers/cascadeWorker';
@@ -28,6 +28,7 @@ import type {
 export const PLAYBACK_SPEEDS = [0.5, 1, 2, 4, 8, 16] as const;
 export type PlaybackSpeed = (typeof PLAYBACK_SPEEDS)[number];
 export const BASE_SIM_MINUTES_PER_SEC = 10;
+const UI_MIN_RECESSION_MIN = 240;
 
 export interface PlaybackHydroGrids {
   depthGrid: Float32Array | null;
@@ -48,7 +49,8 @@ function buildScenarioKey(p: CascadeSimParams): string {
     p.forestScenario,
     p.hyetograph ?? '',
     p.orographicPctPerKm ?? '',
-    p.debrisCoupling ?? ''
+    p.debrisCoupling ?? '',
+    p.minRecessionMin ?? ''
   ].join('|');
 }
 
@@ -104,10 +106,7 @@ export function useSimulationController(opts: {
   const speedRef = useRef<PlaybackSpeed>(playbackSpeed);
   speedRef.current = playbackSpeed;
   const safeDur = Math.max(15, simDurationMin);
-  const recessionMin =
-    safeDur >= 720
-      ? Math.round(Math.min(safeDur * 0.28, 360))
-      : Math.max(1, Math.round(safeDur * (RECESSION_MULTIPLIER - 1)));
+  const recessionMin = computeRecessionDurationMin(safeDur, UI_MIN_RECESSION_MIN);
   const totalWindowMin = safeDur + recessionMin;
   const totalWindowMinRef = useRef(totalWindowMin);
   totalWindowMinRef.current = totalWindowMin;
@@ -118,7 +117,7 @@ export function useSimulationController(opts: {
   const [culvertBlockagePct, setCulvertBlockagePct] = useState(5);
   const [structureBlockageOverrides, setStructureBlockageOverrides] = useState<Record<string, number>>({});
   const [forestScenario, setForestScenario] = useState<ForestScenario>('actual');
-  const [hyetograph, setHyetograph] = useState<HyetographType>('uniform');
+  const [hyetograph, setHyetograph] = useState<HyetographType>('alternating_block');
   const [orographicPctPerKm, setOrographicPctPerKm] = useState(15);
   const [stormCore, setStormCore] = useState<[number, number] | null>(null);
   const [debrisCoupling, setDebrisCoupling] = useState<DebrisCouplingMode>('clear');
@@ -345,6 +344,7 @@ export function useSimulationController(opts: {
       culvertBlockagePct,
       structureBlockageOverrides,
       debrisCoupling,
+      minRecessionMin: UI_MIN_RECESSION_MIN,
       soilProfile: (opts.region ?? REGION).hydrology?.soilProfile,
       calibrationProfile: opts.calibrationProfile || null
     }),
@@ -417,7 +417,6 @@ export function useSimulationController(opts: {
     if (cascadeEngine && simPlaying && !workerRef.current) {
       return cascadeEngine.evaluate(cascadeParams, { nominalOnly: true, skipValidation: true });
     }
-    const totalWindowMin = Math.round(simDurationMin * RECESSION_MULTIPLIER);
     const elapsedMin = totalWindowMin * engineProgress;
     const accumulatedMm = simRain * (Math.min(simDurationMin, elapsedMin) / 60);
     return {
@@ -541,7 +540,7 @@ export function useSimulationController(opts: {
       setDrainConditionState('cleared');
       setCulvertBlockagePct(5);
       setForestScenario('actual');
-      setHyetograph('uniform');
+      setHyetograph('alternating_block');
       setOrographicPctPerKm(15);
       setDebrisCoupling('clear');
     } else if (preset === 'upland') {

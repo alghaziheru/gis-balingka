@@ -23,6 +23,7 @@ interface FlowFilamentOverlayProps {
   liveRainMmHr: number;
   durationMin: number;
   progress: number;
+  elapsedMin?: number;
   drainCondition: DrainCondition;
   debrisCoupling: DebrisCouplingMode;
   meanSedimentCv: number;
@@ -125,6 +126,7 @@ export function FlowFilamentOverlay({
   liveRainMmHr,
   durationMin,
   progress,
+  elapsedMin,
   drainCondition,
   debrisCoupling,
   meanSedimentCv,
@@ -163,6 +165,7 @@ export function FlowFilamentOverlay({
     liveRainMmHr,
     durationMin,
     progress,
+    elapsedMin,
     drainCondition,
     debrisCoupling,
     meanSedimentCv,
@@ -183,6 +186,7 @@ export function FlowFilamentOverlay({
     liveRainMmHr,
     durationMin,
     progress,
+    elapsedMin,
     drainCondition,
     debrisCoupling,
     meanSedimentCv,
@@ -354,10 +358,13 @@ export function FlowFilamentOverlay({
         smoothedSpeedMultRef.current = targetSpeedMult;
       }
       const rainNorm = smoothedRainNormRef.current;
-      const maxTier = st.progress >= 0.3 || st.rainMmHr >= 30 || st.durationMin >= 720 ? 2 : 1;
+      const safeDurMin = Math.max(15, st.durationMin);
+      const activeElapsedMin = st.elapsedMin ?? safeDurMin * st.progress;
+      const stormFrac = Math.min(1, activeElapsedMin / safeDurMin);
+      const maxTier = stormFrac >= 0.3 || st.rainMmHr >= 30 || st.durationMin >= 720 ? 2 : 1;
 
       const refTravel = st.cascadeEngine ? Math.max(18, st.cascadeEngine.fields.p90TravelMin) : 75;
-      const waveFrontMin = Math.max(st.durationMin * st.progress, st.progress * refTravel * 1.32);
+      const waveFrontMin = Math.max(activeElapsedMin, stormFrac * refTravel * 1.32);
       const isClogged = st.drainCondition !== 'cleared';
 
       const sedimentMix = Math.min(
@@ -753,6 +760,7 @@ export function FlowFilamentOverlay({
     active,
     playing,
     progress,
+    elapsedMin,
     rainMmHr,
     liveRainMmHr,
     durationMin,

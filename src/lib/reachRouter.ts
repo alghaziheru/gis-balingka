@@ -148,6 +148,22 @@ export const SIGMA_ENSEMBLE_MEMBERS: EnsembleMemberConfig[] = [
 export const RECESSION_MULTIPLIER = 1.28;
 
 /**
+ * Post-storm drainage recession duration (minutes):
+ * Minimum 4 hours (240 min) so short storms (30m–6h) complete a full rise → peak → recession
+ * hydrograph past Nagari Balingka's ~87 min valley travel lag, scaling up to a bounded
+ * 6-hour (360 min) drainage tail for multi-day monsoons.
+ */
+export function computeRecessionDurationMin(durationMin: number, minRecessionMin = 0): number {
+  const safeDur = Math.max(15, durationMin);
+  const baseRec =
+    safeDur >= 720
+      ? Math.round(Math.min(safeDur * (RECESSION_MULTIPLIER - 1), 360))
+      : Math.max(1, Math.round(safeDur * (RECESSION_MULTIPLIER - 1)));
+  const floorRec = Math.max(0, Math.min(360, Math.round(minRecessionMin)));
+  return Math.max(baseRec, floorRec);
+}
+
+/**
  * Physical upper-bound rainfall intensity envelope (mm/hr) by duration, using region-specific
  * SNI 2415:2016 + Mononobe IDF caps when available (preventing non-physical extreme multi-day totals).
  */
@@ -244,14 +260,11 @@ export function buildHyetograph(
   rainMmHr: number,
   durationMin: number,
   hyetograph: HyetographType,
-  totalSteps = 28
+  totalSteps = 28,
+  minRecessionMin = 0
 ): { steps: HyetographStep[]; totalWindowMin: number; dtMin: number; stormSteps: number } {
   const safeDur = Math.max(15, durationMin);
-  // Multi-day monsoon events use a bounded 6-hour drainage recession instead of scaling linearly
-  const recessionMin =
-    safeDur >= 720
-      ? Math.round(Math.min(safeDur * 0.28, 360))
-      : Math.max(1, Math.round(safeDur * (RECESSION_MULTIPLIER - 1)));
+  const recessionMin = computeRecessionDurationMin(safeDur, minRecessionMin);
   const totalWindowMin = safeDur + recessionMin;
   const dtMin = totalWindowMin / totalSteps;
   const stormSteps = Math.max(4, Math.min(totalSteps - 2, Math.round(safeDur / dtMin)));

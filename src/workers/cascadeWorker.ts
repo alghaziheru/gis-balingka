@@ -79,7 +79,8 @@ function buildScenarioKey(p: CascadeSimParams): string {
     p.forestScenario,
     p.hyetograph ?? '',
     p.orographicPctPerKm ?? '',
-    p.debrisCoupling ?? ''
+    p.debrisCoupling ?? '',
+    p.minRecessionMin ?? ''
   ].join('|');
 }
 

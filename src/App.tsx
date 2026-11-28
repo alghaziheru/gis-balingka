@@ -564,6 +564,7 @@ export function App() {
           simRain={sim.simRain}
           simDurationMin={sim.simDurationMin}
           simProgress={sim.simProgress}
+          liveElapsedMin={sim.liveElapsedMin}
           simPlaying={sim.simPlaying}
           playbackSpeed={sim.playbackSpeed}
           uplandBbox={sim.uplandBbox}

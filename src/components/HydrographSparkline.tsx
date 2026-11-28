@@ -189,13 +189,13 @@ export function HydrographSparkline({
   };
 
   const fmtAxisTime = (min: number) =>
-    min >= 180
+    min >= 120
       ? `${min % 60 === 0 ? min / 60 : (min / 60).toFixed(1)}${isEn ? 'h' : 'j'}`
       : `${min}m`;
   const durLabel = fmtAxisTime(durationMin);
   const totalLabel = fmtAxisTime(totalWindowMin);
   const drainWord = isEn ? 'drain' : 'surut';
-  const showSeparateStormTick = W - padR - stormEndX >= 68;
+  const showSeparateStormTick = stormEndX - padL >= 48 && W - padR - stormEndX >= 68;
 
   return (
     <div className={bare ? '' : 'rounded-lg border border-[#161c1a]/10 bg-[#fafaf8] px-2.5 pt-2 pb-1.5'}>
@@ -217,8 +217,8 @@ export function HydrographSparkline({
                   ? 'Compares rainfall intensity over time (top bars) against modeled channel discharge Q (m³/s) from SCS-CN + 1D Muskingum-Cunge. Shaded band shows a 7-scenario parameter + ±25% rainfall sensitivity spread.'
                   : 'Membandingkan laju hujan dari waktu ke waktu (batang atas) dengan perkiraan debit Q (m³/s) hasil SCS-CN + 1D Muskingum-Cunge. Pita arsiran adalah rentang sensitivitas 7 skenario (parameter + ±25% hujan).'
                 : isEn
-                  ? 'Shows storm rainfall input (top bars) and modeled downstream valley flow curve. Click or drag anywhere on the chart to jump to a timestamp.'
-                  : 'Menampilkan intensitas hujan (batang atas) dan kurva aliran lembah hilir. Klik atau geser grafik untuk melompat ke waktu tertentu.'
+                  ? 'Shows storm rainfall input (top bars) and modeled downstream valley flow curve. Valley flow peaks after upland rain travels downhill, then recedes toward baseline. Click or drag to jump to any timestamp.'
+                  : 'Menampilkan intensitas hujan (batang atas) dan kurva aliran lembah hilir. Puncak aliran lembah datang setelah air dari lereng hulu tiba, lalu surut kembali. Klik atau geser grafik untuk melompat ke waktu tertentu.'
             }
             label={isEn ? 'What is a hydrograph?' : 'Apa itu hidrograf?'}
           />

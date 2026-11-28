@@ -213,6 +213,7 @@ export interface CascadeSimParams {
   culvertBlockagePct?: number;
   structureBlockageOverrides?: Record<string, number>;
   debrisCoupling?: DebrisCouplingMode;
+  minRecessionMin?: number;
   soilProfile?: SoilProfileId;
   calibrationProfile?: CalibrationProfile | null;
 }

@@ -93,6 +93,7 @@ export interface MapViewProps {
   simRain: number;
   simDurationMin: number;
   simProgress: number;
+  liveElapsedMin: number;
   simPlaying: boolean;
   playbackSpeed: number;
   uplandBbox: BBox | null;
