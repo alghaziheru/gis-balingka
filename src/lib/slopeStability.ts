@@ -31,6 +31,7 @@ export interface SlopeStabilityInputs {
 
 export interface SlopeStabilityResult {
   fosP50: Float32Array;
+  minFosP50: Float32Array; // Minimum Factor of Safety reached across all storm checkpoints (for scar validation)
   landslideRiskGrid: Float32Array; // 0..1 instability intensity (strictly leakage-free: zero officialLandslide bias!)
   landslideProbGrid: Float32Array; // 0..1 3-scenario deterministic sensitivity agreement index (not a calibrated probability)
   landslideRunoutGrid: Float32Array; // 0..1 indicative ~20 deg geometric downslope runout shadow
@@ -95,6 +96,7 @@ export function evaluateSlopeStability(
   const { width, height, bbox, minElev } = fields;
   const n = width * height;
   const fosP50 = new Float32Array(n).fill(3.0);
+  const minFosP50 = new Float32Array(n).fill(3.0);
   const landslideRiskGrid = new Float32Array(n);
   const landslideProbGrid = new Float32Array(n);
   const landslideRunoutGrid = new Float32Array(n);
@@ -180,8 +182,14 @@ export function evaluateSlopeStability(
       const sinCosB = tanB / (1 + tanB * tanB);
 
       const defaultSoil = resolveSoilProfile(params.soilProfile);
-      const cellSoil = soilErodibility
-        ? soilErodibility[i] >= 200
+      // Respect explicit non-volcanic presets (e.g. alluvial_clay, karst_limestone) even when regional soil raster exists
+      const useRegionalAndosolSplit =
+        Boolean(soilErodibility) &&
+        (!params.soilProfile ||
+          params.soilProfile === 'volcanic_andosol' ||
+          params.soilProfile === 'cambisol_loam');
+      const cellSoil = useRegionalAndosolSplit
+        ? soilErodibility![i] >= 200
           ? SOIL_PROFILES.volcanic_andosol
           : SOIL_PROFILES.cambisol_loam
         : defaultSoil;
@@ -248,7 +256,9 @@ export function evaluateSlopeStability(
         : baseWetness;
       const mBase = evalWetnessAt(cumRainMm, targetInstRain, elapsedHr, targetSma, nominalMember.rainScale);
       const fosNom = evalCellFos(tanB, sinCosB, zBaseM, gammaS, cBaseKpa, phiBaseDeg, mBase, nominalMember);
-      fosP50[i] = Number(Math.min(5.0, fosNom).toFixed(2));
+      const fosNomClamped = Number(Math.min(5.0, fosNom).toFixed(2));
+      fosP50[i] = fosNomClamped;
+      minFosP50[i] = fosNomClamped;
 
       if (sl < 20) continue; // Only steep slopes (>=20%) contribute to shallow landslide failure & debris yield
 
@@ -294,6 +304,7 @@ export function evaluateSlopeStability(
         const gammaRatio = 9.81 / gammaS;
 
         let cellPeakMob = 0;
+        let cellMinFos = fosNom;
         for (let k = 0; k < K; k++) {
           const cpRamp = cpRampArr[k];
           if (cpRamp > 0.05) {
@@ -309,6 +320,7 @@ export function evaluateSlopeStability(
             );
             const mEffCp = Math.max(0, Math.min(1.0, mCp / ksScaleNom));
             const fosCp = cohesTermNom + fricSlopeNom * Math.max(0.12, 1 - mEffCp * gammaRatio);
+            if (fosCp < cellMinFos) cellMinFos = fosCp;
             if (fosCp < 1.12) {
               const mobCp = invSmoothstep(0.72, 1.12, fosCp) * cpRamp;
               if (mobCp > cellPeakMob) cellPeakMob = mobCp;
@@ -318,6 +330,7 @@ export function evaluateSlopeStability(
             cumSedM3ByCheckpoint[k][rid] += baseCellVol * cellPeakMob;
           }
         }
+        minFosP50[i] = Number(Math.min(5.0, cellMinFos).toFixed(2));
       }
     }
   }
@@ -385,6 +398,7 @@ export function evaluateSlopeStability(
 
   return {
     fosP50,
+    minFosP50,
     landslideRiskGrid,
     landslideProbGrid,
     landslideRunoutGrid,

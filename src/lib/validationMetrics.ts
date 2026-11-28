@@ -29,8 +29,8 @@ export interface ValidationInputs {
 }
 
 /**
- * Deterministic 10x10-cell (~330m) checkerboard spatial block split to eliminate
- * pixel-autocorrelation leakage between bounded calibration and holdout validation.
+ * Deterministic 10x10-cell (~330m) checkerboard spatial block split fallback
+ * when topological reach IDs are unavailable.
  */
 export function isCellInSpatialSplit(
   cellIdx: number,
@@ -43,6 +43,28 @@ export function isCellInSpatialSplit(
   const c = cellIdx - r * width;
   const parity = (Math.floor(r / blockSize) + Math.floor(c / blockSize)) & 1;
   return splitMode === 'calibration' ? parity === 0 : parity === 1;
+}
+
+/**
+ * Reach / sub-catchment holdout split: assigns each entire topological reach and its
+ * draining hillslope strictly to either 'calibration' or 'holdout' (eliminating
+ * hydraulic reach-level spatial autocorrelation leakage across folds).
+ */
+export function isCellInReachSplit(
+  cellIdx: number,
+  width: number,
+  reachId: Uint16Array | null | undefined,
+  splitMode: 'all' | 'calibration' | 'holdout' = 'all'
+): boolean {
+  if (splitMode === 'all') return true;
+  if (reachId && cellIdx >= 0 && cellIdx < reachId.length) {
+    const rid = reachId[cellIdx];
+    if (rid < 65535) {
+      const parity = rid & 1;
+      return splitMode === 'calibration' ? parity === 0 : parity === 1;
+    }
+  }
+  return isCellInSpatialSplit(cellIdx, width, splitMode);
 }
 
 /**
@@ -114,7 +136,7 @@ export function computeValidationMetrics(input: ValidationInputs): ValidationMet
     for (let i = 0; i < n; i++) {
       if (nagariMask && nagariMask[i] === 0) continue;
       if (handDm[i] > 50) continue; // Only active fluvial corridor (HAND <= 5.0 m)
-      if (!isCellInSpatialSplit(i, fields.width, splitMode)) continue;
+      if (!isCellInReachSplit(i, fields.width, reachId, splitMode)) continue;
       const obs = scourMask[i] >= 1;
       if (obs) scourSampleCount++;
 
@@ -148,7 +170,7 @@ export function computeValidationMetrics(input: ValidationInputs): ValidationMet
     // Evaluate across full Nagari territory (off >= 2 Medium/High vs off <= 1 Low/Unmapped)
     for (let i = 0; i < n; i += 2) {
       if (nagariMask && nagariMask[i] === 0) continue;
-      if (!isCellInSpatialSplit(i, fields.width, splitMode)) continue;
+      if (!isCellInReachSplit(i, fields.width, reachId, splitMode)) continue;
       const off = officialLandslide[i];
       const isPos = off >= 2 ? 1 : 0;
       const fos = fosP50[i] || 3.0;
@@ -197,10 +219,12 @@ export function computeValidationMetrics(input: ValidationInputs): ValidationMet
 
     for (const marks of groups.values()) {
       const ref = marks[0].properties;
+      // Evaluate full-storm peak envelope (max_t depth & stream power, min_t FoS) because
+      // field High-Water Marks physically record peak stage reached at any time during the storm
       const sim = evaluateAtStorm({
         rainMmHr: ref.rain_mm_hr,
         durationMin: ref.duration_min,
-        progress: 0.78, // Peak arrival window
+        progress: 1.0,
         soilMoisture:
           ref.antecedent_5d_mm >= 110 ? 'saturated' : ref.antecedent_5d_mm <= 30 ? 'dry' : 'moist',
         antecedent5dMm: ref.antecedent_5d_mm,
@@ -245,7 +269,8 @@ export function computeValidationMetrics(input: ValidationInputs): ValidationMet
     hwmRmseM,
     hwmHitRatePct,
     hwmCount,
-    validationSplit: splitMode
+    validationSplit: splitMode,
+    validationSplitStrategy: reachId ? 'reach' : 'spatial_block'
   };
 }
 

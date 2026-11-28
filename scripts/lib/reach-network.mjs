@@ -15,6 +15,20 @@ import {
 export const SRC_STAGES_M = [0.25, 0.5, 1.0, 1.5, 2.2, 3.0, 4.2, 5.5];
 
 /**
+ * Canonical bankfull incision depth (m) shared identically between SRC construction
+ * and CascadeEngine overbank stage projection (eliminating datum mismatch).
+ */
+export function estimateBankfullDepthM({ measuredDepthM = null, upstreamAreaKm2 = 0.08, waterwayKind = null } = {}) {
+  if (measuredDepthM != null && Number.isFinite(measuredDepthM) && measuredDepthM > 0.2) {
+    return Number(Math.min(2.2, measuredDepthM * 0.85).toFixed(3));
+  }
+  const upA = Math.max(0.08, Number(upstreamAreaKm2) || 0.08);
+  const areaTerm = 0.42 * Math.pow(upA, 0.18);
+  const kindBoost = waterwayKind === 'river' ? 0.12 : 0.0;
+  return Number(Math.max(0.4, Math.min(0.88, areaTerm + kindBoost)).toFixed(3));
+}
+
+/**
  * Pure-Node RGBA/RGB PNG decoder for recovering Sentinel-2 scour masks offline
  * from an existing raster-scour-change.png without external image libraries.
  */
@@ -575,6 +589,8 @@ export function buildReachNetworkAndSrc({
       coords,
       kRef: [],
       topW: [],
+      areaM2: [],
+      bankfullDepthM: 0.45,
       verifiedWaterwayId: null,
       waterwayName: null,
       waterwayKind: null,
@@ -673,7 +689,17 @@ export function buildReachNetworkAndSrc({
   }
 
   // 6. Single-pass full-res accumulation for sub-catchment stats + HAND Synthetic Rating Curves (SRC)
+  // Compute canonical bankfull incision depth per reach BEFORE integrating DEM overbank volume
+  // so Hk <= bfD stays strictly in-channel and Hk > bfD integrates DEM HAND at exact overbank depth (Hk - bfD).
   const S = SRC_STAGES_M.length;
+  const reachBfD = new Float64Array(R);
+  for (let r = 0; r < R; r++) {
+    const reach = reaches[r];
+    const bfD = estimateBankfullDepthM(reach);
+    reachBfD[r] = bfD;
+    reach.bankfullDepthM = bfD;
+  }
+
   const localCells = new Int32Array(R);
   const insideCells = new Int32Array(R);
   const elevSum = new Float64Array(R);
@@ -701,13 +727,15 @@ export function buildReachNetworkAndSrc({
     uplandSum[r] += uplandWeight ? uplandWeight[i] / 255 : 0;
 
     const h = hand[i];
-    if (h <= SRC_STAGES_M[S - 1]) {
+    const bfD = reachBfD[r];
+    const maxOverH = SRC_STAGES_M[S - 1] - bfD;
+    if (maxOverH > 0 && h <= maxOverH) {
       const slopeSec = Math.sqrt(1 + (sl / 100) ** 2);
       const base = r * S;
       for (let k = 0; k < S; k++) {
-        const Hk = SRC_STAGES_M[k];
-        if (h <= Hk) {
-          subVol[base + k] += (Hk - h) * cellAreaM2;
+        const overH = SRC_STAGES_M[k] - bfD;
+        if (overH > 0 && h <= overH) {
+          subVol[base + k] += (overH - h) * cellAreaM2;
           wetSurf[base + k] += cellAreaM2 * slopeSec;
           planArea[base + k] += cellAreaM2;
         }
@@ -730,48 +758,41 @@ export function buildReachNetworkAndSrc({
     // Leopold-Maddock regional hydraulic geometry floor (or field-measured cross-section!)
     const upA = Math.max(0.05, reach.upstreamAreaKm2);
     const bfW = reach.measuredWidthM ?? Math.max(1.2, 1.9 * Math.pow(upA, 0.42));
-    const bfD = reach.measuredDepthM ?? Math.max(0.45, 0.48 * Math.pow(upA, 0.3));
+    const bfD = reachBfD[r];
     const sqrtS = Math.sqrt(reach.slope);
     const L = Math.max(cellSizeX, reach.lengthM);
 
     const kRef = new Array(S);
     const topW = new Array(S);
+    const areaM2 = new Array(S);
     const base = r * S;
     let prevK = 0;
 
     for (let k = 0; k < S; k++) {
       const Hk = SRC_STAGES_M[k];
-      // Sub-grid trapezoidal/rectangular in-channel conveyance for stage up to bankfull depth
+      // Sub-grid incised channel conveyance for stage 0..bfD (bed thalweg -> top of bank = HAND 0)
       const inDepth = Math.min(Hk, bfD);
       const inArea = bfW * inDepth;
       const inPerim = bfW + 2 * inDepth;
 
-      // DEMNAS HAND overbank valley geometry
-      const demArea = subVol[base + k] / L;
-      const demPerim = wetSurf[base + k] / L;
-      const demWidth = planArea[base + k] / L;
+      // DEMNAS HAND overbank valley geometry evaluated strictly at overbank depth (Hk - bfD)
+      const overH = Math.max(0, Hk - bfD);
+      const demOverArea = overH > 0 ? subVol[base + k] / L : 0;
+      const demOverPerim = overH > 0 ? wetSurf[base + k] / L : 0;
+      const demOverWidth = overH > 0 ? planArea[base + k] / L : 0;
 
       let area;
       let perim;
       let widthM;
 
-      if (reach.measuredWidthM != null && reach.measuredDepthM != null) {
-        if (Hk <= bfD) {
-          area = inArea;
-          perim = inPerim;
-          widthM = bfW;
-        } else {
-          const overH = Hk - bfD;
-          const overDemArea = Math.max(0, demArea - inArea * 0.5);
-          area = inArea + Math.max(overDemArea, bfW * overH);
-          perim = Math.max(inPerim, demPerim);
-          widthM = Math.max(bfW, demWidth);
-        }
+      if (overH <= 0) {
+        area = inArea;
+        perim = inPerim;
+        widthM = bfW;
       } else {
-        // Blend sub-grid incised bed floor with full-res DEMNAS valley cross-section
-        area = Math.max(inArea, demArea + inArea * 0.35);
-        perim = Math.max(inPerim, demPerim);
-        widthM = Math.max(bfW, demWidth);
+        area = inArea + Math.max(demOverArea, bfW * overH);
+        perim = inPerim + Math.max(0, demOverPerim - bfW);
+        widthM = Math.max(bfW, demOverWidth);
       }
 
       const rh = area / Math.max(0.5, perim);
@@ -781,10 +802,12 @@ export function buildReachNetworkAndSrc({
 
       kRef[k] = Number(conv.toFixed(3));
       topW[k] = Number(Math.max(1.0, widthM).toFixed(1));
+      areaM2[k] = Number(Math.max(0.15, area).toFixed(2));
     }
 
     reach.kRef = kRef;
     reach.topW = topW;
+    reach.areaM2 = areaM2;
   }
 
   // 7. Attach verified structures & unverified road crossings to their exact reach

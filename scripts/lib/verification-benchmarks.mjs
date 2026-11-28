@@ -4,7 +4,8 @@ import { CascadeEngine, extractBuildingCentroids } from '../../src/lib/cascadeEn
 import {
   buildHyetograph,
   routeReachNetwork,
-  SIGMA_ENSEMBLE_MEMBERS
+  SIGMA_ENSEMBLE_MEMBERS,
+  stepReachSma
 } from '../../src/lib/reachRouter.ts';
 import { buildClimateBaselineFromDailySeries } from './climate-fetcher.mjs';
 import { computeCrossingCapacityM3s, parseStructureOpening } from './reach-network.mjs';
@@ -45,29 +46,24 @@ function verifyScsCnAnalytical({ cn = 72, iaFactor = 0.14 } = {}) {
     const pe = Math.max(0, pTotal - ia);
     const qExact = pe > 0 ? (pe * pe) / (pe + s) : 0;
 
-    // March 28-step uniform storm with midpoint SMA rule (matching reachRouter.ts step formula)
+    // March 28-step uniform storm calling the live production stepReachSma() solver directly
     const steps = 28;
     const dp = pTotal / steps;
-    let iaRem = ia;
-    let fill = 0;
+    const hydro = {
+      reachSpatialMult: new Float32Array([1]),
+      reachS: new Float32Array([s]),
+      reachSoilFill: new Float32Array([0]),
+      initSoilFill: new Float32Array([0]),
+      reachIaRem: new Float32Array([ia]),
+      reachPercolationMmHr: new Float32Array([0]),
+      reachManning: new Float32Array([0.045]),
+      reachHillFastAlpha: new Float32Array([1]),
+      reachHillSlowAlpha: new Float32Array([1])
+    };
     let qSma = 0;
     for (let t = 0; t < steps; t++) {
-      const taken = Math.min(iaRem, dp);
-      iaRem -= taken;
-      const pEff = dp - taken;
-      if (pEff > 0) {
-        const u0 = Math.max(0, Math.min(1, fill / s));
-        const uMid = Math.max(0, Math.min(1, (fill + 0.5 * pEff * (1 - u0) * (1 - u0)) / s));
-        const dq = pEff * (1 - (1 - uMid) * (1 - uMid));
-        const rawFill = fill + (pEff - dq);
-        if (rawFill > s) {
-          qSma += dq + (rawFill - s);
-          fill = s;
-        } else {
-          qSma += dq;
-          fill = rawFill;
-        }
-      }
+      const stepRes = stepReachSma(0, dp, false, 1 / steps, hydro);
+      qSma += stepRes.totalSurfaceRunoffMm + stepRes.returnFlowMm;
     }
     exactList.push(qExact);
     smaList.push(qSma);

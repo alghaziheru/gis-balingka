@@ -188,9 +188,9 @@ function buildTranslations(region: RegionConfig) {
       infoKpiRunoff:
         'Kedalaman limpasan permukaan teoretis (mm) hasil perhitungan rumus SCS Curve Number berdasarkan curah hujan dan tutupan lahan ESA WorldCover.',
       infoKpiTravelTime:
-        'Perhitungan waktu tempuh gelombang aliran dari sel hulu ke hilir berdasarkan jarak penelusuran aliran D8 pada DEM elevasi.',
+        'Jeda waktu dinamis antara puncak/pusat hujan dan puncak debit di alur hilir hasil penelusuran 1D Muskingum-Cunge (kembali ke waktu tempuh topografi D8 saat aliran masih nol).',
       infoChannelCalc:
-        'Rentang ±25% dihitung dari rumus teoretis Manning (n=0,045) & Specific Stream Power. Masukkan ukuran lebar lapangan di Editor → Jalur Air agar perhitungan mengikuti dimensi nyata.',
+        'Hitungan cepat tunak Metode Rasional + Manning (n=0,045) & Specific Stream Power (±25%) yang terpisah dari hidrograf Muskingum-Cunge di atas. Masukkan ukuran lebar lapangan di Editor → Jalur Air agar mengikuti dimensi nyata.',
       infoThresholdOverflow:
         'Perkiraan intensitas hujan teoretis ketika debit hasil rumus Manning mencapai kapasitas penuh penampang saluran.',
       infoThresholdWidening:
@@ -559,9 +559,9 @@ function buildTranslations(region: RegionConfig) {
       infoKpiRunoff:
         'Theoretical surface runoff depth (mm) computed via the SCS Curve Number equation from rainfall input and ESA WorldCover classes.',
       infoKpiTravelTime:
-        'D8 flow travel time computed along elevation gradients on the terrain DEM from upland cells to valley corridors.',
+        'Dynamic hydrograph lag between storm rainfall peak/centroid and modeled outlet peak discharge from 1D Muskingum-Cunge routing (falls back to D8 terrain travel time when dry).',
       infoChannelCalc:
-        '±25% range computed from theoretical Manning (n=0.045) & Specific Stream Power equations. Enter field-measured widths in Editor → Waterways to use real dimensions.',
+        'Standalone steady-state Rational Method + Manning (n=0.045) & Specific Stream Power (±25%) quick check, separate from the transient Muskingum-Cunge hydrograph above. Enter measured widths in Editor → Waterways to use real dimensions.',
       infoThresholdOverflow:
         'Theoretical rainfall input where Manning discharge equals bankfull channel capacity.',
       infoThresholdWidening:

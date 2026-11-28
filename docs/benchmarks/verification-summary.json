@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-26T06:14:40.591Z",
+  "generatedAt": "2026-11-28T02:35:37.201Z",
   "regionId": "nagari-balingka",
   "regionName": "Nagari Balingka",
   "analytical": {
@@ -70,8 +70,8 @@
           "soilStorageDeltaMm": 28.65,
           "deepPercolationMm": 1.841,
           "closureErrorPct": 0,
-          "peakDischargeM3s": 125.8,
-          "floodAreaHa": 2.2,
+          "peakDischargeM3s": 124.2,
+          "floodAreaHa": 12.7,
           "landslideAreaHa": 1.6
         },
         {
@@ -82,24 +82,24 @@
           "soilStorageDeltaMm": 38.849,
           "deepPercolationMm": 25.464,
           "closureErrorPct": 0,
-          "peakDischargeM3s": 140.7,
-          "floodAreaHa": 2.6,
-          "landslideAreaHa": 17.1
+          "peakDischargeM3s": 140.4,
+          "floodAreaHa": 16.9,
+          "landslideAreaHa": 17.3
         }
       ]
     },
     "browserEngineLatencyMs": {
       "normal_2h_dry": {
-        "medianMs": 58.63,
-        "p95Ms": 117.56
+        "medianMs": 59.86,
+        "p95Ms": 120.61
       },
       "upland_3h_clogged": {
-        "medianMs": 48.4,
-        "p95Ms": 52.46
+        "medianMs": 46.77,
+        "p95Ms": 47.81
       },
       "monsoon_48h_surge": {
-        "medianMs": 106.63,
-        "p95Ms": 124.76
+        "medianMs": 100.43,
+        "p95Ms": 122.08
       }
     }
   },
@@ -114,31 +114,31 @@
       "r24": {
         "max41yr": 221,
         "t2": 109,
-        "t10Gumbel": 160,
+        "t10Gumbel": 166,
         "t10Lp3": 159,
-        "t50Gumbel": 204,
+        "t50Gumbel": 216,
         "t50Lp3": 213,
-        "t100Gumbel": 223,
+        "t100Gumbel": 237,
         "t100Lp3": 239
       },
       "r48": {
         "max41yr": 247,
         "t2": 151,
-        "t10Gumbel": 204,
+        "t10Gumbel": 210,
         "t10Lp3": 205,
-        "t50Gumbel": 250,
+        "t50Gumbel": 263,
         "t50Lp3": 250,
-        "t100Gumbel": 270,
+        "t100Gumbel": 285,
         "t100Lp3": 269
       },
       "r72": {
         "max41yr": 275,
         "t2": 171,
-        "t10Gumbel": 231,
+        "t10Gumbel": 239,
         "t10Lp3": 232,
-        "t50Gumbel": 284,
+        "t50Gumbel": 299,
         "t50Lp3": 283,
-        "t100Gumbel": 307,
+        "t100Gumbel": 324,
         "t100Lp3": 305
       }
     },
@@ -147,11 +147,11 @@
       "era5BmkgCorrectedMeanAnnualMm": 4203,
       "nasaPowerMeanAnnualMm": 3419,
       "era5BmkgR24T100": 259,
-      "nasaPowerR24T100": 223,
+      "nasaPowerR24T100": 237,
       "era5BmkgR48T100": 337,
-      "nasaPowerR48T100": 270,
+      "nasaPowerR48T100": 285,
       "era5BmkgR72T100": 380,
-      "nasaPowerR72T100": 307
+      "nasaPowerR72T100": 324
     }
   }
 }

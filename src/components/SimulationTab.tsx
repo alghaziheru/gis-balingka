@@ -1184,7 +1184,9 @@ export function SimulationTab({
                 </div>
               </div>
               <div className="rounded border border-[#161c1a]/8 bg-white px-1.5 py-1">
-                <div className="text-[10.5px] text-[#636f6a]">Agam AUC</div>
+                <div className="text-[10.5px] text-[#636f6a]">
+                  {isEn ? 'BPBD Map AUC' : 'AUC Peta BPBD'}
+                </div>
                 <div className="font-mono-num text-[12px] font-bold text-[#161c1a]">
                   {kpis.validation.landslideAuc != null ? kpis.validation.landslideAuc.toFixed(2) : '—'}
                 </div>
@@ -1198,6 +1200,13 @@ export function SimulationTab({
                 </div>
               </div>
             </div>
+            {kpis.validation.hwmCount === 0 && (
+              <div className="mt-1.5 text-[10.5px] leading-snug text-[#636f6a]">
+                {isEn
+                  ? 'S2 NDVI = 18-mo surface change; BPBD AUC = model-vs-model map intercomparison (not observed scars).'
+                  : 'NDVI S2 = selisih 18 bln; AUC BPBD = pembandingan antar-model peta (bukan inventaris longsor nyata).'}
+              </div>
+            )}
           </div>
         )}
 
@@ -1385,6 +1394,11 @@ export function SimulationTab({
                 </span>
               </div>
             </div>
+            <p className="mt-2 mb-0 text-[10.5px] leading-snug text-[#636f6a]">
+              {isEn
+                ? 'Standalone steady-state Rational Method + Manning quick check (separate from the transient Muskingum-Cunge hydrograph above).'
+                : 'Hitungan cepat tunak Metode Rasional + Manning terpisah dari penelusuran hidrograf Muskingum-Cunge di atas.'}
+            </p>
           </section>
         );
       })()}

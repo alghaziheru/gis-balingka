@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-26T06:14:31.437Z",
+  "generatedAt": "2026-11-28T02:36:11.175Z",
   "nLhs": 500,
   "morrisTrajectories": 12,
   "seed": 20260401,
@@ -25,62 +25,62 @@
         }
       },
       "runtimeMs": {
-        "ui7MemberMs": 185.82,
-        "lhsMs": 11754.1,
-        "morrisMs": 1935.9
+        "ui7MemberMs": 186.31,
+        "lhsMs": 11909.9,
+        "morrisMs": 2012.2
       },
       "distributions": {
         "peakDischargeM3s": {
-          "mean": 147.31,
-          "sd": 48.09,
-          "min": 41.7,
-          "p05": 69.77,
-          "p10": 81.56,
-          "p25": 113.23,
-          "p50": 145.7,
-          "p75": 181.22,
-          "p90": 210.43,
-          "p95": 230.75,
-          "max": 269.7
+          "mean": 146.16,
+          "sd": 48.48,
+          "min": 40.8,
+          "p05": 68.16,
+          "p10": 80.13,
+          "p25": 111.58,
+          "p50": 144.7,
+          "p75": 180.6,
+          "p90": 209.85,
+          "p95": 230.45,
+          "max": 269.6
         },
         "floodAreaHa": {
-          "mean": 4.18,
-          "sd": 3.67,
+          "mean": 14.67,
+          "sd": 4.68,
           "min": 0,
-          "p05": 0,
-          "p10": 0,
-          "p25": 1.6,
-          "p50": 2.7,
-          "p75": 6.12,
-          "p90": 10,
-          "p95": 10.6,
-          "max": 12.9
+          "p05": 8.5,
+          "p10": 10.4,
+          "p25": 12.1,
+          "p50": 13.7,
+          "p75": 17.5,
+          "p90": 21.61,
+          "p95": 22.9,
+          "max": 27.6
         },
         "landslideAreaHa": {
-          "mean": 6.52,
-          "sd": 9.72,
+          "mean": 6.47,
+          "sd": 9.66,
           "min": 0.1,
           "p05": 0.2,
           "p10": 0.3,
           "p25": 0.6,
           "p50": 1.8,
-          "p75": 7.67,
-          "p90": 23.21,
-          "p95": 29.03,
+          "p75": 7.62,
+          "p90": 23.1,
+          "p95": 28.74,
           "max": 47.9
         },
         "affectedBuildingsFlood": {
-          "mean": 24.97,
-          "sd": 17.21,
-          "min": 0,
-          "p05": 0,
-          "p10": 0.9,
-          "p25": 6,
-          "p50": 30.5,
-          "p75": 39,
-          "p90": 44,
-          "p95": 46,
-          "max": 52
+          "mean": 60.5,
+          "sd": 14.05,
+          "min": 10,
+          "p05": 44,
+          "p10": 44,
+          "p25": 51,
+          "p50": 59,
+          "p75": 71,
+          "p90": 82,
+          "p95": 84,
+          "max": 104
         },
         "effectiveRunoffMm": {
           "mean": 72.53,
@@ -98,37 +98,37 @@
       },
       "envelopeComparison": {
         "peakDischargeM3s": {
-          "uiLow": 94.4,
-          "uiCentral": 125.8,
-          "uiHigh": 160.2,
-          "uiSpan": 65.8,
-          "lhsP10": 81.56,
-          "lhsP50": 145.7,
-          "lhsP90": 210.43,
-          "lhsSpan": 128.87,
+          "uiLow": 92.7,
+          "uiCentral": 124.2,
+          "uiHigh": 159.1,
+          "uiSpan": 66.4,
+          "lhsP10": 80.13,
+          "lhsP50": 144.7,
+          "lhsP90": 209.85,
+          "lhsSpan": 129.72,
           "spanCoverageRatio": 0.51
         },
         "floodAreaHa": {
-          "uiLow": 0,
-          "uiCentral": 2.2,
-          "uiHigh": 5.9,
-          "uiSpan": 5.9,
-          "lhsP10": 0,
-          "lhsP50": 2.7,
-          "lhsP90": 10,
-          "lhsSpan": 10,
-          "spanCoverageRatio": 0.59
+          "uiLow": 1.9,
+          "uiCentral": 12.7,
+          "uiHigh": 21.4,
+          "uiSpan": 19.5,
+          "lhsP10": 10.4,
+          "lhsP50": 13.7,
+          "lhsP90": 21.61,
+          "lhsSpan": 11.21,
+          "spanCoverageRatio": 1.74
         },
         "landslideAreaHa": {
           "uiLow": 0.2,
           "uiCentral": 1.6,
-          "uiHigh": 15.6,
-          "uiSpan": 15.4,
+          "uiHigh": 15.3,
+          "uiSpan": 15.1,
           "lhsP10": 0.3,
           "lhsP50": 1.8,
-          "lhsP90": 23.21,
-          "lhsSpan": 22.91,
-          "spanCoverageRatio": 0.67
+          "lhsP90": 23.1,
+          "lhsSpan": 22.8,
+          "spanCoverageRatio": 0.66
         }
       },
       "spearman": {
@@ -136,22 +136,22 @@
           {
             "factorId": "antecedent5dMm",
             "label": "5-Day Antecedent Rain (P5)",
-            "rho": 0.8296,
-            "absRho": 0.8296,
-            "rankSharePct": 70.3
+            "rho": 0.8305,
+            "absRho": 0.8305,
+            "rankSharePct": 70.4
           },
           {
             "factorId": "rainScale",
             "label": "Rainfall Multiplier",
-            "rho": 0.5264,
-            "absRho": 0.5264,
-            "rankSharePct": 28.3
+            "rho": 0.5247,
+            "absRho": 0.5247,
+            "rankSharePct": 28.1
           },
           {
             "factorId": "cnOffset",
             "label": "SCS Curve Number Offset",
-            "rho": 0.0968,
-            "absRho": 0.0968,
+            "rho": 0.0973,
+            "absRho": 0.0973,
             "rankSharePct": 1
           },
           {
@@ -164,9 +164,9 @@
           {
             "factorId": "manningMult",
             "label": "Manning Roughness Multiplier",
-            "rho": 0.0392,
-            "absRho": 0.0392,
-            "rankSharePct": 0.2
+            "rho": 0.0363,
+            "absRho": 0.0363,
+            "rankSharePct": 0.1
           },
           {
             "factorId": "cohesionMult",
@@ -180,43 +180,43 @@
           {
             "factorId": "antecedent5dMm",
             "label": "5-Day Antecedent Rain (P5)",
-            "rho": 0.732,
-            "absRho": 0.732,
-            "rankSharePct": 55.1
-          },
-          {
-            "factorId": "rainScale",
-            "label": "Rainfall Multiplier",
-            "rho": 0.4701,
-            "absRho": 0.4701,
-            "rankSharePct": 22.7
+            "rho": 0.6207,
+            "absRho": 0.6207,
+            "rankSharePct": 39.1
           },
           {
             "factorId": "manningMult",
             "label": "Manning Roughness Multiplier",
-            "rho": 0.4396,
-            "absRho": 0.4396,
-            "rankSharePct": 19.9
+            "rho": 0.5398,
+            "absRho": 0.5398,
+            "rankSharePct": 29.6
+          },
+          {
+            "factorId": "rainScale",
+            "label": "Rainfall Multiplier",
+            "rho": 0.5347,
+            "absRho": 0.5347,
+            "rankSharePct": 29
           },
           {
             "factorId": "cnOffset",
             "label": "SCS Curve Number Offset",
-            "rho": 0.1354,
-            "absRho": 0.1354,
-            "rankSharePct": 1.9
+            "rho": 0.1444,
+            "absRho": 0.1444,
+            "rankSharePct": 2.1
           },
           {
             "factorId": "culvertBlockagePct",
             "label": "Culvert Blockage Ratio",
-            "rho": 0.066,
-            "absRho": 0.066,
-            "rankSharePct": 0.4
+            "rho": 0.0442,
+            "absRho": 0.0442,
+            "rankSharePct": 0.2
           },
           {
             "factorId": "cohesionMult",
             "label": "Soil Cohesion Multiplier",
-            "rho": -0.0016,
-            "absRho": 0.0016,
+            "rho": -0.0029,
+            "absRho": 0.0029,
             "rankSharePct": 0
           }
         ],
@@ -224,43 +224,43 @@
           {
             "factorId": "cohesionMult",
             "label": "Soil Cohesion Multiplier",
-            "rho": -0.9325,
-            "absRho": 0.9325,
+            "rho": -0.9323,
+            "absRho": 0.9323,
             "rankSharePct": 86.8
           },
           {
             "factorId": "rainScale",
             "label": "Rainfall Multiplier",
-            "rho": 0.2658,
-            "absRho": 0.2658,
-            "rankSharePct": 7.1
+            "rho": 0.2655,
+            "absRho": 0.2655,
+            "rankSharePct": 7
           },
           {
             "factorId": "antecedent5dMm",
             "label": "5-Day Antecedent Rain (P5)",
-            "rho": 0.2267,
-            "absRho": 0.2267,
-            "rankSharePct": 5.1
+            "rho": 0.228,
+            "absRho": 0.228,
+            "rankSharePct": 5.2
           },
           {
             "factorId": "culvertBlockagePct",
             "label": "Culvert Blockage Ratio",
-            "rho": -0.0677,
-            "absRho": 0.0677,
-            "rankSharePct": 0.5
+            "rho": -0.0671,
+            "absRho": 0.0671,
+            "rankSharePct": 0.4
           },
           {
             "factorId": "cnOffset",
             "label": "SCS Curve Number Offset",
-            "rho": 0.0553,
-            "absRho": 0.0553,
+            "rho": 0.0552,
+            "absRho": 0.0552,
             "rankSharePct": 0.3
           },
           {
             "factorId": "manningMult",
             "label": "Manning Roughness Multiplier",
-            "rho": 0.0463,
-            "absRho": 0.0463,
+            "rho": 0.0462,
+            "absRho": 0.0462,
             "rankSharePct": 0.2
           }
         ]
@@ -270,41 +270,41 @@
           {
             "factorId": "antecedent5dMm",
             "label": "5-Day Antecedent Rain (P5)",
-            "mu": 133.233,
-            "muStar": 133.233,
-            "sigma": 18.518,
-            "muStarSharePct": 52.4
+            "mu": 134.217,
+            "muStar": 134.217,
+            "sigma": 19.233,
+            "muStarSharePct": 52.2
           },
           {
             "factorId": "rainScale",
             "label": "Rainfall Multiplier",
-            "mu": 96.5,
-            "muStar": 96.5,
-            "sigma": 11.601,
-            "muStarSharePct": 37.9
+            "mu": 97.2,
+            "muStar": 97.2,
+            "sigma": 11.342,
+            "muStarSharePct": 37.8
           },
           {
             "factorId": "cnOffset",
             "label": "SCS Curve Number Offset",
-            "mu": 19.583,
-            "muStar": 19.583,
-            "sigma": 9.535,
+            "mu": 19.667,
+            "muStar": 19.667,
+            "sigma": 9.58,
             "muStarSharePct": 7.7
           },
           {
             "factorId": "manningMult",
             "label": "Manning Roughness Multiplier",
-            "mu": -5.1,
-            "muStar": 5.1,
-            "sigma": 0.793,
-            "muStarSharePct": 2
+            "mu": -5.783,
+            "muStar": 5.783,
+            "sigma": 1.207,
+            "muStarSharePct": 2.3
           },
           {
             "factorId": "cohesionMult",
             "label": "Soil Cohesion Multiplier",
-            "mu": -0.017,
-            "muStar": 0.017,
-            "sigma": 0.058,
+            "mu": -0.033,
+            "muStar": 0.033,
+            "sigma": 0.078,
             "muStarSharePct": 0
           },
           {
@@ -320,42 +320,42 @@
           {
             "factorId": "antecedent5dMm",
             "label": "5-Day Antecedent Rain (P5)",
-            "mu": 7.05,
-            "muStar": 7.05,
-            "sigma": 4.384,
-            "muStarSharePct": 33.7
+            "mu": 9.383,
+            "muStar": 9.383,
+            "sigma": 5.773,
+            "muStarSharePct": 33.2
           },
           {
             "factorId": "manningMult",
             "label": "Manning Roughness Multiplier",
-            "mu": 7.05,
-            "muStar": 7.05,
-            "sigma": 4.026,
-            "muStarSharePct": 33.7
+            "mu": 7.583,
+            "muStar": 7.583,
+            "sigma": 3.65,
+            "muStarSharePct": 26.8
           },
           {
             "factorId": "rainScale",
             "label": "Rainfall Multiplier",
-            "mu": 5,
-            "muStar": 5,
-            "sigma": 3.759,
-            "muStarSharePct": 23.9
+            "mu": 7.25,
+            "muStar": 7.25,
+            "sigma": 3.032,
+            "muStarSharePct": 25.7
           },
           {
             "factorId": "cnOffset",
             "label": "SCS Curve Number Offset",
-            "mu": 1.067,
-            "muStar": 1.133,
-            "sigma": 1.371,
-            "muStarSharePct": 5.4
+            "mu": 2.617,
+            "muStar": 2.617,
+            "sigma": 3.49,
+            "muStarSharePct": 9.3
           },
           {
             "factorId": "culvertBlockagePct",
             "label": "Culvert Blockage Ratio",
-            "mu": 0.617,
-            "muStar": 0.617,
-            "sigma": 0.6,
-            "muStarSharePct": 3
+            "mu": 1.367,
+            "muStar": 1.367,
+            "sigma": 0.957,
+            "muStarSharePct": 4.8
           },
           {
             "factorId": "cohesionMult",
@@ -370,34 +370,34 @@
           {
             "factorId": "cohesionMult",
             "label": "Soil Cohesion Multiplier",
-            "mu": -21.4,
-            "muStar": 21.4,
-            "sigma": 21.65,
-            "muStarSharePct": 53.2
+            "mu": -21.133,
+            "muStar": 21.133,
+            "sigma": 21.654,
+            "muStarSharePct": 52.9
           },
           {
             "factorId": "rainScale",
             "label": "Rainfall Multiplier",
-            "mu": 10.983,
-            "muStar": 10.983,
-            "sigma": 11.96,
-            "muStarSharePct": 27.3
+            "mu": 11.033,
+            "muStar": 11.033,
+            "sigma": 12.039,
+            "muStarSharePct": 27.6
           },
           {
             "factorId": "antecedent5dMm",
             "label": "5-Day Antecedent Rain (P5)",
-            "mu": 6.883,
-            "muStar": 6.883,
-            "sigma": 9.49,
-            "muStarSharePct": 17.1
+            "mu": 6.767,
+            "muStar": 6.767,
+            "sigma": 9.421,
+            "muStarSharePct": 16.9
           },
           {
             "factorId": "cnOffset",
             "label": "SCS Curve Number Offset",
-            "mu": 0.95,
-            "muStar": 0.95,
-            "sigma": 1.502,
-            "muStarSharePct": 2.4
+            "mu": 1.017,
+            "muStar": 1.017,
+            "sigma": 1.451,
+            "muStarSharePct": 2.5
           },
           {
             "factorId": "manningMult",
@@ -439,62 +439,62 @@
         }
       },
       "runtimeMs": {
-        "ui7MemberMs": 236.21,
-        "lhsMs": 16598.2,
-        "morrisMs": 2883.4
+        "ui7MemberMs": 256.84,
+        "lhsMs": 16661.1,
+        "morrisMs": 2762
       },
       "distributions": {
         "peakDischargeM3s": {
-          "mean": 120.11,
-          "sd": 26.4,
-          "min": 67.7,
-          "p05": 84.27,
-          "p10": 87.6,
-          "p25": 99.97,
+          "mean": 119.94,
+          "sd": 26.46,
+          "min": 67.4,
+          "p05": 83.97,
+          "p10": 87.39,
+          "p25": 99.77,
           "p50": 118.15,
-          "p75": 135.83,
-          "p90": 156.53,
-          "p95": 171.3,
+          "p75": 135.72,
+          "p90": 156.23,
+          "p95": 171.2,
           "max": 197.6
         },
         "floodAreaHa": {
-          "mean": 2.14,
-          "sd": 2.16,
-          "min": 0,
-          "p05": 0,
-          "p10": 0,
-          "p25": 1.2,
-          "p50": 1.6,
-          "p75": 2.7,
-          "p90": 4.6,
-          "p95": 6.41,
-          "max": 13.5
+          "mean": 15.86,
+          "sd": 3.39,
+          "min": 2.2,
+          "p05": 10.6,
+          "p10": 12.09,
+          "p25": 13.3,
+          "p50": 15.1,
+          "p75": 18.3,
+          "p90": 20.3,
+          "p95": 21.4,
+          "max": 27
         },
         "landslideAreaHa": {
-          "mean": 25.64,
-          "sd": 25.42,
+          "mean": 25.85,
+          "sd": 25.58,
           "min": 0.4,
           "p05": 0.9,
           "p10": 1.3,
-          "p25": 3.92,
-          "p50": 16.85,
-          "p75": 41.63,
-          "p90": 63.45,
-          "p95": 77.91,
-          "max": 116.2
+          "p25": 4.07,
+          "p50": 16.9,
+          "p75": 42.23,
+          "p90": 64.16,
+          "p95": 78.3,
+          "max": 117
         },
         "affectedBuildingsFlood": {
-          "mean": 18.43,
-          "sd": 19.02,
-          "min": 0,
-          "p05": 1,
-          "p10": 1,
-          "p25": 4,
-          "p50": 7,
-          "p75": 39,
-          "p90": 49,
-          "p95": 52,
-          "max": 59
+          "mean": 64.44,
+          "sd": 10.62,
+          "min": 42,
+          "p05": 51,
+          "p10": 51,
+          "p25": 61,
+          "p50": 61,
+          "p75": 69,
+          "p90": 80,
+          "p95": 88,
+          "max": 101
         },
         "effectiveRunoffMm": {
           "mean": 209.03,
@@ -512,37 +512,37 @@
       },
       "envelopeComparison": {
         "peakDischargeM3s": {
-          "uiLow": 113.9,
-          "uiCentral": 143.5,
-          "uiHigh": 174.5,
-          "uiSpan": 60.6,
-          "lhsP10": 87.6,
+          "uiLow": 113.5,
+          "uiCentral": 143.2,
+          "uiHigh": 174.4,
+          "uiSpan": 60.9,
+          "lhsP10": 87.39,
           "lhsP50": 118.15,
-          "lhsP90": 156.53,
-          "lhsSpan": 68.93,
+          "lhsP90": 156.23,
+          "lhsSpan": 68.84,
           "spanCoverageRatio": 0.88
         },
         "floodAreaHa": {
-          "uiLow": 0.2,
-          "uiCentral": 2.6,
-          "uiHigh": 8.1,
-          "uiSpan": 7.9,
-          "lhsP10": 0,
-          "lhsP50": 1.6,
-          "lhsP90": 4.6,
-          "lhsSpan": 4.6,
-          "spanCoverageRatio": 1.72
+          "uiLow": 4.5,
+          "uiCentral": 17,
+          "uiHigh": 26.7,
+          "uiSpan": 22.2,
+          "lhsP10": 12.09,
+          "lhsP50": 15.1,
+          "lhsP90": 20.3,
+          "lhsSpan": 8.21,
+          "spanCoverageRatio": 2.7
         },
         "landslideAreaHa": {
           "uiLow": 0.9,
-          "uiCentral": 18.7,
-          "uiHigh": 64.1,
-          "uiSpan": 63.2,
+          "uiCentral": 18.8,
+          "uiHigh": 64.4,
+          "uiSpan": 63.5,
           "lhsP10": 1.3,
-          "lhsP50": 16.85,
-          "lhsP90": 63.45,
-          "lhsSpan": 62.15,
-          "spanCoverageRatio": 1.02
+          "lhsP50": 16.9,
+          "lhsP90": 64.16,
+          "lhsSpan": 62.86,
+          "spanCoverageRatio": 1.01
         }
       },
       "spearman": {
@@ -550,43 +550,43 @@
           {
             "factorId": "rainScale",
             "label": "Rainfall Multiplier",
-            "rho": 0.8321,
-            "absRho": 0.8321,
-            "rankSharePct": 80.1
+            "rho": 0.8328,
+            "absRho": 0.8328,
+            "rankSharePct": 80.2
           },
           {
             "factorId": "culvertBlockagePct",
             "label": "Culvert Blockage Ratio",
-            "rho": 0.3722,
-            "absRho": 0.3722,
-            "rankSharePct": 16
+            "rho": 0.3709,
+            "absRho": 0.3709,
+            "rankSharePct": 15.9
           },
           {
             "factorId": "antecedent5dMm",
             "label": "5-Day Antecedent Rain (P5)",
-            "rho": 0.1761,
-            "absRho": 0.1761,
+            "rho": 0.1774,
+            "absRho": 0.1774,
             "rankSharePct": 3.6
           },
           {
             "factorId": "cnOffset",
             "label": "SCS Curve Number Offset",
-            "rho": 0.0438,
-            "absRho": 0.0438,
+            "rho": 0.044,
+            "absRho": 0.044,
             "rankSharePct": 0.2
           },
           {
             "factorId": "manningMult",
             "label": "Manning Roughness Multiplier",
-            "rho": -0.0185,
-            "absRho": 0.0185,
+            "rho": -0.0163,
+            "absRho": 0.0163,
             "rankSharePct": 0
           },
           {
             "factorId": "cohesionMult",
             "label": "Soil Cohesion Multiplier",
-            "rho": -0.008,
-            "absRho": 0.008,
+            "rho": -0.0079,
+            "absRho": 0.0079,
             "rankSharePct": 0
           }
         ],
@@ -594,66 +594,66 @@
           {
             "factorId": "rainScale",
             "label": "Rainfall Multiplier",
-            "rho": 0.6562,
-            "absRho": 0.6562,
-            "rankSharePct": 48.8
+            "rho": 0.702,
+            "absRho": 0.702,
+            "rankSharePct": 52.7
           },
           {
             "factorId": "manningMult",
             "label": "Manning Roughness Multiplier",
-            "rho": 0.5092,
-            "absRho": 0.5092,
-            "rankSharePct": 29.4
+            "rho": 0.5954,
+            "absRho": 0.5954,
+            "rankSharePct": 37.9
           },
           {
             "factorId": "culvertBlockagePct",
             "label": "Culvert Blockage Ratio",
-            "rho": 0.3804,
-            "absRho": 0.3804,
-            "rankSharePct": 16.4
+            "rho": 0.2411,
+            "absRho": 0.2411,
+            "rankSharePct": 6.2
           },
           {
             "factorId": "antecedent5dMm",
             "label": "5-Day Antecedent Rain (P5)",
-            "rho": 0.1973,
-            "absRho": 0.1973,
-            "rankSharePct": 4.4
-          },
-          {
-            "factorId": "cnOffset",
-            "label": "SCS Curve Number Offset",
-            "rho": 0.0807,
-            "absRho": 0.0807,
-            "rankSharePct": 0.7
+            "rho": 0.1415,
+            "absRho": 0.1415,
+            "rankSharePct": 2.1
           },
           {
             "factorId": "cohesionMult",
             "label": "Soil Cohesion Multiplier",
-            "rho": -0.0489,
-            "absRho": 0.0489,
-            "rankSharePct": 0.3
+            "rho": -0.0685,
+            "absRho": 0.0685,
+            "rankSharePct": 0.5
+          },
+          {
+            "factorId": "cnOffset",
+            "label": "SCS Curve Number Offset",
+            "rho": 0.0647,
+            "absRho": 0.0647,
+            "rankSharePct": 0.4
           }
         ],
         "landslideAreaHa": [
           {
             "factorId": "cohesionMult",
             "label": "Soil Cohesion Multiplier",
-            "rho": -0.8866,
-            "absRho": 0.8866,
-            "rankSharePct": 79.3
+            "rho": -0.887,
+            "absRho": 0.887,
+            "rankSharePct": 79.4
           },
           {
             "factorId": "rainScale",
             "label": "Rainfall Multiplier",
-            "rho": 0.4304,
-            "absRho": 0.4304,
-            "rankSharePct": 18.7
+            "rho": 0.4292,
+            "absRho": 0.4292,
+            "rankSharePct": 18.6
           },
           {
             "factorId": "antecedent5dMm",
             "label": "5-Day Antecedent Rain (P5)",
-            "rho": 0.1214,
-            "absRho": 0.1214,
+            "rho": 0.1235,
+            "absRho": 0.1235,
             "rankSharePct": 1.5
           },
           {
@@ -666,15 +666,15 @@
           {
             "factorId": "manningMult",
             "label": "Manning Roughness Multiplier",
-            "rho": 0.0421,
-            "absRho": 0.0421,
+            "rho": 0.0427,
+            "absRho": 0.0427,
             "rankSharePct": 0.2
           },
           {
             "factorId": "cnOffset",
             "label": "SCS Curve Number Offset",
-            "rho": 0.0158,
-            "absRho": 0.0158,
+            "rho": 0.0154,
+            "absRho": 0.0154,
             "rankSharePct": 0
           }
         ]
@@ -684,133 +684,133 @@
           {
             "factorId": "rainScale",
             "label": "Rainfall Multiplier",
-            "mu": 70.267,
-            "muStar": 70.267,
-            "sigma": 8.956,
-            "muStarSharePct": 48.5
+            "mu": 70.517,
+            "muStar": 70.517,
+            "sigma": 9.029,
+            "muStarSharePct": 48.6
           },
           {
             "factorId": "culvertBlockagePct",
             "label": "Culvert Blockage Ratio",
-            "mu": 44.05,
-            "muStar": 44.05,
-            "sigma": 37.274,
-            "muStarSharePct": 30.4
+            "mu": 44.017,
+            "muStar": 44.017,
+            "sigma": 37.325,
+            "muStarSharePct": 30.3
           },
           {
             "factorId": "antecedent5dMm",
             "label": "5-Day Antecedent Rain (P5)",
-            "mu": 19.25,
-            "muStar": 19.25,
-            "sigma": 4.553,
+            "mu": 19.35,
+            "muStar": 19.35,
+            "sigma": 4.634,
             "muStarSharePct": 13.3
           },
           {
             "factorId": "cnOffset",
             "label": "SCS Curve Number Offset",
-            "mu": 9.95,
-            "muStar": 9.95,
-            "sigma": 6.69,
+            "mu": 10.017,
+            "muStar": 10.017,
+            "sigma": 6.721,
             "muStarSharePct": 6.9
           },
           {
             "factorId": "manningMult",
             "label": "Manning Roughness Multiplier",
-            "mu": -0.967,
-            "muStar": 0.967,
-            "sigma": 0.239,
-            "muStarSharePct": 0.7
+            "mu": -0.817,
+            "muStar": 0.817,
+            "sigma": 0.199,
+            "muStarSharePct": 0.6
           },
           {
             "factorId": "cohesionMult",
             "label": "Soil Cohesion Multiplier",
-            "mu": -0.417,
-            "muStar": 0.417,
-            "sigma": 1.104,
+            "mu": -0.467,
+            "muStar": 0.467,
+            "sigma": 1.103,
             "muStarSharePct": 0.3
           }
         ],
         "floodAreaHa": [
           {
-            "factorId": "manningMult",
-            "label": "Manning Roughness Multiplier",
-            "mu": 4.85,
-            "muStar": 4.85,
-            "sigma": 4.842,
-            "muStarSharePct": 36.9
-          },
-          {
             "factorId": "rainScale",
             "label": "Rainfall Multiplier",
-            "mu": 3.95,
-            "muStar": 3.95,
-            "sigma": 2.247,
-            "muStarSharePct": 30.1
+            "mu": 8.133,
+            "muStar": 8.133,
+            "sigma": 3.072,
+            "muStarSharePct": 31.5
+          },
+          {
+            "factorId": "manningMult",
+            "label": "Manning Roughness Multiplier",
+            "mu": 7.767,
+            "muStar": 7.767,
+            "sigma": 1.77,
+            "muStarSharePct": 30
           },
           {
             "factorId": "culvertBlockagePct",
             "label": "Culvert Blockage Ratio",
-            "mu": 2.883,
-            "muStar": 2.883,
-            "sigma": 4.759,
-            "muStarSharePct": 22
+            "mu": 4.683,
+            "muStar": 4.683,
+            "sigma": 3.893,
+            "muStarSharePct": 18.1
           },
           {
             "factorId": "antecedent5dMm",
             "label": "5-Day Antecedent Rain (P5)",
-            "mu": 1,
-            "muStar": 1,
-            "sigma": 1.404,
-            "muStarSharePct": 7.6
+            "mu": 3.1,
+            "muStar": 3.1,
+            "sigma": 3.478,
+            "muStarSharePct": 12
           },
           {
             "factorId": "cnOffset",
             "label": "SCS Curve Number Offset",
-            "mu": 0.4,
-            "muStar": 0.4,
-            "sigma": 0.844,
-            "muStarSharePct": 3
+            "mu": 1.7,
+            "muStar": 1.767,
+            "sigma": 2.008,
+            "muStarSharePct": 6.8
           },
           {
             "factorId": "cohesionMult",
             "label": "Soil Cohesion Multiplier",
-            "mu": -0.05,
-            "muStar": 0.05,
-            "sigma": 0.124,
-            "muStarSharePct": 0.4
+            "mu": -0.333,
+            "muStar": 0.4,
+            "sigma": 0.561,
+            "muStarSharePct": 1.5
           }
         ],
         "landslideAreaHa": [
           {
             "factorId": "cohesionMult",
             "label": "Soil Cohesion Multiplier",
-            "mu": -66.517,
-            "muStar": 66.517,
-            "sigma": 30.19,
-            "muStarSharePct": 56.1
+            "mu": -66.933,
+            "muStar": 66.933,
+            "sigma": 30.431,
+            "muStarSharePct": 56
           },
           {
             "factorId": "rainScale",
             "label": "Rainfall Multiplier",
-            "mu": 41.05,
-            "muStar": 41.05,
-            "sigma": 26.451,
+            "mu": 41.3,
+            "muStar": 41.3,
+            "sigma": 26.666,
             "muStarSharePct": 34.6
           },
           {
             "factorId": "antecedent5dMm",
             "label": "5-Day Antecedent Rain (P5)",
-            "mu": 9.483,
-            "muStar": 9.483,
-            "sigma": 8.597,
-            "muStarSharePct": 8
+            "mu": 9.633,
+            "muStar": 9.633,
+            "sigma": 8.426,
+            "muStarSharePct": 8.1
           },
           {
             "factorId": "cnOffset",
             "label": "SCS Curve Number Offset",
-            "mu": 1.6,
-            "muStar": 1.6,
-            "sigma": 1.629,
+            "mu": 1.567,
+            "muStar": 1.567,
+            "sigma": 1.778,
             "muStarSharePct": 1.3
           },
           {

@@ -611,6 +611,151 @@ export class CascadeEngine {
     };
   }
 
+  /**
+   * Evaluates full-storm peak envelope (max_t depth & stream power, min_t FoS) on the nominal
+   * member across all timesteps for unbiased High-Water Mark / scour / landslide-scar scoring.
+   */
+  evaluatePeakEnvelopeAtStorm(stormParams: CascadeSimParams): {
+    sampleAtLngLat: (lng: number, lat: number) => {
+      depthM: number;
+      streamPowerWm2: number;
+      fos: number;
+    };
+  } {
+    const net = this.fields.network;
+    if (!net || !this.reachId) {
+      return { sampleAtLngLat: () => ({ depthM: 0, streamPowerWm2: 0, fos: 3.0 }) };
+    }
+    const R = net.reachCount;
+    const hyetographType = resolveHyetograph(stormParams);
+    const minRec = Math.max(stormParams.minRecessionMin ?? 0, 120);
+    const estRec = computeRecessionDurationMin(stormParams.durationMin, minRec);
+    const estTotalMin = Math.max(15, stormParams.durationMin) + estRec;
+    const hyetographStepsCount =
+      stormParams.durationMin >= 720
+        ? Math.min(160, Math.max(36, Math.ceil(estTotalMin / 30)))
+        : Math.min(72, Math.max(28, Math.ceil(estTotalMin / 8)));
+    const { steps, dtMin, stormSteps } = buildHyetograph(
+      stormParams.rainMmHr,
+      stormParams.durationMin,
+      hyetographType,
+      hyetographStepsCount,
+      minRec
+    );
+    const stormEndIdx = Math.max(0, Math.min(steps.length - 1, stormSteps - 1));
+    const smaHistory = computeNominalReachSmaHistory({
+      network: net,
+      minElevM: this.fields.minElev,
+      params: stormParams,
+      hyetographSteps: steps,
+      dtMin
+    });
+    const slopeRes = evaluateSlopeStability(
+      {
+        fields: this.fields,
+        elevM: this.elevM,
+        slopePct: this.slopePct,
+        twi: this.twi,
+        curvature: this.curvature,
+        soilDepthCm: this.soilDepthCm,
+        geologyFactor: this.geologyFactor,
+        soilErodibility: this.soilErodibility,
+        rootCohesion: this.rootCohesion,
+        isForest: this.isForest,
+        uplandWeight: this.uplandWeight,
+        reachId: this.reachId,
+        nagariMask: this.nagariMask,
+        params: { ...stormParams, progress: 1.0 },
+        hyetographSteps: steps,
+        targetStepIdx: stormEndIdx,
+        reachSmaFillSeries: smaHistory.smaFillSeries,
+        cumRainMm: steps[stormEndIdx].cumRainMm,
+        cellAreaM2: this.cellAreaM2
+      },
+      SIGMA_ENSEMBLE_MEMBERS[0],
+      SIGMA_ENSEMBLE_MEMBERS[5],
+      SIGMA_ENSEMBLE_MEMBERS[6],
+      R
+    );
+    const routed = routeReachNetwork({
+      network: net,
+      minElevM: this.fields.minElev,
+      params: { ...stormParams, progress: 1.0 },
+      member: SIGMA_ENSEMBLE_MEMBERS[0],
+      hyetographSteps: steps,
+      dtMin,
+      targetStepIdx: steps.length - 1,
+      reachSedimentSeries: {
+        checkpointSteps: slopeRes.checkpointSteps,
+        cumSedM3ByCheckpoint: slopeRes.cumSedM3ByCheckpoint
+      },
+      trackPeakEnvelope: true
+    });
+
+    const { width, height, bbox } = this.fields;
+    return {
+      sampleAtLngLat: (lng: number, lat: number) => {
+        if (lng < bbox.west || lng > bbox.east || lat < bbox.south || lat > bbox.north) {
+          return { depthM: 0, streamPowerWm2: 0, fos: 3.0 };
+        }
+        let hCol = -1;
+        let hRow = -1;
+        let col: number;
+        let row: number;
+        if (this.hiResHandDm && this.hiResW > 0 && this.hiResH > 0) {
+          hCol = Math.max(
+            0,
+            Math.min(this.hiResW - 1, Math.floor(((lng - bbox.west) / (bbox.east - bbox.west)) * this.hiResW))
+          );
+          hRow = Math.max(
+            0,
+            Math.min(this.hiResH - 1, Math.floor(((bbox.north - lat) / (bbox.north - bbox.south)) * this.hiResH))
+          );
+          col = Math.max(0, Math.min(width - 1, Math.floor(((hCol + 0.5) / this.hiResW) * width)));
+          row = Math.max(0, Math.min(height - 1, Math.floor(((hRow + 0.5) / this.hiResH) * height)));
+        } else {
+          col = Math.max(0, Math.min(width - 1, Math.floor(((lng - bbox.west) / (bbox.east - bbox.west)) * width)));
+          row = Math.max(0, Math.min(height - 1, Math.floor(((bbox.north - lat) / (bbox.north - bbox.south)) * height)));
+        }
+        const idx = row * width + col;
+        const rid = this.reachId ? this.reachId[idx] : 65535;
+        const fos = Number((slopeRes.minFosP50[idx] ?? 3.0).toFixed(2));
+        if (rid >= R) {
+          return { depthM: 0, streamPowerWm2: 0, fos };
+        }
+        const cellLong = this.reachLongFrac ? this.reachLongFrac[idx] / 255 : 0.5;
+        let stage = routed.peakStageNormal?.[rid] ?? routed.stageNormal[rid] ?? 0;
+        const bwHead = routed.peakBackwaterHead?.[rid] ?? routed.backwaterHead[rid] ?? 0;
+        if (bwHead > 0.05) {
+          const startLong = routed.peakBackwaterStartLong?.[rid] ?? routed.backwaterStartLong[rid];
+          if (cellLong >= startLong - 0.02) {
+            const distUp = Math.max(0, cellLong - startLong);
+            const lenFrac = Math.max(0.08, routed.peakBackwaterLenFrac?.[rid] ?? routed.backwaterLenFrac[rid]);
+            if (distUp <= lenFrac) {
+              const decay = 1 - distUp / lenFrac;
+              stage += bwHead * decay * decay;
+            }
+          }
+        }
+        const bfDepth = estimateReachBankfullDepthM(net.reaches[rid]);
+        const overbankStage = Math.max(0, stage - bfDepth);
+        let depthM = 0;
+        if (this.hiResHandDm && hCol >= 0 && hRow >= 0) {
+          const hDm = this.hiResHandDm[hRow * this.hiResW + hCol];
+          if (hDm < 255) {
+            const handM = hDm * 0.1;
+            depthM = overbankStage > handM + 0.08 ? overbankStage - handM : 0;
+          }
+        } else if (this.slopePct[idx] <= 28) {
+          const handM = (this.handDm[idx] || 0) * 0.1;
+          depthM = overbankStage > handM + 0.08 ? overbankStage - handM : 0;
+        }
+        const streamPowerWm2 = Math.round(routed.peakStreamPowerWm2?.[rid] ?? routed.streamPowerWm2[rid] ?? 0);
+        return { depthM, streamPowerWm2, fos };
+      }
+    };
+  }
+
   private evaluateReachStageForCell(routed: RoutedReachState, rid: number, cellLong: number): number {
     let stage = routed.stageNormal[rid] || 0;
     const bwHead = routed.backwaterHead[rid] || 0;
@@ -1113,16 +1258,11 @@ export class CascadeEngine {
           splitMode: activeSplitMode,
           evaluateAtStorm:
             this.calibrationMarks.length > 0
-              ? stormParams => {
-                  const sub = new CascadeEngine(this.fields, [], this.totalCrossings, []);
-                  sub.evaluate({ ...stormParams, calibrationProfile: params.calibrationProfile }, { skipValidation: true });
-                  return {
-                    sampleAtLngLat: (lng, lat) => {
-                      const s = sub.sampleAtLngLat(lng, lat);
-                      return { depthM: s.depthM, streamPowerWm2: s.streamPowerWm2, fos: s.fos };
-                    }
-                  };
-                }
+              ? stormParams =>
+                  this.evaluatePeakEnvelopeAtStorm({
+                    ...stormParams,
+                    calibrationProfile: params.calibrationProfile
+                  })
               : undefined
         });
       }
@@ -1147,7 +1287,7 @@ export class CascadeEngine {
       representativeStageP90M,
       chokeCount,
       reductionPct,
-      peakTravelMin: this.fields.p90TravelMin,
+      peakTravelMin: nom.peakLagMin ?? this.fields.p90TravelMin,
       runoffIndex,
       officialLandslideOverlapPct:
         lsModelHigh > 0 ? Math.round((lsMatchedOfficial / lsModelHigh) * 100) : 0,

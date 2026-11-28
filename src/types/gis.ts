@@ -93,6 +93,8 @@ export interface SimReachNode {
   coords: [number, number][];
   kRef: number[];
   topW: number[];
+  areaM2?: number[];
+  bankfullDepthM?: number;
   verifiedWaterwayId: string | null;
   waterwayName: string | null;
   waterwayKind: string | null;
@@ -257,6 +259,7 @@ export interface ValidationMetrics {
   hwmHitRatePct: number | null;
   hwmCount: number;
   validationSplit?: 'all' | 'calibration' | 'holdout';
+  validationSplitStrategy?: 'reach' | 'spatial_block';
 }
 
 export interface WaterBalanceSummary {

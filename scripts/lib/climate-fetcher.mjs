@@ -83,7 +83,52 @@ export function computeAnnualMaxima(dailyDates, dailyMm) {
 }
 
 /**
- * SNI 2415:2016 Gumbel Type I extremal distribution quantiles using sample mean and std dev.
+ * SNI 2415:2016 / Chow-Maidment-Mays finite-sample Gumbel reduced mean (Yn) and
+ * reduced standard deviation (Sn) lookup table with linear interpolation.
+ */
+const GUMBEL_FINITE_SAMPLE_TABLE = [
+  [10, 0.4952, 0.9496],
+  [15, 0.5128, 1.0206],
+  [20, 0.5236, 1.0628],
+  [25, 0.5309, 1.0915],
+  [30, 0.5362, 1.1124],
+  [35, 0.5403, 1.1285],
+  [40, 0.5436, 1.1413],
+  [45, 0.5463, 1.1519],
+  [50, 0.5485, 1.1607],
+  [60, 0.5521, 1.1747],
+  [70, 0.5548, 1.1854],
+  [80, 0.5569, 1.1938],
+  [90, 0.5586, 1.2007],
+  [100, 0.56, 1.2065],
+  [500, 0.5772, 1.28255]
+];
+
+export function getGumbelReducedParams(n) {
+  if (!Number.isFinite(n) || n <= GUMBEL_FINITE_SAMPLE_TABLE[0][0]) {
+    return { yn: GUMBEL_FINITE_SAMPLE_TABLE[0][1], sn: GUMBEL_FINITE_SAMPLE_TABLE[0][2] };
+  }
+  const last = GUMBEL_FINITE_SAMPLE_TABLE[GUMBEL_FINITE_SAMPLE_TABLE.length - 1];
+  if (n >= last[0]) {
+    return { yn: last[1], sn: last[2] };
+  }
+  for (let i = 1; i < GUMBEL_FINITE_SAMPLE_TABLE.length; i++) {
+    const [n0, y0, s0] = GUMBEL_FINITE_SAMPLE_TABLE[i - 1];
+    const [n1, y1, s1] = GUMBEL_FINITE_SAMPLE_TABLE[i];
+    if (n <= n1) {
+      const f = (n - n0) / (n1 - n0);
+      return {
+        yn: Number((y0 + (y1 - y0) * f).toFixed(5)),
+        sn: Number((s0 + (s1 - s0) * f).toFixed(5))
+      };
+    }
+  }
+  return { yn: last[1], sn: last[2] };
+}
+
+/**
+ * SNI 2415:2016 Gumbel Type I extremal distribution quantiles using sample mean,
+ * std dev, and finite-sample reduced variate parameters (Yn, Sn).
  */
 export function computeGumbelQuantiles(annualMax) {
   const vals = annualMax.filter(v => Number.isFinite(v) && v > 0);
@@ -94,8 +139,7 @@ export function computeGumbelQuantiles(annualMax) {
   const variance = vals.reduce((acc, v) => acc + (v - mean) * (v - mean), 0) / Math.max(1, n - 1);
   const sd = Math.sqrt(Math.max(1e-6, variance));
 
-  const yn = 0.5772;
-  const sn = 1.28255;
+  const { yn, sn } = getGumbelReducedParams(n);
   const qOfT = T => {
     const yt = -Math.log(-Math.log(1 - 1 / T));
     const kt = (yt - yn) / sn;
